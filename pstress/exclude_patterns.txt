@@ -16,9 +16,14 @@
 #        Assertion failure.*fsp0fsp.cc.*encryption_op_in_progress                          #
 ############################################################################################
 
-# Harmless Errors seen in the error logs 
-\\[Server\\].*Plugin mysqlx reported.
-\\[ERROR\\].*Cannot drop undo tablespace.*
+# Error reported by Mysqlx plugin when the socket is not free.
+.*\\[Server\\].*Plugin mysqlx reported.*
+
+# Error reported by InnoDB when an active undo tablespace is dropped.
+.*Cannot drop undo tablespace.*
 
 # PS-6848
-Assertion failure.*fsp0fsp.cc.*encryption_op_in_progress
+.*Assertion failure.*fsp0fsp.cc.*encryption_op_in_progress.*
+
+# PS-6847
+.*Assertion failure.*btr0btr.ic:.*level.*

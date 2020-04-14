@@ -20,28 +20,57 @@ if [ "$ERROR_LOG" == "" ]; then
   fi
 fi
 
+ASSERTION_FLAG=0;
+ERROR_FLAG=0;
+IS_NEW_ASSERT=1;
+IS_NEW_ERROR=1;
 SEARCH_ERROR_PATTERN="\[ERROR\].*"
-SEARCH_FOR_ASSERT="\[ERROR\].*Assertion.*";
-EXCLUDE_SEARCH_PATTERN="";
+SEARCH_ASSERT_PATTERN="\[ERROR\].*Assertion.*";
+SEARCH_FILE=exclude_patterns.txt
 
-# Fetch the Signature tags from exclude_patterns.txt
-while read SigTag 
-do
- EXCLUDE_SEARCH_PATTERN+=" ${SigTag}|"
-done < <(egrep -v '^#|^$' exclude_patterns.txt)
-
-# Get rid of the last pipe (|) from the exclude string
-EXCLUDE_SEARCH_PATTERN=$(echo "${EXCLUDE_SEARCH_PATTERN:: -1}")
-
-STRING=$(egrep "$SEARCH_FOR_ASSERT" $ERROR_LOG | egrep -v "$EXCLUDE_SEARCH_PATTERN" | sed -n -e 's/^.*\[ERROR\] //p');
-
-if [ "$STRING" != "" ]; then
-  echo "The server crashed with an assertion! Please check the error log(s) for all warnings/errors"
+# Search assertion string in Error log
+PATTERN=$(egrep "$SEARCH_ASSERT_PATTERN" $ERROR_LOG | sed -n -e 's/^.*\[ERROR\] //p');
+if [ "$PATTERN" != "" ]; then
+  ASSERT_STRING=$PATTERN;
+  ASSERTION_FLAG=1;
 fi
 
-if [ "$STRING" == "" ]; then
- STRING=$(egrep "$SEARCH_ERROR_PATTERN" $ERROR_LOG | egrep -v "$EXCLUDE_SEARCH_PATTERN" | sed -n -e 's/^.*\[ERROR\] //p');
+# Search error string in Error Log, excluding assertion failure error
+PATTERN=$(egrep "$SEARCH_ERROR_PATTERN" $ERROR_LOG | grep -v "Assertion failure" | sed -n -e 's/^.*\[ERROR\] //p');
+if [ "PATTERN" != "" ]; then
+  ERROR_STRING=$PATTERN;
+  ERROR_FLAG=1;
 fi
 
-# Filter out accidental thread <nr> insertions
-echo "$STRING" | sed "s| thread [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]||"
+# Search Assertion string in Known bug list
+if [ $ASSERTION_FLAG -eq 1 ]; then
+  while read SigTag
+    do
+      if [[ $STRING =~ ${SigTag} ]]; then
+        echo "Known Bug reported in JIRA found. Please check the Bug status for more details";
+        egrep -B1 "${SigTag}" $SEARCH_FILE
+        IS_NEW_ASSERT=0
+      fi
+    done < <(egrep -v '^#|^$' $SEARCH_FILE)
+fi
+
+# Search Error string in Known bug list
+if [ $ERROR_FLAG -eq 1 ]; then
+  while read SigTag
+    do
+      if [[ $ERROR_STRING =~ ${SigTag} ]]; then
+        echo "Some known ERROR(s) were found in the error log(s)";
+        IS_NEW_ERROR=0
+      fi
+    done < <(egrep -v '^#|^$' $SEARCH_FILE)
+fi
+
+if [[ $ASSERTION_FLAG -eq 1 && $IS_NEW_ASSERT -eq 1 ]]; then
+  echo "New Assertion has been found in the error log(s). Potentially a Bug, please investigate";
+  echo $ASSERT_STRING
+fi
+
+if [[ $ERROR_FLAG -eq 1 && $IS_NEW_ERROR -eq 1 ]]; then
+  echo "New Error has been found in error log(s). Potentially a Bug, please investigate";
+  echo $ERROR_STRING
+fi
