@@ -6,6 +6,7 @@
 # (1). This file is used by search_string.sh to exclude any known errors/assertions.       #
 # (2). The file contains list of regular expressions to tag a particular error.            #
 # (3). Any known crash/error can be included in this file with a unique signature (regex)  #
+# (4). Line starting with a (#) will be treated as a comment & shall be ignored            #
 #                                                                                          #
 # How to use:                                                                              #
 # (1). Add a comment with the Bug# and tag it against the signature                        #

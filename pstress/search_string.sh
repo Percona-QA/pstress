@@ -22,8 +22,6 @@ fi
 
 ASSERTION_FLAG=0;
 ERROR_FLAG=0;
-IS_NEW_ASSERT=1;
-IS_NEW_ERROR=1;
 SEARCH_ERROR_PATTERN="\[ERROR\].*"
 SEARCH_ASSERT_PATTERN="\[ERROR\].*Assertion.*";
 SEARCH_FILE=exclude_patterns.txt
@@ -37,40 +35,48 @@ fi
 
 # Search error string in Error Log, excluding assertion failure error
 PATTERN=$(egrep "$SEARCH_ERROR_PATTERN" $ERROR_LOG | grep -v "Assertion failure" | sed -n -e 's/^.*\[ERROR\] //p');
-if [ "PATTERN" != "" ]; then
+if [ "$PATTERN" != "" ]; then
   ERROR_STRING=$PATTERN;
   ERROR_FLAG=1;
 fi
 
 # Search Assertion string in Known bug list
 if [ $ASSERTION_FLAG -eq 1 ]; then
-  while read SigTag
-    do
-      if [[ $STRING =~ ${SigTag} ]]; then
-        echo "Known Bug reported in JIRA found. Please check the Bug status for more details";
-        egrep -B1 "${SigTag}" $SEARCH_FILE
-        IS_NEW_ASSERT=0
+  while IFS= read -r line
+  do
+    ASSERT_FOUND=0
+    while read SigTag
+      do
+        if [[ $line =~ ${SigTag} ]]; then
+          echo "Known Bug reported in JIRA found. Please check the Bug status for more details";
+          egrep -B1 "${SigTag}" $SEARCH_FILE
+          ASSERT_FOUND=1
+          break;
       fi
     done < <(egrep -v '^#|^$' $SEARCH_FILE)
+  if [[ $ASSERT_FOUND -eq 0 ]]; then
+    echo "New Assertion has been found in the error log(s). Potentially a Bug, please investigate";
+    echo "$line"
+  fi
+  done < <(printf '%s\n' "$ASSERT_STRING")
 fi
 
 # Search Error string in Known bug list
 if [ $ERROR_FLAG -eq 1 ]; then
-  while read SigTag
-    do
-      if [[ $ERROR_STRING =~ ${SigTag} ]]; then
-        echo "Some known ERROR(s) were found in the error log(s)";
-        IS_NEW_ERROR=0
-      fi
-    done < <(egrep -v '^#|^$' $SEARCH_FILE)
-fi
-
-if [[ $ASSERTION_FLAG -eq 1 && $IS_NEW_ASSERT -eq 1 ]]; then
-  echo "New Assertion has been found in the error log(s). Potentially a Bug, please investigate";
-  echo $ASSERT_STRING
-fi
-
-if [[ $ERROR_FLAG -eq 1 && $IS_NEW_ERROR -eq 1 ]]; then
-  echo "New Error has been found in error log(s). Potentially a Bug, please investigate";
-  echo $ERROR_STRING
+  while IFS= read -r line
+  do
+    ERROR_FOUND=0
+    while read SigTag
+      do
+        if [[ $line =~ ${SigTag} ]]; then
+          echo "Some known ERROR(s) were found in the error log(s)";
+          ERROR_FOUND=1;
+          break;
+        fi
+      done < <(egrep -v '^#|^$' $SEARCH_FILE)
+  if [[ $ERROR_FOUND -eq 0 ]]; then
+    echo "New Error has been found in error log(s). Potentially a Bug, please investigate";
+    echo "$line"
+  fi
+  done < <(printf '%s\n' "$ERROR_STRING")
 fi
