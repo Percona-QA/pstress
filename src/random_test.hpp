@@ -2,22 +2,7 @@
 #define __RANDOM_HPP__
 
 #include "common.hpp"
-#include <algorithm>
-#include <atomic>
-#include <cstdio>
-#include <cstring>
-#include <document.h>
-#include <filereadstream.h>
-#include <fstream>
-#include <iostream>
-#include <mutex>
-#include <mysql.h>
-#include <prettywriter.h>
-#include <random>
-#include <sstream>
-#include <string.h>
-#include <vector>
-#include <writer.h>
+#include "json.hpp"
 #define INNODB_16K_PAGE_SIZE 16
 #define INNODB_8K_PAGE_SIZE 8
 #define INNODB_32K_PAGE_SIZE 32
@@ -33,11 +18,6 @@
 #define opt_bool(a) options->at(Option::a)->getBool();
 #define opt_string(a) options->at(Option::a)->getString();
 
-int rand_int(int upper, int lower = 0);
-std::string rand_float(float upper, float lower = 0);
-std::string rand_double(double upper, double lower = 0);
-std::string rand_string(int upper, int lower = 0);
-
 struct Table;
 class Column {
 public:
@@ -50,6 +30,7 @@ public:
     BOOL,
     BLOB,
     GENERATED,
+    JSON,
     COLUMN_MAX // should be last
   } type_;
   /* used to create new table/alter table add column*/
@@ -65,7 +46,7 @@ public:
   /* return random value of that column */
   virtual std::string rand_value();
   /* return string to call type */
-  const std::string col_type_to_string(COLUMN_TYPES type) const;
+  static const std::string col_type_to_string(COLUMN_TYPES type);
   /* return column type from a string */
   COLUMN_TYPES col_type(std::string type);
   /* used to create_metadata */
@@ -121,6 +102,47 @@ struct Generated_Column : public Column {
   COLUMN_TYPES generate_type() { return g_type; };
 };
 
+struct Json_Column : public Column {
+  /* constructor for new random generated column */
+  Json_Column(std::string name, Table *table);
+
+  /* constructor used to prepare metadata */
+  Json_Column(std::string name, Table *table, std::string str_sub_type);
+
+  /* constructor for creating generated column */
+  std::string generated_column();
+
+  /* prepare rand valud of json columm */
+  std::string rand_value();
+
+  /* pick some where and value used for update & delete */
+  void rand_sub_value(std::string &where, std::string &value);
+
+  enum SUB_TYPE { HASH, ARRAY } sub_type;
+
+  static std::string sub_type_to_string(SUB_TYPE s) {
+    switch (s) {
+    case HASH:
+      return "HASH";
+    case ARRAY:
+      return "ARRAY";
+    }
+  }
+
+  static SUB_TYPE string_to_sub_type(std::string s) {
+    if (s.compare("HASH") == 0)
+      return HASH;
+    else if (s.compare("ARRAY") == 0)
+      return ARRAY;
+    else
+      throw std::runtime_error("unhandled " + s + " at line " +
+                               std::to_string(__LINE__));
+  }
+
+  int size;
+  std::shared_ptr<Json> json;
+};
+
 struct Ind_col {
   Ind_col(Column *c, bool d);
   template <typename Writer> void Serialize(Writer &writer) const;
@@ -170,7 +192,7 @@ struct Thd1 {
 /* Table basic properties */
 struct Table {
 public:
-  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, TABLE_MAX } type;
+  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, JSON, TABLE_MAX } type;
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id, Thd1 *thd);
@@ -178,8 +200,8 @@ public:
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
-  void CreateDefaultColumn();
-  void CreateDefaultIndex();
+  virtual void CreateDefaultColumn();
+  virtual void CreateDefaultIndex();
   void CopyDefaultColumn(Table *table);
   void CopyDefaultIndex(Table *table);
   void DropCreate(Thd1 *thd);
@@ -196,11 +218,12 @@ public:
   void DropIndex(Thd1 *thd);
   void AddIndex(Thd1 *thd);
   void DeleteRandomRow(Thd1 *thd);
-  void UpdateRandomROW(Thd1 *thd);
+  void UpdateRandomRow(Thd1 *thd);
   void SelectRandomRow(Thd1 *thd);
   void SelectAllRow(Thd1 *thd);
   void DeleteAllRows(Thd1 *thd);
   void ColumnRename(Thd1 *thd);
+  void PickRandomColumn(std::string &where, std::string &value);
   template <typename Writer> void Serialize(Writer &writer) const;
   virtual ~Table();
 
@@ -224,6 +247,14 @@ public:
   ~Partition_table() {}
   std::string partition_start;
   //  string partiton_type() { return partition_start; }
+};
+
+/* Json tables */
+struct Json_table : public Table {
+public:
+  Json_table(std::string n) ;
+  ~Json_table() {}
+  void CreateDefaultIndex();
 };
 
 /* Temporary table */
@@ -251,6 +282,5 @@ void set_mysqld_variable(Thd1 *thd);
 void add_server_options(std::string str);
 void alter_database_encryption(Thd1 *thd);
 void create_in_memory_data();
-void create_default_tables(Thd1 *thd);
 void create_database_tablespace(Thd1 *thd);
 #endif

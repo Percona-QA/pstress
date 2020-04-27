@@ -286,6 +286,7 @@ std::string rand_float(float upper, float lower) {
   return out.str();
 }
 
+/* return random double in range of upper and lower */
 std::string rand_double(double upper, double lower) {
   static std::uniform_real_distribution<> dis(lower, upper);
   std::ostringstream out;
@@ -332,13 +333,15 @@ Column::COLUMN_TYPES Column::col_type(std::string type) {
     return FLOAT;
   else if (type.compare("DOUBLE") == 0)
     return DOUBLE;
+  else if (type.compare("JSON") == 0)
+    return JSON;
   else
     throw std::runtime_error("unhandled " + col_type_to_string(type_) +
                              " at line " + std::to_string(__LINE__));
 }
 
 /* return string from a column type */
-const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
+const std::string Column::col_type_to_string(COLUMN_TYPES type) {
   switch (type) {
   case INT:
     return "INT";
@@ -356,6 +359,8 @@ const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
     return "BLOB";
   case GENERATED:
     return "GENERATED";
+  case JSON:
+    return "JSON";
   case COLUMN_MAX:
     break;
   }
@@ -365,18 +370,16 @@ const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
 /* return random value of any string */
 std::string Column::rand_value() {
   switch (type_) {
-  case (COLUMN_TYPES::INT):
+  case (INT):
     static auto rec = 100 * opt_int(INITIAL_RECORDS_IN_TABLE);
     return std::to_string(rand_int(rec));
     break;
-  case (COLUMN_TYPES::FLOAT):
-  {
+  case (FLOAT): {
     static float rec1 = 0.01 * opt_int(INITIAL_RECORDS_IN_TABLE);
     return rand_float(rec1);
     break;
   }
-  case (COLUMN_TYPES::DOUBLE):
-  {
+  case (DOUBLE): {
     static float rec2 = 0.00001 * opt_int(INITIAL_RECORDS_IN_TABLE);
     return rand_double(rec2);
     break;
@@ -390,10 +393,42 @@ std::string Column::rand_value() {
   case BLOB:
   case GENERATED:
   case COLUMN_MAX:
+  case JSON:
     throw std::runtime_error("unhandled " + col_type_to_string(type_) +
                              " at line " + std::to_string(__LINE__));
   }
-  return "";
+  return "default";
+}
+
+/* return random JSON using column defination */
+std::string Json_Column::rand_value() {
+  StringBuffer sb;
+  PrettyWriter<StringBuffer> writer(sb);
+  if (sub_type == HASH) {
+    writer.StartObject();
+    for (int i = 0; i < size; i++) {
+      writer.String(rand_string(5).c_str());
+      writer.String(rand_string(10).c_str());
+    }
+    writer.EndObject();
+  } else if (sub_type == ARRAY) {
+    writer.StartArray();
+    for (int i = 0; i < size; i++)
+      writer.String(rand_string(10).c_str());
+    writer.EndArray();
+  }
+  return sb.GetString();
+}
+
+/* return sub json column */
+void Json_Column::rand_sub_value(std::string &where, std::string &value) {
+  if (sub_type == HASH) {
+    where = "some_hash";
+    value = "some_value";
+  } else {
+    where = "some_array";
+    value = "some_value";
+  }
 }
 
 /* return table definition */
@@ -479,7 +514,22 @@ Blob_Column::Blob_Column(std::string name, Table *table, std::string sub_type_)
   sub_type = sub_type_;
 }
 
-/* Constructor used for load metadata */
+/* part of create,alter table  */
+Json_Column::Json_Column(std::string name, Table *table)
+    : Column(table, Column::JSON) {
+  name_ = name;
+  json = std::make_shared<Json>(2);
+}
+
+/* Constructor for load  metadata */
+/*in name, table, and sub_type */
+Json_Column::Json_Column(std::string name, Table *table, std::string s)
+    : Column(table, Column::JSON) {
+  name_ = name;
+  sub_type = string_to_sub_type(s);
+}
+
+/* Constructor for load metadata */
 Generated_Column::Generated_Column(std::string name, Table *table,
                                    std::string clause, std::string sub_type)
     : Column(table, Column::GENERATED) {
@@ -491,20 +541,38 @@ Generated_Column::Generated_Column(std::string name, Table *table,
 /* Generated column constructor. lock table before calling */
 Generated_Column::Generated_Column(std::string name, Table *table)
     : Column(table, Column::GENERATED) {
+
+  // no support for json column
+  switch (table->type) {
+  case Table::NORMAL:
+  case Table::PARTITION:
+  case Table::TEMPORARY:
+    break;
+  case Table::JSON:
+  case Table::TABLE_MAX:
+    throw std::runtime_error("can't use generate column for json" +
+                             std::to_string(__LINE__));
+  }
   name_ = "g" + name;
   auto blob_supported = !options->at(Option::NO_BLOB)->getBool();
   g_type = COLUMN_MAX;
-  /* Generated columns are 2:2:2:2 (INT:VARCHAR:CHAR:BLOB) */
+
+  /* Generated columns are 1:1:1:1 (INT:VARCHAR:CHAR:BLOB) */
   while (g_type == COLUMN_MAX) {
-    auto x = rand_int(4, 1);
-    if (x <= 1)
+    switch (rand_int(4, 1)) {
+    case 0:
       g_type = INT;
-    if (x <= 2)
+      break;
+    case 1:
       g_type = VARCHAR;
-    else if (x <= 3)
+      break;
+    case 2:
       g_type = CHAR;
-    else if (blob_supported && x <= 4) {
-      g_type = BLOB;
+      break;
+    case 3:
+      if (blob_supported)
+        g_type = BLOB;
+      break;
     }
   }
 
@@ -526,10 +594,11 @@ Generated_Column::Generated_Column(std::string name, Table *table)
   if (g_type == INT) {
     str = " " + col_type_to_string(g_type) + " AS(";
     for (auto pos : col_pos) {
-      auto col = table->columns_->at(pos);
+      Column *col = table->columns_->at(pos);
       if (col->type_ == VARCHAR || col->type_ == CHAR || col->type_ == BLOB)
         str += " LENGTH(" + col->name_ + ")+";
-      else if (col->type_ == INT || col->type_ == BOOL)
+      else if (col->type_ == INT || col->type_ == BOOL ||
+               col->type_ == DOUBLE || col->type_ == FLOAT)
         str += " " + col->name_ + "+";
       else
         throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
@@ -560,18 +629,21 @@ Generated_Column::Generated_Column(std::string name, Table *table)
       case CHAR:
         column_size = col->length;
         break;
+        column_size = MAX_RANDOM_STRING_SIZE;
+        break;
       case BLOB:
         column_size = 5000; // todo set it different subtype
         break;
       case COLUMN_MAX:
       case GENERATED:
+      case JSON:
         throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
                                  " at line " + std::to_string(__LINE__));
       }
       if (column_size > current_size) {
         actual_size += current_size;
-        gen_sql +=
-            "SUBSTRING(" + col->name_ + ",1," + std::to_string(current_size) + "),";
+        gen_sql += "SUBSTRING(" + col->name_ + ",1," +
+                   std::to_string(current_size) + "),";
       } else {
         actual_size += column_size;
         gen_sql += col->name_ + ",";
@@ -585,12 +657,10 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     str += gen_sql;
     str += ")";
     length = actual_size;
-  } else {
+  } else
     throw std::runtime_error("unhandled " + col_type_to_string(g_type) +
                              " at line " + std::to_string(__LINE__));
-  }
   str += ")";
-
   if (rand_int(2) == 1 || compressed)
     str += " STORED";
 }
@@ -703,10 +773,24 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
   for (auto &col : *columns_) {
     writer.StartObject();
     col->Serialize(writer);
-    if (col->type_ == Column::GENERATED) {
+    switch (col->type_) {
+    case Column::GENERATED:
       static_cast<Generated_Column *>(col)->Serialize(writer);
-    } else if (col->type_ == Column::BLOB) {
+      break;
+    case Column::BLOB:
       static_cast<Blob_Column *>(col)->Serialize(writer);
+      break;
+    case Column::INT:
+    case Column::CHAR:
+    case Column::VARCHAR:
+    case Column::FLOAT:
+    case Column::DOUBLE:
+    case Column::BOOL:
+    case Column::COLUMN_MAX:
+      break;
+    case Column::JSON:
+      static_cast<Json_Column *>(col)->json->Serialize(writer);
+      break;
     }
     writer.EndObject();
   }
@@ -825,23 +909,23 @@ void Table::CreateDefaultColumn() {
         col->auto_increment = true;
         auto_increment = true;
       }
-
-    } else {
+    } else if (i == 1 && this->type == JSON)
+      col = new Json_Column{"json", this};
+    else {
       name = std::to_string(i);
-
       Column::COLUMN_TYPES col_type = Column::COLUMN_MAX;
       static auto no_virtual_col = opt_bool(NO_VIRTUAL_COLUMNS);
       static auto no_blob_col = opt_bool(NO_BLOB);
 
       /* loop untill we select some column */
       while (col_type == Column::COLUMN_MAX) {
-
         /* columns are 6:2:2:4:2:2:1 INT:FLOAT:DOUBLE:VARCHAR:CHAR:BLOB:BOOL */
         auto prob = rand_int(19);
-
         /* intial columns can't be generated columns. also 50% of tables last
          * columns are virtuals */
-        if (!no_virtual_col && i >= .8 * max_columns && rand_int(1) == 1)
+        // todo add support for virtual json column
+        if (!no_virtual_col && this->type != JSON && i >= .8 * max_columns &&
+            rand_int(1) == 1)
           col_type = Column::GENERATED;
         else if (prob < 6)
           col_type = Column::INT;
@@ -866,9 +950,10 @@ void Table::CreateDefaultColumn() {
       else
         col = new Column(name, this, col_type);
 
+      // todo json enable
       /* 25% column can have auto_inc */
       if (col->type_ == Column::INT && !no_auto_inc &&
-          auto_increment == false && rand_int(100) > 25) {
+          auto_increment == false && rand_int(100) > 25 && this->type != JSON) {
         col->auto_increment = true;
         auto_increment = true;
       }
@@ -958,6 +1043,11 @@ void Table::CreateDefaultIndex() {
   }
 }
 
+void Json_table::CreateDefaultIndex() {}
+
+Json_table::Json_table(std::string n) : Table(n) {
+}
+
 /* Create new table and pick some attributes */
 Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   Table *table;
@@ -971,6 +1061,9 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
     break;
   case TEMPORARY:
     table = new Temporary_table(name + "_t");
+    break;
+  case JSON:
+    table = new Json_table(name + "_j");
     break;
   default:
     throw std::runtime_error("Unhandle Table type");
@@ -1108,16 +1201,22 @@ std::string Table::definition() {
   return def;
 }
 
-/* create default table includes all tables*/
-void create_default_tables(Thd1 *thd) {
+/* create metadata of default table includes all tables*/
+static void create_metadata_default_tables(Thd1 *thd) {
   auto tables = opt_int(TABLES);
 
   auto only_temporary_tables = opt_bool(ONLY_TEMPORARY);
+  auto no_partition = opt_bool(NO_PARTITION);
+  auto no_json = opt_bool(NO_JSON);
 
   if (!only_temporary_tables) {
     for (int i = 1; i <= tables; i++) {
+
       all_tables->push_back(Table::table_id(Table::NORMAL, i, thd));
-      all_tables->push_back(Table::table_id(Table::PARTITION, i, thd));
+      if (!no_partition)
+        all_tables->push_back(Table::table_id(Table::PARTITION, i, thd));
+      if (!no_json)
+        all_tables->push_back(Table::table_id(Table::JSON, i, thd));
     }
   }
 }
@@ -1308,6 +1407,9 @@ void Table::ModifyColumn(Thd1 *thd) {
     case Column::BOOL:
     case Column::COLUMN_MAX:
       break;
+    case Column::JSON:
+      throw std::runtime_error("handle modify column for json " +
+                               std::to_string(__LINE__));
     }
     i++;
   }
@@ -1640,29 +1742,29 @@ void Table::DeleteRandomRow(Thd1 *thd) {
         break;
       case Column::COLUMN_MAX:
         break;
+      case Column::JSON:
+        throw std::runtime_error("handle delete random column for json " +
+                                 std::to_string(__LINE__));
+        break;
       }
     }
   }
-  std::string sql = "DELETE FROM " + name_ + " WHERE " +
-                   columns_->at(where)->name_;
+  std::string sql =
+      "DELETE FROM " + name_ + " WHERE " + columns_->at(where)->name_;
   if (prob <= 90)
     sql += " = " + columns_->at(where)->rand_value();
   else if (prob <= 92)
-    sql += " >= " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->name_ + " <= " +
-          columns_->at(where)->rand_value();
+    sql += " >= " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->name_ +
+           " <= " + columns_->at(where)->rand_value();
   else if (prob <= 94)
-    sql += " IN (" +
-          columns_->at(where)->rand_value() + "," +
-          columns_->at(where)->rand_value() + ")";
+    sql += " IN (" + columns_->at(where)->rand_value() + "," +
+           columns_->at(where)->rand_value() + ")";
   else if (prob <= 96)
-    sql += " BETWEEN " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->rand_value();
+    sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->rand_value();
   else
-    sql += " LIKE '%" +
-          columns_->at(where)->rand_value() + "%'";
+    sql += " LIKE '%" + columns_->at(where)->rand_value() + "%'";
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -1672,48 +1774,40 @@ void Table::SelectRandomRow(Thd1 *thd) {
   table_mutex.lock();
   auto where = rand_int(columns_->size() - 1);
   auto prob = rand_int(100);
-  std::string sql = "SELECT * FROM " + name_ + " WHERE " +
-                   columns_->at(where)->name_;
+  std::string sql =
+      "SELECT * FROM " + name_ + " WHERE " + columns_->at(where)->name_;
   if (rand_int(1000) < 2)
-    sql += " NOT BETWEEN " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->rand_value();
+    sql += " NOT BETWEEN " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->rand_value();
   else if (prob <= 90)
-    sql += " = " +
-          columns_->at(where)->rand_value();
+    sql += " = " + columns_->at(where)->rand_value();
   else if (prob <= 92)
-    sql += " >= " +
-          columns_->at(where)->rand_value();
+    sql += " >= " + columns_->at(where)->rand_value();
   else if (prob <= 94)
-    sql += " >= " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->name_ + " <= " +
-          columns_->at(where)->rand_value();
+    sql += " >= " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->name_ +
+           " <= " + columns_->at(where)->rand_value();
   else if (prob <= 96)
-    sql += " IN (" +
-          columns_->at(where)->rand_value() + ", " +
-          columns_->at(where)->rand_value() + ")";
+    sql += " IN (" + columns_->at(where)->rand_value() + ", " +
+           columns_->at(where)->rand_value() + ")";
   else if (prob <= 98)
-    sql += " LIKE '%" +
-          columns_->at(where)->rand_value() + "%'";
+    sql += " LIKE '%" + columns_->at(where)->rand_value() + "%'";
   else
-    sql += " BETWEEN " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->rand_value();
+    sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->rand_value();
 
   table_mutex.unlock();
   execute_sql(sql, thd);
 }
 
 /* update random row */
-void Table::UpdateRandomROW(Thd1 *thd) {
+void Table::UpdateRandomRow(Thd1 *thd) {
   table_mutex.lock();
   auto set = rand_int(columns_->size() - 1);
   auto where = rand_int(columns_->size() - 1);
   auto prob = rand_int(98);
-  std::string sql = "UPDATE " + name_ + " SET " +
-                   columns_->at(set)->name_ + " = " +
-                   columns_->at(set)->rand_value() + " WHERE ";
+  std::string sql = "UPDATE " + name_ + " SET " + columns_->at(set)->name_ +
+                    " = " + columns_->at(set)->rand_value() + " WHERE ";
 
   /* if tables has pkey try to use that in where clause for 50% cases */
   for (size_t i = 0; i < columns_->size(); i++) {
@@ -1723,23 +1817,23 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     }
   }
   if (prob <= 90)
-    sql += columns_->at(where)->name_ + " = " +
-          columns_->at(where)->rand_value();
+    sql +=
+        columns_->at(where)->name_ + " = " + columns_->at(where)->rand_value();
   else if (prob <= 92)
-    sql += columns_->at(where)->name_ + " >= " +
-          columns_->at(where)->rand_value() + " AND " + " <= " +
-          columns_->at(where)->rand_value();
+    sql += columns_->at(where)->name_ +
+           " >= " + columns_->at(where)->rand_value() + " AND " +
+           " <= " + columns_->at(where)->rand_value();
   else if (prob <= 94)
     sql += columns_->at(where)->name_ + " IN (" +
-          columns_->at(where)->rand_value() + "," +
-          columns_->at(where)->rand_value() + ")";
+           columns_->at(where)->rand_value() + "," +
+           columns_->at(where)->rand_value() + ")";
   else if (prob <= 96)
     sql += columns_->at(where)->name_ + " BETWEEN " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->rand_value();
+           columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->rand_value();
   else
     sql += columns_->at(where)->name_ + " LIKE '%" +
-          columns_->at(where)->rand_value() + "%'";
+           columns_->at(where)->rand_value() + "%'";
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -1995,8 +2089,8 @@ void save_metadata_to_file() {
   std::string path = opt_string(METADATA_PATH);
   if (path.size() == 0)
     path = opt_string(LOGDIR);
-  auto file =
-      path + "/step_" + std::to_string(options->at(Option::STEP)->getInt()) + ".dll";
+  auto file = path + "/step_" +
+              std::to_string(options->at(Option::STEP)->getInt()) + ".dll";
   std::cout << "Saving metadata to file " << file << std::endl;
 
   StringBuffer sb;
@@ -2277,7 +2371,7 @@ bool Thd1::load_metadata() {
     std::cout << "metadata loaded from " << file << std::endl;
   } else {
     create_database_tablespace(this);
-    create_default_tables(this);
+    create_metadata_default_tables(this);
     std::cout << "metadata created randomly" << std::endl;
   }
 
@@ -2397,7 +2491,8 @@ void Thd1::run_some_query() {
       /* use savepoint or rollback to savepoint */
       if (trx_left > 0 && savepoint_prob > 0) {
         if (rand_int(1000) < savepoint_prob)
-          execute_sql("SAVEPOINT SAVE" + std::to_string(++current_save_point), this);
+          execute_sql("SAVEPOINT SAVE" + std::to_string(++current_save_point),
+                      this);
 
         /* 1/4 chances of rollbacking to savepoint */
         if (current_save_point > 0 && rand_int(1000 * 4) < savepoint_prob) {
@@ -2471,7 +2566,7 @@ void Thd1::run_some_query() {
       table->DeleteRandomRow(this);
       break;
     case Option::UPDATE_ROW_USING_PKEY:
-      table->UpdateRandomROW(this);
+      table->UpdateRandomRow(this);
       break;
     case Option::OPTIMIZE:
       table->Optimize(this);
@@ -2497,7 +2592,6 @@ void Thd1::run_some_query() {
     case Option::SPECIAL_SQL:
       special_sql(all_session_tables, this);
       break;
-
     default:
       throw std::runtime_error("invalid options");
     }

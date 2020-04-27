@@ -160,7 +160,19 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
-  /* disable all type of encrytion */
+  /* disable json tables */
+  opt = newOption(Option::BOOL, Option::NO_JSON, "no-json");
+  opt->help = "Disable json tables";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable partition tables */
+  opt = newOption(Option::BOOL, Option::NO_PARTITION, "no-partition");
+  opt->help = "Disable partition tables";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable all type of tablespaces */
   opt = newOption(Option::BOOL, Option::NO_TABLESPACE, "no-tbs");
   opt->help = "disable all type of tablespace including the general tablespace";
   opt->setBool(false);

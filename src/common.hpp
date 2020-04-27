@@ -24,6 +24,11 @@
 #include <algorithm>
 #include <vector>
 
+int rand_int(int upper, int lower = 0);
+std::string rand_float(float upper, float lower = 0);
+std::string rand_double(double upper, double lower = 0);
+std::string rand_string(int upper, int lower = 0);
+
 struct Option {
   enum Type { BOOL, INT, STRING } type;
   enum Opt {
@@ -43,6 +48,8 @@ struct Option {
     NO_TABLESPACE,
     NO_BLOB,
     NO_VIRTUAL_COLUMNS,
+    NO_JSON,
+    NO_PARTITION,
     TABLES,
     INDEXES,
     ALGORITHM,
