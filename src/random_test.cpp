@@ -13,8 +13,7 @@
 using namespace rapidjson;
 std::mt19937 rng;
 
-const std::string partition_string = "_p";
-const int version = 1;
+const int version = 2;
 
 static std::vector<Table *> *all_tables = new std::vector<Table *>;
 static std::vector<std::string> g_undo_tablespace;
@@ -336,8 +335,8 @@ Column::COLUMN_TYPES Column::col_type(std::string type) {
   else if (type.compare("JSON") == 0)
     return JSON;
   else
-    throw std::runtime_error("unhandled " + col_type_to_string(type_) +
-                             " at line " + std::to_string(__LINE__));
+    throw std::runtime_error("unhandled " + type + " at line " +
+                             std::to_string(__LINE__));
 }
 
 /* return string from a column type */
@@ -400,36 +399,6 @@ std::string Column::rand_value() {
   return "default";
 }
 
-/* return random JSON using column defination */
-std::string Json_Column::rand_value() {
-  StringBuffer sb;
-  PrettyWriter<StringBuffer> writer(sb);
-  if (sub_type == HASH) {
-    writer.StartObject();
-    for (int i = 0; i < size; i++) {
-      writer.String(rand_string(5).c_str());
-      writer.String(rand_string(10).c_str());
-    }
-    writer.EndObject();
-  } else if (sub_type == ARRAY) {
-    writer.StartArray();
-    for (int i = 0; i < size; i++)
-      writer.String(rand_string(10).c_str());
-    writer.EndArray();
-  }
-  return sb.GetString();
-}
-
-/* return sub json column */
-void Json_Column::rand_sub_value(std::string &where, std::string &value) {
-  if (sub_type == HASH) {
-    where = "some_hash";
-    value = "some_value";
-  } else {
-    where = "some_array";
-    value = "some_value";
-  }
-}
 
 /* return table definition */
 std::string Column::definition() {
@@ -523,10 +492,11 @@ Json_Column::Json_Column(std::string name, Table *table)
 
 /* Constructor for load  metadata */
 /*in name, table, and sub_type */
-Json_Column::Json_Column(std::string name, Table *table, std::string s)
+Json_Column::Json_Column(std::string name, Table *table, Document &d)
     : Column(table, Column::JSON) {
   name_ = name;
-  sub_type = string_to_sub_type(s);
+  std::cout << d.GetString() << std::endl;
+  // sub_type = string_to_sub_type(s);
 }
 
 /* Constructor for load metadata */
@@ -1054,7 +1024,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   std::string name = "tt_" + std::to_string(id);
   switch (type) {
   case PARTITION:
-    table = new Partition_table(name + partition_string);
+    table = new Partition_table(name + "_p");
     break;
   case NORMAL:
     table = new Table(name);
@@ -1446,8 +1416,8 @@ void Table::ModifyColumn(Thd1 *thd) {
 void Table::DropColumn(Thd1 *thd) {
   table_mutex.lock();
 
-  /* do not drop last column */
-  if (columns_->size() == 1) {
+  /* do not drop last column todo json column */
+  if (columns_->size() == 1 || type == Table::JSON) {
     table_mutex.unlock();
     return;
   }
@@ -1550,6 +1520,7 @@ void Table::AddColumn(Thd1 *thd) {
 
   std::string name = "N" + std::to_string(rand_int(300));
 
+  // todo add json column
   if (col_type == Column::GENERATED)
     tc = new Generated_Column(name, this);
   else if (col_type == Column::BLOB)
@@ -2214,8 +2185,10 @@ static std::string load_metadata_from_file() {
 
     if (std::count(name.begin(), name.end(), '_') > 1) {
       std::string table_type = name.substr(name.size() - 2, 2);
-      if (table_type.compare(partition_string) == 0)
+      if (table_type.compare("_p") == 0)
         table = new Partition_table(name);
+      else if (table_type.compare("_j") == 0)
+        table = new Json_table(name);
       else
         throw std::runtime_error("unhandled table type");
     } else
@@ -2241,25 +2214,34 @@ static std::string load_metadata_from_file() {
 
     table->key_block_size = tab["key_block_size"].GetInt();
 
-    /* save columns */
+    /* Populate Columns */
     for (auto &col : tab["columns"].GetArray()) {
       Column *a;
-      std::string type = col["type"].GetString();
-
-      if (type.compare("INT") == 0 || type.compare("CHAR") == 0 ||
-          type.compare("VARCHAR") == 0 || type.compare("BOOL") == 0 ||
-          type.compare("FLOAT") == 0 || type.compare("DOUBLE") == 0) {
+      auto type = Column::col_type(col["type"].GetString());
+      switch (type) {
+      case Column::INT:
+      case Column::CHAR:
+      case Column::VARCHAR:
+      case Column::FLOAT:
+      case Column::DOUBLE:
+      case Column::BOOL:
         a = new Column(col["name"].GetString(), type, table);
-      } else if (type.compare("GENERATED") == 0) {
-        auto name = col["name"].GetString();
-        auto clause = col["clause"].GetString();
-        auto sub_type = col["sub_type"].GetString();
-        a = new Generated_Column(name, table, clause, sub_type);
-      } else if (type.compare("BLOB") == 0) {
-        auto sub_type = col["sub_type"].GetString();
-        a = new Blob_Column(col["name"].GetString(), table, sub_type);
-      } else
+        break;
+      case Column::GENERATED:
+        a = new Generated_Column(col["name"].GetString(), table,
+                                 col["clause"].GetString(),
+                                 col["sub_type"].GetString());
+        break;
+      case Column::BLOB:
+        a = new Blob_Column(col["name"].GetString(), table,
+                            col["sub_type"].GetString());
+        break;
+      case Column::JSON:
+        a = new Json_Column(name, table, d);
+        break;
+      case Column::COLUMN_MAX:
         throw std::runtime_error("unhandled column type");
+      }
 
       a->null = col["null"].GetBool();
       a->auto_increment = col["auto_increment"].GetBool();

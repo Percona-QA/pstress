@@ -9,8 +9,9 @@
 
 int Json::max_size = 300;
 int Json::max_sub_set = 3;
+
 Json::Json(int depth) {
-  std::cout << "calling distructor " << depth << std::endl;
+  std::cout << "calling constructor" << depth << std::endl;
   size_ = rand_int(max_size);
   type_ = rand_type();
   if (depth > 0) {
@@ -22,6 +23,10 @@ Json::Json(int depth) {
       sub_json.insert({t, std::make_shared<Json>(depth - 1)});
   }
 }
+
+// read object from json
+Json::Json(rapidjson ::Document &d) { std::cout << d["sub_type"].GetString(); }
+
 Json::~Json() { std::cout << "distructor " << type_ << std::endl; }
 
 

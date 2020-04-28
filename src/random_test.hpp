@@ -38,17 +38,19 @@ public:
 
   Column(Table *table, COLUMN_TYPES type) : type_(type), table_(table){};
 
-  Column(std::string name, std::string type, Table *table)
-      : type_(col_type(type)), name_(name), table_(table){};
+  Column(std::string name, COLUMN_TYPES t, Table *table)
+      : type_(t), name_(name), table_(table){};
 
   /* table definition */
   std::string definition();
   /* return random value of that column */
   virtual std::string rand_value();
+
   /* return string to call type */
   static const std::string col_type_to_string(COLUMN_TYPES type);
+
   /* return column type from a string */
-  COLUMN_TYPES col_type(std::string type);
+  static COLUMN_TYPES col_type(std::string type);
   /* used to create_metadata */
   template <typename Writer> void Serialize(Writer &writer) const;
   /* return the clause of column */
@@ -107,37 +109,11 @@ struct Json_Column : public Column {
   Json_Column(std::string name, Table *table);
 
   /* constructor used to prepare metadata */
-  Json_Column(std::string name, Table *table, std::string str_sub_type);
+  Json_Column(std::string name, Table *table, rapidjson::Document &d);
 
   /* constructor for creating generated column */
   std::string generated_column();
 
-  /* prepare rand valud of json columm */
-  std::string rand_value();
-
-  /* pick some where and value used for update & delete */
-  void rand_sub_value(std::string &where, std::string &value);
-
-  enum SUB_TYPE { HASH, ARRAY } sub_type;
-
-  static std::string sub_type_to_string(SUB_TYPE s) {
-    switch (s) {
-    case HASH:
-      return "HASH";
-    case ARRAY:
-      return "ARRAY";
-    }
-  }
-
-  static SUB_TYPE string_to_sub_type(std::string s) {
-    if (s.compare("HASH") == 0)
-      return HASH;
-    else if (s.compare("ARRAY") == 0)
-      return ARRAY;
-    else
-      throw std::runtime_error("unhandled " + s + " at line " +
-                               std::to_string(__LINE__));
-  }
 
   int size;
   std::shared_ptr<Json> json;
