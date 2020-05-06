@@ -28,3 +28,15 @@
 
 # PS-6847
 .*Assertion failure.*btr0btr.ic:.*level.*
+
+# Table storage engine 'InnoDB' does not support the create option 'COMPRESSION'' on query.
+.*Error_code.*MY-001478.*
+
+# Compressed column is not allowed in the key list' on query
+.*Error_code.*MY-007001.*
+
+# A general tablespace name cannot contain '/'.' on query.
+.*Error_code.*MY-003119.*
+
+# Request to create 'unencrypted' table while using an 'encrypted' tablespace.
+.*Error_code.*MY-003825.*

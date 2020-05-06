@@ -23,18 +23,21 @@ fi
 ASSERTION_FLAG=0;
 ERROR_FLAG=0;
 SEARCH_ERROR_PATTERN="\[ERROR\].*"
-SEARCH_ASSERT_PATTERN="\[ERROR\].*Assertion.*";
+SEARCH_ASSERT_PATTERN="Assertion.*";
 SEARCH_FILE=exclude_patterns.txt
 
 # Search assertion string in Error log
-PATTERN=$(egrep "$SEARCH_ASSERT_PATTERN" $ERROR_LOG | sed -n -e 's/^.*\[ERROR\] //p');
+PATTERN=$(egrep "$SEARCH_ASSERT_PATTERN" $ERROR_LOG | sed -n -e 's/^.*Assertion //p');
 if [ "$PATTERN" != "" ]; then
   ASSERT_STRING=$PATTERN;
   ASSERTION_FLAG=1;
 fi
 
-# Search error string in Error Log, excluding assertion failure error
-PATTERN=$(egrep "$SEARCH_ERROR_PATTERN" $ERROR_LOG | grep -v "Assertion failure" | sed -n -e 's/^.*\[ERROR\] //p');
+# Search for errors in the Log, excluding assertion failure error &
+# errors when  DML is executed on tables with no PK due to default PXC Strict Mode enabled.
+
+PATTERN=$(egrep "$SEARCH_ERROR_PATTERN" $ERROR_LOG | grep -v "Assertion" |
+         grep -v "Percona-XtraDB-Cluster prohibits use of DML" | sed -n -e 's/^.*\[ERROR\] //p');
 if [ "$PATTERN" != "" ]; then
   ERROR_STRING=$PATTERN;
   ERROR_FLAG=1;
@@ -69,7 +72,6 @@ if [ $ERROR_FLAG -eq 1 ]; then
     while read SigTag
       do
         if [[ $line =~ ${SigTag} ]]; then
-          echo "Some known ERROR(s) were found in the error log(s)";
           ERROR_FOUND=1;
           break;
         fi
