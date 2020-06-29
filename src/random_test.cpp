@@ -1214,14 +1214,13 @@ bool execute_sql(std::string sql, Thd1 *thd) {
     /* log successful query */
     if (log_all || log_success) {
       thd->thread_log << " S " << sql;
-      if (result == NULL) {
-        auto affected_rows_count = mysql_affected_rows(thd->conn);
-        thd->thread_log << " rows:" << affected_rows_count << std::endl;
-      } else {
-        auto number = mysql_num_rows(result);
-        thd->thread_log << " rows:" << number << std::endl;
+      int number;
+      if (result == NULL)
+        number = mysql_affected_rows(thd->conn);
+      else
+        number = mysql_num_rows(result);
+      thd->thread_log << " rows:" << number << std::endl;
       }
-    }
     mysql_free_result(result);
   }
 
