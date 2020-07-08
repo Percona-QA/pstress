@@ -11,6 +11,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <sys/stat.h>
+
+/* Function prototype */
+void create_log_dir();
 
 /* struct for node setup */
 struct workerParams {
