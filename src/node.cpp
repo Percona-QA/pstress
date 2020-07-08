@@ -20,19 +20,25 @@ void Node::end_node() {
 }
 
 /* create the logdir if does not exist */
-void create_log_dir() {
+bool create_log_dir() {
   std::string logdir_path = opt_string(LOGDIR);
   struct stat st;
-  if(stat(logdir_path.c_str(),&st) != 0) {
-    if (mkdir(logdir_path.c_str(), 0755) == -1)
-      std::cerr << "Could not create log dir:  " << strerror(errno) << std::endl;
+  if (stat(logdir_path.c_str(),&st) != 0) {
+    if (mkdir(logdir_path.c_str(), 0755) == -1) {
+      return false;
+    }
   }
+  return true;
 }
 
 bool Node::createGeneralLog() {
   std::string logName;
   logName = myParams.logdir + "/" + myParams.myName + "_general" + ".log";
-  create_log_dir();
+  bool is_success = create_log_dir();
+  if (!is_success) {
+    std::cerr << "Could not create log dir: " << strerror(errno) << std::endl;
+    exit(1);
+  }
   general_log.open(logName, std::ios::out | std::ios::trunc);
   general_log << "- PStress v" << PQVERSION << "-" << PQREVISION
               << " compiled with " << FORK << "-" << mysql_get_client_info()
