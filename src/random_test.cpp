@@ -62,6 +62,7 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(RENAME_COLUMN, 0);
     opt_int_set(UNDO_SQL, 0);
     opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
+    opt_int_set(ALTER_REDO_LOGGING, 0);
   }
 
   auto enc_type = options->at(Option::ENCRYPTION_TYPE)->getString();
@@ -1802,6 +1803,14 @@ void alter_tablespace_encryption(Thd1 *thd) {
   }
 }
 
+/* alter instance enable disable redo logging */
+static void alter_redo_logging(Thd1 *thd) {
+  std::string sql = "ALTER INSTANCE ";
+  sql += (rand_int(1) == 0 ? "DISABLE" : "ENABLE");
+  sql += " INNODB REDO_LOG";
+  execute_sql(sql, thd);
+}
+
 /* alter database set encryption */
 void alter_database_encryption(Thd1 *thd) {
   std::string sql = "ALTER DATABASE test ENCRYPTION ";
@@ -2490,6 +2499,9 @@ void Thd1::run_some_query() {
       break;
     case Option::ROTATE_REDO_LOG_KEY:
       execute_sql("SELECT rotate_system_key(\"percona_redo\")", this);
+      break;
+    case Option::ALTER_REDO_LOGGING:
+      alter_redo_logging(this);
       break;
     case Option::ALTER_DATABASE_ENCRYPTION:
       alter_database_encryption(this);

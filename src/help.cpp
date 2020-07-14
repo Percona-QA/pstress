@@ -315,6 +315,13 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /* alter instance disable/enable redo logging */
+  opt = newOption(Option::INT, Option::ALTER_REDO_LOGGING, "alter-redo-log");
+  opt->help = "Alter instance enable/disable redo log";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* alter instance rotate innodb master key */
   opt = newOption(Option::INT, Option::ALTER_MASTER_KEY, "rotate-master-key");
   opt->help = "Alter instance rotate innodb master key";
