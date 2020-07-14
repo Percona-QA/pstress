@@ -101,7 +101,8 @@ echoit(){
 kill_server(){
   SIG=$1
   echoit "Killing the server with Signal $SIG";
-  (sleep 0.2; kill -$SIG ${MPID} >/dev/null 2>&1; timeout -k5 -s9 5s wait ${MPID} >/dev/null 2>&1) &
+  (sleep 0.2; kill -$SIG ${MPID} >/dev/null 2>&1; timeout -k4 -s9 4s wait ${MPID} >/dev/null 2>&1) &
+  timeout -k5 -s9 5s wait $KILLDPID >/dev/null 2>&1
 }
 
 # Shutdown the server
@@ -1598,7 +1599,7 @@ pquery_test(){
     elif [ $SIGNAL -eq 4 ]; then
       kill_server 4
     elif [ $SIGNAL -eq 15 ]; then
-      shutdown_server
+      kill_server 15
     fi
 
     if [ ${QUERY_CORRECTNESS_TESTING} -eq 1 ]; then
@@ -1720,9 +1721,11 @@ pquery_test(){
     if [ ${TRIAL_SAVED} -eq 0 ]; then
       if [ $(ls -l ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null | wc -l) -ge 1 -o "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null)" != "" -o "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node1/node1.err 2>/dev/null)" != "" -o "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node2/node2.err 2>/dev/null)" != "" -o "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node3/node3.err 2>/dev/null)" != "" ]; then
         if [ $(ls -l ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then
-          echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+          if [ ${SIGNAL} -ne 4 ]; then
+            echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+          fi
         else
-          echoit "mysqld crash detected in the error log via search_string.sh scan"
+          echoit "mysqld error detected in the log via search_string.sh scan"
         fi
         if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
           echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err)"
