@@ -1595,11 +1595,11 @@ pquery_test(){
     fi
 
     if [ $SIGNAL -eq 9 ]; then
-      kill_server 9
+      kill_server $SIGNAL
     elif [ $SIGNAL -eq 4 ]; then
-      kill_server 4
+      kill_server $SIGNAL
     elif [ $SIGNAL -eq 15 ]; then
-      kill_server 15
+      kill_server $SIGNAL
     fi
 
     if [ ${QUERY_CORRECTNESS_TESTING} -eq 1 ]; then
