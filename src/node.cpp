@@ -19,14 +19,15 @@ void Node::end_node() {
     delete querylist;
 }
 
-/* create the logdir if does not exist */
-bool create_log_dir() {
+/* create the logdir if does not exist
+@return false on error, true on success */
+
+static bool create_log_dir() {
   std::string logdir_path = opt_string(LOGDIR);
   struct stat st;
   if (stat(logdir_path.c_str(),&st) != 0) {
-    if (mkdir(logdir_path.c_str(), 0755) == -1) {
+    if (mkdir(logdir_path.c_str(), 0755) == -1)
       return false;
-    }
   }
   return true;
 }
@@ -37,7 +38,7 @@ bool Node::createGeneralLog() {
   bool is_success = create_log_dir();
   if (!is_success) {
     std::cerr << "Could not create log dir: " << strerror(errno) << std::endl;
-    exit(1);
+    return false;
   }
   general_log.open(logName, std::ios::out | std::ios::trunc);
   general_log << "- PStress v" << PQVERSION << "-" << PQREVISION

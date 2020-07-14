@@ -13,9 +13,6 @@
 #include <vector>
 #include <sys/stat.h>
 
-/* Create log dir if not exists */
-bool create_log_dir();
-
 /* struct for node setup */
 struct workerParams {
   workerParams() {
