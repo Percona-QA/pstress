@@ -31,7 +31,7 @@
 #define opt_int(a) options->at(Option::a)->getInt();
 #define opt_int_set(a, b) options->at(Option::a)->setInt(b);
 #define opt_bool(a) options->at(Option::a)->getBool();
-#define opt_string(a) options->at(Option::a)->getString();
+#define opt_string(a) options->at(Option::a)->getString()
 
 int rand_int(int upper, int lower = 0);
 std::string rand_float(float upper, float lower = 0);

@@ -23,7 +23,7 @@ void Node::end_node() {
 @return false on error, true on success */
 
 static bool create_log_dir() {
-  std::string logdir_path = opt_string(LOGDIR);
+  std::string logdir_path(opt_string(LOGDIR));
   struct stat st;
   if (stat(logdir_path.c_str(),&st) != 0) {
     if (mkdir(logdir_path.c_str(), 0755) == -1)
