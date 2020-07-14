@@ -11,6 +11,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <sys/stat.h>
 
 /* struct for node setup */
 struct workerParams {
