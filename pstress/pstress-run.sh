@@ -106,12 +106,13 @@ kill_server(){
 
 # PXC Bug found display function
 pxc_bug_found(){
-  if [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node1/node1.err 2>/dev/null)" != "" ]; then
-    echoit "Bug found in PXC/GR node #1 (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node1/node1.err)"; fi
-  if [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node2/node2.err 2>/dev/null)" != "" ]; then
-    echoit "Bug found in PXC/GR node #2 (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node2/node2.err)"; fi
-  if [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node3/node3.err 2>/dev/null)" != "" ]; then
-    echoit "Bug found in PXC/GR node #3 (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node3/node3.err)"; fi
+  NODE=$1
+  for i in $(seq 1 $NODE)
+  do
+    if [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node$i/node$i.err 2>/dev/null)" != "" ]; then
+      echoit "Bug found in PXC/GR node#$i(as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node$i/node$i.err)";
+    fi
+  done;
 }
 
 # Find mysqld binary
@@ -1725,7 +1726,7 @@ pquery_test(){
         if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
           echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err)"
         elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-          pxc_bug_found
+          pxc_bug_found 3
         fi
         savetrial
         TRIAL_SAVED=1
@@ -1740,7 +1741,7 @@ pquery_test(){
           if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
             echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err)"
           elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-            pxc_bug_found
+            pxc_bug_found 3
           fi
         fi
         savetrial
