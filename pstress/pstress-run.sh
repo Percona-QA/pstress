@@ -1653,7 +1653,7 @@ pquery_test(){
         fi
       fi
     fi
-    (ps -ef | grep 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -9 >/dev/null 2>&1 || true)
+    (ps -ef | grep 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -$SIGNAL >/dev/null 2>&1 || true)
     sleep 2; sync
   fi
   if [ ${ISSTARTED} -eq 1 -a ${TRIAL_SAVED} -ne 1 ]; then  # Do not try and print pquery log for a failed mysqld start
@@ -1717,33 +1717,53 @@ pquery_test(){
       fi
     fi
     if [ ${TRIAL_SAVED} -eq 0 ]; then
-      if [[ ${SIGNAL} -ne 4 && ( $(ls -l ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null | wc -l) -ge 1 || "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null)" != "" || "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node1/node1.err 2>/dev/null)" != "" || "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node2/node2.err 2>/dev/null)" != "" || "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node3/node3.err 2>/dev/null)" != "" ) ]]; then
-        if [ $(ls -l ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then
-          echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
-        else
-          echoit "mysqld error detected in the log via search_string.sh scan"
-        fi
+      if [[ ${SIGNAL} -ne 4 ]]; then
         if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
-          echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err)"
+          ISSUE_FOUND=0
+          if [ $(ls -l ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then
+            echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+            ISSUE_FOUND=1
+          elif [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null)" != "" ]; then
+            echoit "mysqld error detected in the log via search_string.sh scan"
+            ISSUE_FOUND=1
+          fi
+          if [ $ISSUE_FOUND = 1 ]; then
+            echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err)"
+          fi
         elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-          pxc_bug_found 3
+          if [ $(ls -l ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then
+            echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+          else
+            echoit "mysqld error detected in the log via search_string.sh scan"
+            pxc_bug_found 3
+          fi
         fi
         savetrial
         TRIAL_SAVED=1
       elif [ ${SIGNAL} -eq 4 ]; then
-        if [[ $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null | wc -l) -ge 1 || $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/node1/node1.err 2>/dev/null | wc -l) -ge 1 || $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/node2/node2.err 2>/dev/null | wc -l) -ge 1 || $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/node3/node3.err 2>/dev/null | wc -l) -ge 1 ]]; then
-          echoit "mysqld coredump detected due to SIGNAL(kill -4) at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
-        else
-          echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
-        fi
-        if [[ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null)" != "" || "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node1/node1.err 2>/dev/null)" != "" || "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node2/node2.err 2>/dev/null)" != "" || "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/node3/node3.err 2>/dev/null)" != "" ]]; then
-          echoit "mysqld error detected in the log via search_string.sh scan"
-          if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
+        if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
+          ISSUE_FOUND=0
+          if [[ $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null | wc -l) -ge 1 ]]; then
+            echoit "mysqld coredump detected due to SIGNAL(kill -4) at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+          else
+            echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+            ISSUE_FOUND=1
+          fi
+          if [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null)" != "" ]; then
+            echoit "mysqld error detected in the log via search_string.sh scan"
+            ISSUE_FOUND=1
+          fi
+          if [ $ISSUE_FOUND = 1 ]; then
             echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err)"
-          elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-            pxc_bug_found 3
+          fi
+        elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
+          if [[ $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/node1/node1.err 2>/dev/null | wc -l) -ge 1 || $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/node2/node2.err 2>/dev/null | wc -l) -ge 1 || $(grep -i "mysqld got signal 4" ${RUNDIR}/${TRIAL}/node3/node3.err 2>/dev/null | wc -l) -ge 1 ]]; then
+            echoit "mysqld coredump detected due to SIGNAL(kill -4) at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+          else
+            echoit "mysqld coredump detected at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
           fi
         fi
+        pxc_bug_found 3
         savetrial
         TRIAL_SAVED=1
       elif [ $(grep "SIGKILL myself" ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null | wc -l) -ge 1 ]; then
