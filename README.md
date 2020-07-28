@@ -153,3 +153,9 @@ cd pstress/src
 ./pstress-ps --tables 30 --logdir=$PWD/log --records 200 --threads 10 --seconds 100 --socket $SOCKET -k --insert-row 100 ---update-with-cond 50 --no-delete
 ```
 
+# Contributors
+* Alexey Bychko - C++ code, cmake extensions
+* Roel Van de Paar - invention, scripted framework
+* Rahul Malik - pstress developer
+* Mohit Joshi - pstress developer
+* For the full list of contributors, please see [CONTRIBUTORS](https://github.com/Percona-QA/pstress/blob/master/doc/CONTRIBUTORS)
