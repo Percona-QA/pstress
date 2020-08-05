@@ -217,15 +217,6 @@ public:
   std::mutex table_mutex;
 };
 
-/* Partition table */
-struct Partition_table : public Table {
-public:
-  Partition_table(std::string n) : Table(n){};
-  ~Partition_table() {}
-  std::string partition_start;
-  //  string partiton_type() { return partition_start; }
-};
-
 /* Temporary table */
 struct Temporary_table : public Table {
 public:

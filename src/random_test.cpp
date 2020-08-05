@@ -4,6 +4,7 @@
  =========================================================
 */
 #include "random_test.hpp"
+#include "partition.hpp"
 #include "common.hpp"
 #include "node.hpp"
 #include <iomanip>
