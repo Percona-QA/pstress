@@ -15,21 +15,21 @@ struct Partition_By_Range : public Partition_table {
 public:
 virtual std::string definition();
 Partition_By_Range(std::string n);
-virtual ~Partition_By_Range() {}
+~Partition_By_Range() {}
 };
 
 struct Partition_By_List : public Partition_table {
 public:
 virtual std::string definition();
 Partition_By_List(std::string n);
-virtual ~Partition_By_List() {}
+~Partition_By_List() {}
 };
 
 struct Partition_By_Hash : public Partition_table {
 public:
 virtual std::string definition();
 Partition_By_Hash(std::string n);
-virtual ~Partition_By_Hash() {}
+~Partition_By_Hash() {}
 };
 
 #endif
