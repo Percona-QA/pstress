@@ -138,7 +138,7 @@ int sum_of_all_options(Thd1 *thd) {
   auto only_cl_sql = opt_bool(ONLY_CL_SQL);
   auto no_ddl = opt_bool(NO_DDL);
 
-  /* if set, then disable all other DDL */
+  /* if set, then disable all other SQL*/
   if (only_cl_sql) {
     for (auto &opt : *options) {
       if (opt != nullptr && opt->sql && !opt->cl)
@@ -178,6 +178,8 @@ int sum_of_all_options(Thd1 *thd) {
     total += opt->getInt();
   }
 
+  if (total == 0)
+    throw std::runtime_error("no option selected");
   return total;
 }
 
@@ -670,6 +672,15 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
   writer.String("name");
   writer.String(name_.c_str(), static_cast<SizeType>(name_.length()));
 
+  if (type == PARTITION) {
+    writer.String("part_type");
+    std::string part_type =
+        static_cast<const Partition_table *>(this)->get_part_type();
+    writer.String(part_type.c_str(), static_cast<SizeType>(part_type.length()));
+    writer.String("number_of_part");
+    writer.Int(static_cast<const Partition_table *>(this)->number_of_part);
+  }
+
   writer.String("engine");
   if (!engine.empty())
     writer.String(engine.c_str(), static_cast<SizeType>(engine.length()));
@@ -760,6 +771,20 @@ Table::Table(std::string n) : name_(n), indexes_() {
   indexes_ = new std::vector<Index *>;
 }
 
+/* Constructor used by load_metadata */
+Partition_table::Partition_table(std::string n, std::string part_type_,
+                                 int number_of_part_)
+    : Table(n), number_of_part(number_of_part_) {
+  set_part_type(part_type_);
+}
+
+/* Constructor used by new table */
+Partition_table::Partition_table(std::string n) : Table(n) {
+  std::cout << "constructor" << std::endl;
+  part_type = LIST;
+  number_of_part = rand_int(100);
+}
+
 void Table::DropCreate(Thd1 *thd) {
   execute_sql("DROP TABLE " + name_, thd);
   std::string def = definition();
@@ -803,6 +828,15 @@ Table::~Table() {
 
 /* create default column */
 void Table::CreateDefaultColumn() {
+
+  /* if table is partition add new column */
+  if (type == PARTITION) {
+    std::string name = "p_col";
+    Column::COLUMN_TYPES type = Column::INT;
+    auto col = new Column{name, this, type};
+    AddInternalColumn(col);
+    std::cout << "loaded successful" << std::endl;
+  }
   auto no_auto_inc = opt_bool(NO_AUTO_INC);
 
   /* create normal column */
@@ -880,6 +914,17 @@ void Table::CreateDefaultColumn() {
     AddInternalColumn(col);
   }
 }
+
+/* create default partition column */
+/*
+void Partition_table::CreateDefaultColumn() {
+  std::string name = "p_col";
+  Column::COLUMN_TYPES type = Column::INT;
+  auto col = new Column{name, this, type};
+  AddInternalColumn(col);
+  std::cout << "loaded successful" << std::endl;
+}
+  */
 
 /* create default indexes */
 void Table::CreateDefaultIndex() {
@@ -1005,8 +1050,8 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   static int tbs_count = opt_int(NUMBER_OF_GENERAL_TABLESPACE);
 
   /* temporary table can't have tablespace */
-  if (table->type != TEMPORARY && g_tablespace.size() > 0 &&
-      rand_int(tbs_count) != 0) {
+  if (table->type != TEMPORARY && table->type != PARTITION &&
+      g_tablespace.size() > 0 && rand_int(tbs_count) != 0) {
     table->tablespace = g_tablespace[rand_int(g_tablespace.size() - 1)];
 
     if (table->tablespace.substr(table->tablespace.size() - 2, 2)
@@ -1062,7 +1107,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
 /* prepare table definition */
 std::string Table::definition() {
   std::string def = "CREATE";
-  if (type == TABLE_TYPES::TEMPORARY)
+  if (type == TEMPORARY)
     def += " TEMPORARY";
   def += " TABLE " + name_ + " (";
 
@@ -1076,8 +1121,17 @@ std::string Table::definition() {
 
   /* if column has primary key */
   for (auto col : *columns_) {
-    if (col->primary_key)
-      def += " PRIMARY KEY(" + col->name_ + "), ";
+    if (col->primary_key) {
+      def += " PRIMARY KEY(";
+      if (type == PARTITION) {
+        if (rand_int(1) == 0)
+          def += col->name_ + ", ip_col";
+        else
+          def += "ip_col, " + col->name_;
+      } else
+        def += col->name_;
+      def += +"), ";
+    }
   }
 
   if (indexes_->size() > 0) {
@@ -1109,6 +1163,9 @@ std::string Table::definition() {
   if (!engine.empty())
     def += " ENGINE=" + engine;
 
+  if (type == PARTITION)
+    def += " PARTITION BY KEY(ip_col) PARTITIONS " +
+           std::to_string(static_cast<Partition_table *>(this)->number_of_part);
   return def;
 }
 
@@ -2132,9 +2189,10 @@ static std::string load_metadata_from_file() {
 
     if (std::count(name.begin(), name.end(), '_') > 1) {
       std::string table_type = name.substr(name.size() - 2, 2);
-      if (table_type.compare(partition_string) == 0)
-        table = new Partition_table(name);
-      else
+      if (table_type.compare(partition_string) == 0) {
+        table = new Partition_table(name, tab["part_type"].GetString(),
+                                    tab["number_of_part"].GetInt());
+      } else
         throw std::runtime_error("unhandled table type");
     } else
       table = new Table(name);

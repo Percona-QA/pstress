@@ -178,7 +178,7 @@ public:
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
-  void CreateDefaultColumn();
+  virtual void CreateDefaultColumn();
   void CreateDefaultIndex();
   void CopyDefaultColumn(Table *table);
   void CopyDefaultIndex(Table *table);
@@ -220,10 +220,31 @@ public:
 /* Partition table */
 struct Partition_table : public Table {
 public:
-  Partition_table(std::string n) : Table(n){};
+  enum PART_TYPE { RANGE, LIST, HASH } part_type;
+  int number_of_part;
+  Partition_table(std::string n);
+  Partition_table(std::string n, std::string part_type_, int number_of_part_);
   ~Partition_table() {}
-  std::string partition_start;
-  //  string partiton_type() { return partition_start; }
+
+  const std::string get_part_type() const {
+    switch (part_type) {
+    case LIST:
+      return "LIST";
+    case RANGE:
+      return "RANGE";
+    case HASH:
+      return "HASH";
+    }
+  }
+
+  void set_part_type(const std::string &sb_type) {
+    if (sb_type.compare("LIST") == 0)
+      part_type = LIST;
+    else if (sb_type.compare("RANGE") == 0)
+      part_type = RANGE;
+    else if (sb_type.compare("HASH") == 0)
+      part_type = HASH;
+  }
 };
 
 /* Temporary table */
