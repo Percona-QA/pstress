@@ -469,8 +469,21 @@ void add_options() {
   opt = newOption(Option::INT, Option::CHECK_TABLE, "check");
   opt->help = "check table, for partition table randomly check either "
               "partition or full table";
-  opt->setInt(1);
+  opt->setInt(5);
   opt->setSQL();
+
+  /* Add drop Partition */
+  opt =
+      newOption(Option::INT, Option::ADD_DROP_PARTITION, "add-drop-partition");
+  opt->help = "randomly add drop new partitions";
+  opt->setInt(3);
+  opt->setSQL();
+  opt->setDDL();
+
+  /* maximum number Partition */
+  opt = newOption(Option::INT, Option::MAX_PARTITIONS, "max_partitions");
+  opt->help = "maximum number of partitions in table";
+  opt->setInt(100);
 
   /* Optimize Table */
   opt = newOption(Option::INT, Option::OPTIMIZE, "optimize");

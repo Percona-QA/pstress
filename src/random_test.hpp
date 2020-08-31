@@ -221,10 +221,14 @@ public:
 /* Partition table */
 struct Partition_table : public Table {
 public:
-  enum PART_TYPE { RANGE, LIST, HASH } part_type;
-  int number_of_part;
+  enum PART_TYPE { RANGE, LIST, HASH, KEY } part_type;
+
   Partition_table(std::string n);
+
   Partition_table(std::string n, std::string part_type_, int number_of_part_);
+
+  /* add drop partitions */
+  void AddDropPartition(Thd1 *thd);
   ~Partition_table() {}
 
   const std::string get_part_type() const {
@@ -235,6 +239,8 @@ public:
       return "RANGE";
     case HASH:
       return "HASH";
+    case KEY:
+      return "KEY";
     }
   }
 
@@ -245,7 +251,10 @@ public:
       part_type = RANGE;
     else if (sb_type.compare("HASH") == 0)
       part_type = HASH;
+    else if (sb_type.compare("KEY") == 0)
+      part_type = KEY;
   }
+  int number_of_part;
 };
 
 /* Temporary table */

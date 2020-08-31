@@ -780,9 +780,8 @@ Partition_table::Partition_table(std::string n, std::string part_type_,
 
 /* Constructor used by new table */
 Partition_table::Partition_table(std::string n) : Table(n) {
-  std::cout << "constructor" << std::endl;
-  part_type = LIST;
-  number_of_part = rand_int(100);
+  part_type = rand_int(1) == 0 ? HASH : KEY;
+  number_of_part = rand_int(options->at(Option::MAX_PARTITIONS)->getInt(), 1);
 }
 
 void Table::DropCreate(Thd1 *thd) {
@@ -843,6 +842,30 @@ void Table::Analyze(Thd1 *thd) {
 }
 
 void Table::Truncate(Thd1 *thd) { execute_sql("TRUNCATE TABLE " + name_, thd); }
+
+/* add or drop average 10% of max partitions */
+void Partition_table::AddDropPartition(Thd1 *thd) {
+  int new_partition =
+      rand_int(options->at(Option::MAX_PARTITIONS)->getInt() / 10, 1);
+
+  if (rand_int(1) == 0) {
+    if (execute_sql("ALTER TALBE " + name_ + " ADD PARTITION PARTITIONS " +
+                        std::to_string(new_partition),
+                    thd)) {
+      table_mutex.lock();
+      number_of_part -= new_partition;
+      table_mutex.unlock();
+    }
+  } else {
+    if (execute_sql("ALTER TABLE " + name_ + " COALESCE PARTITION " +
+                        std::to_string(new_partition),
+                    thd)) {
+      table_mutex.lock();
+      number_of_part += new_partition;
+      table_mutex.unlock();
+    }
+  }
+}
 
 Table::~Table() {
   for (auto ind : *indexes_)
@@ -1192,9 +1215,14 @@ std::string Table::definition() {
   if (!engine.empty())
     def += " ENGINE=" + engine;
 
-  if (type == PARTITION)
-    def += " PARTITION BY KEY(ip_col) PARTITIONS " +
-           std::to_string(static_cast<Partition_table *>(this)->number_of_part);
+  if (type == PARTITION) {
+      auto par = static_cast<Partition_table *>(this);
+      if (par->part_type == Partition_table::HASH ||
+          par->part_type == Partition_table::KEY) {
+        def += " PARTITION BY " + par->get_part_type() +
+               "(ip_col) PARTITIONS " + std::to_string(par->number_of_part);
+      }
+  }
   return def;
 }
 
@@ -2085,7 +2113,7 @@ static void special_sql(std::vector<Table *> *all_tables, Thd1 *thd) {
 
     execute_sql(sql, thd);
   } else
-    std::cout << "NOT ABLE TO FIND any SQL" << std::endl;
+    std::cout << "NOT ABLE TO FIND any SQL in special SQL" << std::endl;
 }
 
 /* save metadata to a file */
@@ -2577,6 +2605,10 @@ void Thd1::run_some_query() {
       break;
     case Option::CHECK_TABLE:
       table->Check(this);
+      break;
+    case Option::ADD_DROP_PARTITION:
+      if (table->type == Table::PARTITION)
+        static_cast<Partition_table *>(table)->AddDropPartition(this);
       break;
     case Option::ANALYZE:
       table->Analyze(this);
