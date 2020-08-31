@@ -809,9 +809,38 @@ void Table::DropCreate(Thd1 *thd) {
   }
 }
 
-void Table::Optimize(Thd1 *thd) { execute_sql("OPTIMIZE TABLE " + name_, thd); }
+void Table::Optimize(Thd1 *thd) {
+  if (type == PARTITION && rand_int(4) == 1) {
+    int partition =
+        rand_int(static_cast<Partition_table *>(this)->number_of_part - 1);
+    execute_sql("ALTER TABLE " + name_ + " OPTIMIZE PARTITION p" +
+                    std::to_string(partition),
+                thd);
+  } else
+    execute_sql("OPTIMIZE TABLE " + name_, thd);
+}
 
-void Table::Analyze(Thd1 *thd) { execute_sql("ANALYZE TABLE " + name_, thd); }
+void Table::Check(Thd1 *thd) {
+  if (type == PARTITION && rand_int(4) == 1) {
+    int partition =
+        rand_int(static_cast<Partition_table *>(this)->number_of_part - 1);
+    execute_sql("ALTER TABLE " + name_ + " CHECK PARTITION p" +
+                    std::to_string(partition),
+                thd);
+  } else
+    execute_sql("CHECK TABLE " + name_, thd);
+}
+
+void Table::Analyze(Thd1 *thd) {
+  if (type == PARTITION && rand_int(4) == 1) {
+    int partition =
+        rand_int(static_cast<Partition_table *>(this)->number_of_part - 1);
+    execute_sql("ALTER TABLE " + name_ + " ANALYZE PARTITION p" +
+                    std::to_string(partition),
+                thd);
+  } else
+    execute_sql("ANALYZE TABLE " + name_, thd);
+}
 
 void Table::Truncate(Thd1 *thd) { execute_sql("TRUNCATE TABLE " + name_, thd); }
 
@@ -828,6 +857,8 @@ Table::~Table() {
 
 /* create default column */
 void Table::CreateDefaultColumn() {
+  auto no_auto_inc = opt_bool(NO_AUTO_INC);
+  bool auto_increment = false;
 
   /* if table is partition add new column */
   if (type == PARTITION) {
@@ -835,15 +866,12 @@ void Table::CreateDefaultColumn() {
     Column::COLUMN_TYPES type = Column::INT;
     auto col = new Column{name, this, type};
     AddInternalColumn(col);
-    std::cout << "loaded successful" << std::endl;
   }
-  auto no_auto_inc = opt_bool(NO_AUTO_INC);
 
   /* create normal column */
   static auto max_col = opt_int(COLUMNS);
 
   auto max_columns = rand_int(max_col, 1);
-  bool auto_increment = false;
 
   for (int i = 0; i < max_columns; i++) {
     std::string name;
@@ -858,15 +886,16 @@ void Table::CreateDefaultColumn() {
       name = "pkey";
       col = new Column{name, this, type};
       col->primary_key = true;
-      if (!no_auto_inc &&
-          rand_int(3) < 3) { /* 75% of primary key tables are autoinc */
-        col->auto_increment = true;
+      if (!no_auto_inc && rand_int(3) < 3) {
+        /* 75% of primary key tables are autoinc */
+        if (this->type == PARTITION && rand_int(3) == 1)
+          columns_->at(0)->auto_increment = true;
+        else
+          col->auto_increment = true;
         auto_increment = true;
       }
-
     } else {
       name = std::to_string(i);
-
       Column::COLUMN_TYPES col_type = Column::COLUMN_MAX;
       static auto no_virtual_col = opt_bool(NO_VIRTUAL_COLUMNS);
       static auto no_blob_col = opt_bool(NO_BLOB);
@@ -2545,6 +2574,9 @@ void Thd1::run_some_query() {
       break;
     case Option::OPTIMIZE:
       table->Optimize(this);
+      break;
+    case Option::CHECK_TABLE:
+      table->Check(this);
       break;
     case Option::ANALYZE:
       table->Analyze(this);

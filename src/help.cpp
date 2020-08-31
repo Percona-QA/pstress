@@ -459,14 +459,23 @@ void add_options() {
 
   /* Analyze Table */
   opt = newOption(Option::INT, Option::ANALYZE, "analyze");
-  opt->help = "analyze table";
+  opt->help = "analyze table, for partition table randomly analyze either "
+              "partition or full table";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
 
+  /* Check Table */
+  opt = newOption(Option::INT, Option::CHECK_TABLE, "check");
+  opt->help = "check table, for partition table randomly check either "
+              "partition or full table";
+  opt->setInt(1);
+  opt->setSQL();
+
   /* Optimize Table */
   opt = newOption(Option::INT, Option::OPTIMIZE, "optimize");
-  opt->help = "optimize table";
+  opt->help = "optimize table, for paritition table randomly optimize either "
+              "partition or full table ";
   opt->setInt(3);
   opt->setSQL();
   opt->setDDL();

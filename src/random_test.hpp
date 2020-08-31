@@ -185,6 +185,7 @@ public:
   void DropCreate(Thd1 *thd);
   void Optimize(Thd1 *thd);
   void Analyze(Thd1 *thd);
+  void Check(Thd1 *thd);
   void Truncate(Thd1 *thd);
   void SetEncryption(Thd1 *thd);
   void SetEncryptionInplace(Thd1 *thd);
