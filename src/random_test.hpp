@@ -219,17 +219,17 @@ public:
 };
 
 /* Partition table */
-struct Partition_table : public Table {
+struct Partition : public Table {
 public:
   enum PART_TYPE { RANGE, LIST, HASH, KEY } part_type;
 
-  Partition_table(std::string n);
+  Partition(std::string n);
 
-  Partition_table(std::string n, std::string part_type_, int number_of_part_);
+  Partition(std::string n, std::string part_type_, int number_of_part_);
 
   /* add drop partitions */
-  void AddDropPartition(Thd1 *thd);
-  ~Partition_table() {}
+  void AddDrop(Thd1 *thd);
+  ~Partition() {}
 
   const std::string get_part_type() const {
     switch (part_type) {
@@ -257,8 +257,19 @@ public:
   int number_of_part;
   /* type of partition supported for current run */
   static std::vector<PART_TYPE> supported;
-  /* how current range is distributed */
-  std::vector<int> positions;
+  /* how ranges are distributed */
+
+  struct PartitionRange {
+    PartitionRange(std::string n, int r) : name(n), range(r){};
+    std::string name;
+    int range;
+  };
+
+  static bool compareRange(PartitionRange P1, PartitionRange P2) {
+    return P1.range < P2.range;
+  }
+
+  std::vector<PartitionRange> positions;
 };
 
 /* Temporary table */

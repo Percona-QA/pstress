@@ -486,8 +486,8 @@ void add_options() {
   opt->setInt(100);
 
   /* Total number of partition supported */
-  opt = newOption(Option::STRING, Option::PARTITION_SUPPORTED,
-                  "partition-supported");
+  opt =
+      newOption(Option::STRING, Option::PARTITION_SUPPORTED, "partition-types");
   opt->help =
       "total partition supported, all for LIST, HASH, KEY, RANGE or to provide "
       "or pass for example --partition_supported LIST, HASH "
