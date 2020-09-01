@@ -481,9 +481,18 @@ void add_options() {
   opt->setDDL();
 
   /* maximum number Partition */
-  opt = newOption(Option::INT, Option::MAX_PARTITIONS, "max_partitions");
+  opt = newOption(Option::INT, Option::MAX_PARTITIONS, "max-partitions");
   opt->help = "maximum number of partitions in table";
   opt->setInt(100);
+
+  /* Total number of partition supported */
+  opt = newOption(Option::STRING, Option::PARTITION_SUPPORTED,
+                  "partition-supported");
+  opt->help =
+      "total partition supported, all for LIST, HASH, KEY, RANGE or to provide "
+      "or pass for example --partition_supported LIST, HASH "
+      "RANGE";
+  opt->setString("all");
 
   /* Optimize Table */
   opt = newOption(Option::INT, Option::OPTIMIZE, "optimize");

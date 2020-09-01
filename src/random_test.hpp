@@ -255,6 +255,10 @@ public:
       part_type = KEY;
   }
   int number_of_part;
+  /* type of partition supported for current run */
+  static std::vector<PART_TYPE> supported;
+  /* how current range is distributed */
+  std::vector<int> positions;
 };
 
 /* Temporary table */

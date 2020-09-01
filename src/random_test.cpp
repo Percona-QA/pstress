@@ -34,6 +34,7 @@ std::atomic<size_t> table_started(0);
 std::atomic<size_t> table_completed(0);
 std::atomic_flag lock_stream = ATOMIC_FLAG_INIT;
 std::atomic<bool> connection_lost(false);
+std::vector<Partition_table::PART_TYPE> Partition_table::supported;
 
 /* get result of sql */
 static std::string get_result(std::string sql, Thd1 *thd) {
@@ -55,6 +56,24 @@ static std::string db_branch() {
 /* return probabality of all options and disable some feature based on user
  * request/ branch/ fork */
 int sum_of_all_options(Thd1 *thd) {
+
+  /*check which all partition type supported */
+  auto part_supp = opt_string(PARTITION_SUPPORTED);
+  if (part_supp.compare("all") == 0) {
+    Partition_table::supported.push_back(Partition_table::KEY);
+    Partition_table::supported.push_back(Partition_table::LIST);
+    Partition_table::supported.push_back(Partition_table::HASH);
+    Partition_table::supported.push_back(Partition_table::RANGE);
+  } else {
+    if (part_supp.find("HASH") != std::string::npos)
+      Partition_table::supported.push_back(Partition_table::HASH);
+    if (part_supp.find("KEY") != std::string::npos)
+      Partition_table::supported.push_back(Partition_table::KEY);
+    if (part_supp.find("LIST") != std::string::npos)
+      Partition_table::supported.push_back(Partition_table::LIST);
+    if (part_supp.find("RANGE") != std::string::npos)
+      Partition_table::supported.push_back(Partition_table::RANGE);
+  }
 
   /* for 5.7 disable some features */
   if (db_branch().compare("5.7") == 0) {
@@ -780,7 +799,9 @@ Partition_table::Partition_table(std::string n, std::string part_type_,
 
 /* Constructor used by new table */
 Partition_table::Partition_table(std::string n) : Table(n) {
-  part_type = rand_int(1) == 0 ? HASH : KEY;
+
+  part_type = supported[rand_int(supported.size() - 1)];
+
   number_of_part = rand_int(options->at(Option::MAX_PARTITIONS)->getInt(), 1);
 }
 
@@ -1221,6 +1242,7 @@ std::string Table::definition() {
           par->part_type == Partition_table::KEY) {
         def += " PARTITION BY " + par->get_part_type() +
                "(ip_col) PARTITIONS " + std::to_string(par->number_of_part);
+      } else if (par->part_type == Partition_table::RANGE) {
       }
   }
   return def;
