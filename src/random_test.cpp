@@ -692,12 +692,26 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
   writer.String(name_.c_str(), static_cast<SizeType>(name_.length()));
 
   if (type == PARTITION) {
+    auto part_table = static_cast<const Partition *>(this);
     writer.String("part_type");
-    std::string part_type =
-        static_cast<const Partition *>(this)->get_part_type();
+    std::string part_type = part_table->get_part_type();
     writer.String(part_type.c_str(), static_cast<SizeType>(part_type.length()));
     writer.String("number_of_part");
-    writer.Int(static_cast<const Partition *>(this)->number_of_part);
+    writer.Int(part_table->number_of_part);
+    if (part_table->part_type == Partition::RANGE) {
+      writer.String("partition_range");
+      writer.StartArray();
+      for (auto par : part_table->positions) {
+        writer.StartObject();
+        writer.String("name");
+        writer.String(par.name.c_str(),
+                      static_cast<SizeType>(par.name.length()));
+        writer.String("range");
+        writer.Int(par.range);
+        writer.EndObject();
+      }
+        writer.EndObject();
+    }
   }
 
   writer.String("engine");
@@ -796,12 +810,12 @@ Partition::Partition(std::string n, std::string part_type_, int number_of_part_)
   set_part_type(part_type_);
 }
 
-/* Constructor used by new table */
+/* Constructor used by new Partiton table */
 Partition::Partition(std::string n) : Table(n) {
 
   part_type = supported[rand_int(supported.size() - 1)];
 
-  number_of_part = rand_int(options->at(Option::MAX_PARTITIONS)->getInt(), 1);
+  number_of_part = rand_int(options->at(Option::MAX_PARTITIONS)->getInt(), 2);
 
   /* randomly pick ranges for partition */
   if (part_type == RANGE) {
@@ -814,8 +828,6 @@ Partition::Partition(std::string n) : Table(n) {
     std::sort(positions.begin(), positions.end(), Partition::compareRange);
     for (int i = 0; i < number_of_part; i++) {
       positions.at(i).name = "p" + std::to_string(i);
-      std::cout << positions.at(i).name << " " << positions.at(i).range
-                << std::endl;
     }
   }
 }
@@ -877,7 +889,26 @@ void Table::Analyze(Thd1 *thd) {
     execute_sql("ANALYZE TABLE " + name_, thd);
 }
 
-void Table::Truncate(Thd1 *thd) { execute_sql("TRUNCATE TABLE " + name_, thd); }
+void Table::Truncate(Thd1 *thd) {
+  /* 99% truncate the some partition */
+  if (type == PARTITION && rand_int(100) > 98) {
+    std::string part_name;
+    auto part_table = static_cast<Partition *>(this);
+    if (part_table->part_type == Partition::HASH ||
+        part_table->part_type == Partition::KEY) {
+      part_name = std::to_string(rand_int(part_table->number_of_part - 1));
+    } else if (part_table->part_type == Partition::RANGE) {
+      part_name =
+          part_table->positions.at(rand_int(part_table->positions.size() - 1))
+              .name;
+    }
+    execute_sql("ALTER TABLE " + name_ + " TRUNCATE PARTITION " + part_name,
+                thd);
+
+  } else {
+    execute_sql("TRUNCATE TABLE " + name_, thd);
+  }
+}
 
 /* add or drop average 10% of max partitions */
 void Partition::AddDrop(Thd1 *thd) {
@@ -904,7 +935,7 @@ void Partition::AddDrop(Thd1 *thd) {
     }
   } else if (part_type == RANGE) {
     /* drop partition */
-    if (rand_int(1) == 0) {
+    if (rand_int(1) == 1) {
       auto par = positions.at(rand_int(positions.size() - 1));
       auto part_name = par.name;
       if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
@@ -920,6 +951,36 @@ void Partition::AddDrop(Thd1 *thd) {
       }
     } else {
       /* add partition */
+      size_t pst = rand_int(positions.size() - 1, 1);
+      if (positions.at(pst).range - positions.at(pst - 1).range <= 2)
+        return;
+      table_mutex.lock();
+      auto par = positions.at(pst);
+      auto prev_par = positions.at(pst - 1);
+      auto first = rand_int(par.range, prev_par.range);
+      auto second = par.range;
+      auto par_name = par.name;
+      table_mutex.unlock();
+
+      std::string sql = "ALTER TABLE " + name_ + " REORGANIZE PARTITION " +
+                        par.name + " INTO ( PARTITION " + par.name +
+                        "a VALUES LESS THAN " + "(" + std::to_string(first) +
+                        "), PARTITION " + par.name + "b VALUES LESS THAN (" +
+                        std::to_string(second) + "))";
+
+      if (execute_sql(sql, thd)) {
+        table_mutex.lock();
+        for (auto i = positions.begin(); i != positions.end(); i++) {
+          if (i->name.compare(par_name) == 0) {
+            positions.erase(i);
+            break;
+          }
+        }
+        positions.emplace_back(par.name + "a", first);
+        positions.emplace_back(par.name + "b", second);
+        std::sort(positions.begin(), positions.end(), Partition::compareRange);
+        table_mutex.unlock();
+      }
     }
   }
 }
@@ -1023,17 +1084,6 @@ void Table::CreateDefaultColumn() {
     AddInternalColumn(col);
   }
 }
-
-/* create default partition column */
-/*
-void Partition::CreateDefaultColumn() {
-  std::string name = "p_col";
-  Column::COLUMN_TYPES type = Column::INT;
-  auto col = new Column{name, this, type};
-  AddInternalColumn(col);
-  std::cout << "loaded successful" << std::endl;
-}
-  */
 
 /* create default indexes */
 void Table::CreateDefaultIndex() {
@@ -2316,6 +2366,11 @@ static std::string load_metadata_from_file() {
       if (table_type.compare(partition_string) == 0) {
         table = new Partition(name, tab["part_type"].GetString(),
                               tab["number_of_part"].GetInt());
+
+        for (auto &par_range : tab["partition_range"].GetArray()) {
+          static_cast<Partition *>(table)->positions.emplace_back(
+              par_range["name"].GetString(), par_range["range"].GetInt());
+        }
       } else
         throw std::runtime_error("unhandled table type");
     } else

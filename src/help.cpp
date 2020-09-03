@@ -504,7 +504,7 @@ void add_options() {
 
   /* Truncate table */
   opt = newOption(Option::INT, Option::TRUNCATE, "truncate");
-  opt->help = "truncate table";
+  opt->help = "truncate table or in case of partition truncate partition";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
