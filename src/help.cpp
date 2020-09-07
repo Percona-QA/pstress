@@ -318,7 +318,7 @@ void add_options() {
   /* alter instance disable/enable redo logging */
   opt = newOption(Option::INT, Option::ALTER_REDO_LOGGING, "alter-redo-log");
   opt->help = "Alter instance enable/disable redo log";
-  opt->setInt(1);
+  opt->setInt(0);
   opt->setSQL();
   opt->setDDL();
 
@@ -385,8 +385,9 @@ void add_options() {
   opt->setArgs(no_argument);
 
   /* Select all row */
-  opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-row");
-  opt->help = "select all data probability";
+  opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-rows");
+  opt->help = "select all table data and in case of partition randomly pick "
+              "some partition";
   opt->setInt(8);
   opt->setSQL();
 
@@ -410,7 +411,7 @@ void add_options() {
   opt->setSQL();
 
   /* Delete all rows */
-  opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-all-row");
+  opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-all-rows");
   opt->help = "delete all rows of a table";
   opt->setInt(1);
   opt->setSQL();

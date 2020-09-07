@@ -1805,11 +1805,51 @@ void Table::AddIndex(Thd1 *thd) {
 
 void Table::DeleteAllRows(Thd1 *thd) {
   std::string sql = "DELETE FROM " + name_;
+  if (type == PARTITION && rand_int(100) < 98) {
+    sql += " PARTITION (";
+    auto part = static_cast<Partition *>(this);
+    if (part->part_type == Partition::RANGE) {
+      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
+      for (int i = 0; i < rand_int(part->positions.size()); i++) {
+        if (rand_int(5) == 1)
+          sql += "," +
+                 part->positions.at(rand_int(part->positions.size() - 1)).name;
+      }
+    } else if (part->part_type == Partition::KEY ||
+               part->part_type == Partition::HASH) {
+      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+      for (int i = 0; i < rand_int(part->number_of_part); i++) {
+        if (rand_int(2) == 1)
+          sql += ", p" + std::to_string(rand_int(part->number_of_part - 1));
+      }
+    }
+    sql += ")";
+  }
   execute_sql(sql, thd);
 }
 
 void Table::SelectAllRow(Thd1 *thd) {
   std::string sql = "SELECT * FROM " + name_;
+  if (type == PARTITION && rand_int(100) < 98) {
+    sql += " PARTITION (";
+    auto part = static_cast<Partition *>(this);
+    if (part->part_type == Partition::RANGE) {
+      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
+      for (int i = 0; i < rand_int(part->positions.size()); i++) {
+        if (rand_int(2) == 1)
+          sql += "," +
+                 part->positions.at(rand_int(part->positions.size() - 1)).name;
+      }
+    } else if (part->part_type == Partition::KEY ||
+               part->part_type == Partition::HASH) {
+      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+      for (int i = 0; i < rand_int(part->number_of_part); i++) {
+        if (rand_int(2) == 1)
+          sql += ", p" + std::to_string(rand_int(part->number_of_part - 1));
+      }
+    }
+    sql += ")";
+  }
   execute_sql(sql, thd);
 }
 
@@ -1840,7 +1880,6 @@ void Table::ColumnRename(Thd1 *thd) {
 void Table::DeleteRandomRow(Thd1 *thd) {
   table_mutex.lock();
   auto where = -1;
-  auto prob = rand_int(98);
   bool only_bool = true;
   int pk_pos = -1;
 
@@ -1878,26 +1917,37 @@ void Table::DeleteRandomRow(Thd1 *thd) {
       }
     }
   }
-  std::string sql = "DELETE FROM " + name_ + " WHERE " +
-                   columns_->at(where)->name_;
+  std::string sql = "DELETE FROM " + name_;
+
+  if (type == PARTITION && rand_int(10) < 2) {
+    sql += " PARTITION (";
+    auto part = static_cast<Partition *>(this);
+    if (part->part_type == Partition::RANGE) {
+      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
+    } else if (part->part_type == Partition::KEY ||
+               part->part_type == Partition::HASH) {
+      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+    }
+
+    sql += ")";
+  }
+  sql += " WHERE " + columns_->at(where)->name_;
+
+  auto prob = rand_int(100);
   if (prob <= 90)
     sql += " = " + columns_->at(where)->rand_value();
   else if (prob <= 92)
-    sql += " >= " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->name_ + " <= " +
-          columns_->at(where)->rand_value();
-  else if (prob <= 94)
-    sql += " IN (" +
-          columns_->at(where)->rand_value() + "," +
-          columns_->at(where)->rand_value() + ")";
+    sql += " >= " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->name_ +
+           " <= " + columns_->at(where)->rand_value();
   else if (prob <= 96)
-    sql += " BETWEEN " +
-          columns_->at(where)->rand_value() + " AND " +
-          columns_->at(where)->rand_value();
+    sql += " IN (" + columns_->at(where)->rand_value() + "," +
+           columns_->at(where)->rand_value() + ")";
+  else if (prob <= 99)
+    sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->rand_value();
   else
-    sql += " LIKE '%" +
-          columns_->at(where)->rand_value() + "%'";
+    sql += " LIKE '%" + columns_->at(where)->rand_value() + "%'";
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -1906,9 +1956,24 @@ void Table::DeleteRandomRow(Thd1 *thd) {
 void Table::SelectRandomRow(Thd1 *thd) {
   table_mutex.lock();
   auto where = rand_int(columns_->size() - 1);
+  std::string sql = "SELECT * FROM " + name_;
+
+  /* if it partition table randomly pick some partition */
+  if (type == PARTITION && rand_int(10) < 2) {
+    sql += " PARTITION (";
+    auto part = static_cast<Partition *>(this);
+    if (part->part_type == Partition::RANGE) {
+      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
+    } else if (part->part_type == Partition::KEY ||
+               part->part_type == Partition::HASH) {
+      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+    }
+
+    sql += ")";
+  }
+
+  sql += " WHERE " + columns_->at(where)->name_;
   auto prob = rand_int(100);
-  std::string sql = "SELECT * FROM " + name_ + " WHERE " +
-                   columns_->at(where)->name_;
   if (rand_int(1000) < 2)
     sql += " NOT BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
@@ -1945,10 +2010,23 @@ void Table::UpdateRandomROW(Thd1 *thd) {
   table_mutex.lock();
   auto set = rand_int(columns_->size() - 1);
   auto where = rand_int(columns_->size() - 1);
-  auto prob = rand_int(98);
-  std::string sql = "UPDATE " + name_ + " SET " +
-                   columns_->at(set)->name_ + " = " +
-                   columns_->at(set)->rand_value() + " WHERE ";
+  std::string sql = "UPDATE " + name_;
+
+  if (type == PARTITION && rand_int(10) < 2) {
+    sql += " PARTITION (";
+    auto part = static_cast<Partition *>(this);
+    if (part->part_type == Partition::RANGE) {
+      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
+    } else if (part->part_type == Partition::KEY ||
+               part->part_type == Partition::HASH) {
+      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+    }
+
+    sql += ")";
+  }
+
+  sql += " SET " + columns_->at(set)->name_ + " = " +
+         columns_->at(set)->rand_value() + " WHERE ";
 
   /* if tables has pkey try to use that in where clause for 50% cases */
   for (size_t i = 0; i < columns_->size(); i++) {
@@ -1957,6 +2035,7 @@ void Table::UpdateRandomROW(Thd1 *thd) {
       break;
     }
   }
+  auto prob = rand_int(100);
   if (prob <= 90)
     sql += columns_->at(where)->name_ + " = " +
           columns_->at(where)->rand_value();
@@ -1968,7 +2047,7 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     sql += columns_->at(where)->name_ + " IN (" +
           columns_->at(where)->rand_value() + "," +
           columns_->at(where)->rand_value() + ")";
-  else if (prob <= 96)
+  else if (prob <= 98)
     sql += columns_->at(where)->name_ + " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
           columns_->at(where)->rand_value();
