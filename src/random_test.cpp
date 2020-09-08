@@ -1006,7 +1006,8 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
 
   /* temporary table can't have tablespace */
   if (table->type != TEMPORARY && g_tablespace.size() > 0 &&
-      rand_int(tbs_count) != 0) {
+      rand_int(tbs_count) != 0 &&
+      options->at(Option::ENCRYPTION_TYPE)->getString() != "KEYRING") {
     table->tablespace = g_tablespace[rand_int(g_tablespace.size() - 1)];
 
     if (table->tablespace.substr(table->tablespace.size() - 2, 2)
@@ -1097,7 +1098,7 @@ std::string Table::definition() {
   if (!compression.empty())
     def += " COMPRESSION='" + compression + "'";
 
-  if (!tablespace.empty())
+  if (!tablespace.empty() && encryption != "KEYRING")
     def += " TABLESPACE=" + tablespace;
 
   if (key_block_size > 1)
