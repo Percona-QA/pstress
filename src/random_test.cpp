@@ -15,6 +15,8 @@ std::mt19937 rng;
 
 const std::string partition_string = "_p";
 const int version = 1;
+/* range for int, integers, floats and double */
+const int g_integer_range = 100;
 
 static std::vector<Table *> *all_tables = new std::vector<Table *>;
 static std::vector<std::string> g_undo_tablespace;
@@ -391,26 +393,30 @@ const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
   return "FAIL";
 }
 
+/* integer range */
+
 /* return random value of any string */
 std::string Column::rand_value() {
   switch (type_) {
   case (COLUMN_TYPES::INTEGER):
-    static auto rec0 = opt_int(INITIAL_RECORDS_IN_TABLE);
+    static auto rec0 = options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
     return std::to_string(rand_int(rec0));
     break;
   case (COLUMN_TYPES::INT):
-    static auto rec = 100 * opt_int(INITIAL_RECORDS_IN_TABLE);
+    static auto rec = g_integer_range * opt_int(INITIAL_RECORDS_IN_TABLE);
     return std::to_string(rand_int(rec));
     break;
   case (COLUMN_TYPES::FLOAT):
   {
-    static float rec1 = 0.01 * opt_int(INITIAL_RECORDS_IN_TABLE);
+    static float rec1 =
+        (1 / g_integer_range) * opt_int(INITIAL_RECORDS_IN_TABLE);
     return rand_float(rec1);
     break;
   }
   case (COLUMN_TYPES::DOUBLE):
   {
-    static float rec2 = 0.00001 * opt_int(INITIAL_RECORDS_IN_TABLE);
+    static float rec2 = (1 / g_integer_range / g_integer_range) *
+                        opt_int(INITIAL_RECORDS_IN_TABLE);
     return rand_double(rec2);
     break;
   }
@@ -700,6 +706,8 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
 
   writer.String("name");
   writer.String(name_.c_str(), static_cast<SizeType>(name_.length()));
+  writer.String("type");
+  writer.String(get_type().c_str(), static_cast<SizeType>(get_type().length()));
 
   if (type == PARTITION) {
     auto part_table = static_cast<const Partition *>(this);
@@ -826,21 +834,53 @@ Partition::Partition(std::string n) : Table(n) {
   part_type = supported[rand_int(supported.size() - 1)];
 
   number_of_part = rand_int(options->at(Option::MAX_PARTITIONS)->getInt(), 2);
+  auto number_of_records =
+      options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
 
   /* randomly pick ranges for partition */
   if (part_type == RANGE) {
     for (int i = 0; i < number_of_part; i++) {
-      positions.emplace_back(
-          "p",
-          rand_int(100 *
-                   options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
+      positions.emplace_back("p",
+                             rand_int(g_integer_range * number_of_records));
     }
     std::sort(positions.begin(), positions.end(), Partition::compareRange);
     for (int i = 0; i < number_of_part; i++) {
       positions.at(i).name = "p" + std::to_string(i);
     }
+    // adjust the range so we don't have overlapping ranges
+    for (int i = 1; i < number_of_part; i++) {
+      if (positions.at(i).range == positions.at(i - 1).range)
+        for (int j = i; j < number_of_part; j++)
+          positions.at(j).range++;
+    }
   } else if (part_type == LIST) {
+
+    if (number_of_records < number_of_part)
+      number_of_records = number_of_part;
+
+    /* temporary vector to store all number_of_recoreds */
+    std::vector<int> total_list;
+    for (int i = 0; i < number_of_records; i++)
+      total_list.push_back(i);
+
     for (int i = 0; i < number_of_part; i++) {
+      lists.emplace_back("p" + std::to_string(i));
+      auto number_of_records_in_partition =
+          rand_int(number_of_records) / number_of_part;
+      if (number_of_records_in_partition == 0)
+        number_of_records_in_partition = 1;
+
+      for (int j = 0; j < number_of_records_in_partition; j++) {
+        auto curr = rand_int(total_list.size() - 1);
+        lists.at(i).list.push_back(total_list.at(curr));
+        total_list.erase(total_list.begin() + curr);
+      }
+    }
+
+    for (int i = 0; i < number_of_part; i++) {
+      std::cout << lists.at(i).name << std::endl;
+      for (auto j : lists.at(i).list)
+        std::cout << j << std::endl;
     }
   }
 }
@@ -1341,6 +1381,8 @@ std::string Table::definition() {
   if (!engine.empty())
     def += " ENGINE=" + engine;
 
+  std::cout << def << std::endl;
+
   if (type == PARTITION) {
     auto par = static_cast<Partition *>(this);
     def += " PARTITION BY " + par->get_part_type() + " (ip_col)";
@@ -1364,16 +1406,16 @@ std::string Table::definition() {
     case Partition::LIST:
       def += "(";
       for (size_t i = 0; i < par->lists.size(); i++) {
-        def += " PARTITION" + par->lists.at(i).name + " VALUES IN (";
+        def += " PARTITION " + par->lists.at(i).name + " VALUES IN (";
         auto list = par->lists.at(i).list;
         for (size_t j = 0; j < list.size(); j++) {
-          def += std::to_string(list.at(i));
+          def += std::to_string(list.at(j));
           if (j == list.size() - 1)
-            def += ",";
-          else
             def += ")";
+          else
+            def += ",";
         }
-        if (i == par->positions.size() - 1)
+        if (i == par->lists.size() - 1)
           def += ")";
         else
           def += ",";
@@ -2537,21 +2579,22 @@ static std::string load_metadata_from_file() {
   for (auto &tab : d["tables"].GetArray()) {
     Table *table;
     std::string name = tab["name"].GetString();
+    std::string table_type = tab["type"].GetString();
 
-    if (std::count(name.begin(), name.end(), '_') > 1) {
-      std::string table_type = name.substr(name.size() - 2, 2);
-      if (table_type.compare(partition_string) == 0) {
-        table = new Partition(name, tab["part_type"].GetString(),
-                              tab["number_of_part"].GetInt());
+    if (table_type.compare("PARTITION") == 0) {
+      table = new Partition(name, tab["part_type"].GetString(),
+                            tab["number_of_part"].GetInt());
 
-        for (auto &par_range : tab["partition_range"].GetArray()) {
-          static_cast<Partition *>(table)->positions.emplace_back(
-              par_range["name"].GetString(), par_range["range"].GetInt());
-        }
-      } else
-        throw std::runtime_error("unhandled table type");
-    } else
+      for (auto &par_range : tab["partition_range"].GetArray()) {
+        static_cast<Partition *>(table)->positions.emplace_back(
+            par_range["name"].GetString(), par_range["range"].GetInt());
+      }
+    } else if (table_type.compare("NORMAL") == 0) {
       table = new Table(name);
+    } else
+      throw std::runtime_error("Unhandle Table type " + table_type);
+
+    table->set_type(table_type);
 
     std::string engine = tab["engine"].GetString();
     if (engine.compare("default") != 0) {

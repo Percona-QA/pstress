@@ -171,8 +171,7 @@ struct Thd1 {
 
 /* Table basic properties */
 struct Table {
-public:
-  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, TABLE_MAX } type;
+  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY } type;
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id, Thd1 *thd);
@@ -218,6 +217,28 @@ public:
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
   std::mutex table_mutex;
+
+  const std::string get_type() const {
+    switch (type) {
+    case NORMAL:
+      return "NORMAL";
+      break;
+    case PARTITION:
+      return "PARTITION";
+    case TEMPORARY:
+      return "TEMPORARY";
+    }
+    return "FAIL";
+  };
+
+  void set_type(std::string s) {
+    if (s.compare("PARTITION") == 0)
+      type = PARTITION;
+    else if (s.compare("NORMAL") == 0)
+      type = NORMAL;
+    else if (s.compare("TEMPORARY") == 0)
+      type = TEMPORARY;
+  };
 };
 
 /* Partition table */
