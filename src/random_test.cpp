@@ -341,7 +341,9 @@ std::string rand_string(int upper, int lower) {
 
 /* return column type from a string */
 Column::COLUMN_TYPES Column::col_type(std::string type) {
-  if (type.compare("INT") == 0)
+  if (type.compare("INTEGER") == 0)
+    return INTEGER;
+  else if (type.compare("INT") == 0)
     return INT;
   else if (type.compare("CHAR") == 0)
     return CHAR;
@@ -365,6 +367,8 @@ Column::COLUMN_TYPES Column::col_type(std::string type) {
 /* return string from a column type */
 const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
   switch (type) {
+  case INTEGER:
+    return "INT";
   case INT:
     return "INT";
   case CHAR:
@@ -390,6 +394,10 @@ const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
 /* return random value of any string */
 std::string Column::rand_value() {
   switch (type_) {
+  case (COLUMN_TYPES::INTEGER):
+    static auto rec0 = opt_int(INITIAL_RECORDS_IN_TABLE);
+    return std::to_string(rand_int(rec0));
+    break;
   case (COLUMN_TYPES::INT):
     static auto rec = 100 * opt_int(INITIAL_RECORDS_IN_TABLE);
     return std::to_string(rand_int(rec));
@@ -448,6 +456,7 @@ Column::Column(std::string name, Table *table, COLUMN_TYPES type)
     length = rand_int(g_max_columns_length, 10);
     break;
   case INT:
+  case INTEGER:
     name_ = "i" + name;
     if (rand_int(10) == 1)
       length = rand_int(100, 20);
@@ -548,7 +557,7 @@ Generated_Column::Generated_Column(std::string name, Table *table)
       col_pos.push_back(col);
   }
 
-  if (g_type == INT) {
+  if (g_type == INT || g_type == INTEGER) {
     str = " " + col_type_to_string(g_type) + " AS(";
     for (auto pos : col_pos) {
       auto col = table->columns_->at(pos);
@@ -572,6 +581,7 @@ Generated_Column::Generated_Column(std::string name, Table *table)
       /* base column */
       switch (col->type_) {
       case INT:
+      case INTEGER:
         column_size = 10; // interger max string size is 10
         break;
       case FLOAT:
@@ -710,7 +720,7 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
         writer.Int(par.range);
         writer.EndObject();
       }
-        writer.EndObject();
+      writer.EndArray();
     }
   }
 
@@ -828,6 +838,9 @@ Partition::Partition(std::string n) : Table(n) {
     std::sort(positions.begin(), positions.end(), Partition::compareRange);
     for (int i = 0; i < number_of_part; i++) {
       positions.at(i).name = "p" + std::to_string(i);
+    }
+  } else if (part_type == LIST) {
+    for (int i = 0; i < number_of_part; i++) {
     }
   }
 }
@@ -1004,7 +1017,11 @@ void Table::CreateDefaultColumn() {
   /* if table is partition add new column */
   if (type == PARTITION) {
     std::string name = "p_col";
-    Column::COLUMN_TYPES type = Column::INT;
+    Column::COLUMN_TYPES type;
+    if (static_cast<Partition *>(this)->part_type == Partition::LIST)
+      type = Column::INTEGER;
+    else
+      type = Column::INT;
     auto col = new Column{name, this, type};
     AddInternalColumn(col);
   }
@@ -1051,8 +1068,10 @@ void Table::CreateDefaultColumn() {
          * columns are virtuals */
         if (!no_virtual_col && i >= .8 * max_columns && rand_int(1) == 1)
           col_type = Column::GENERATED;
-        else if (prob < 6)
+        else if (prob < 5)
           col_type = Column::INT;
+        else if (prob < 6)
+          col_type = Column::INTEGER;
         else if (prob < 8)
           col_type = Column::FLOAT;
         else if (prob < 10)
@@ -1325,9 +1344,12 @@ std::string Table::definition() {
   if (type == PARTITION) {
     auto par = static_cast<Partition *>(this);
     def += " PARTITION BY " + par->get_part_type() + " (ip_col)";
-    if (par->part_type == Partition::HASH || par->part_type == Partition::KEY) {
+    switch (par->part_type) {
+    case Partition::HASH:
+    case Partition::KEY:
       def += " PARTITIONS " + std::to_string(par->number_of_part);
-    } else if (par->part_type == Partition::RANGE) {
+      break;
+    case Partition::RANGE:
       def += "(";
       for (size_t i = 0; i < par->positions.size(); i++) {
         def += " PARTITION p" + std::to_string(i) + " VALUES LESS THAN (" +
@@ -1338,6 +1360,25 @@ std::string Table::definition() {
         else
           def += ",";
       }
+      break;
+    case Partition::LIST:
+      def += "(";
+      for (size_t i = 0; i < par->lists.size(); i++) {
+        def += " PARTITION" + par->lists.at(i).name + " VALUES IN (";
+        auto list = par->lists.at(i).list;
+        for (size_t j = 0; j < list.size(); j++) {
+          def += std::to_string(list.at(i));
+          if (j == list.size() - 1)
+            def += ",";
+          else
+            def += ")";
+        }
+        if (i == par->positions.size() - 1)
+          def += ")";
+        else
+          def += ",";
+      }
+      break;
     }
   }
   return def;
@@ -1352,7 +1393,8 @@ void create_default_tables(Thd1 *thd) {
   if (!only_temporary_tables) {
     for (int i = 1; i <= tables; i++) {
       all_tables->push_back(Table::table_id(Table::NORMAL, i, thd));
-      all_tables->push_back(Table::table_id(Table::PARTITION, i, thd));
+      if (!options->at(Option::NO_PARTITION)->getBool())
+        all_tables->push_back(Table::table_id(Table::PARTITION, i, thd));
     }
   }
 }
@@ -1533,6 +1575,7 @@ void Table::ModifyColumn(Thd1 *thd) {
     case Column::FLOAT:
     case Column::DOUBLE:
     case Column::INT:
+    case Column::INTEGER:
       col = col1;
       length = col->length;
       auto_increment = col->auto_increment;
@@ -1665,7 +1708,9 @@ void Table::AddColumn(Thd1 *thd) {
     /* new columns are in ratio of 3:2:1:1:1:1
      * INT:VARCHAR:CHAR:BLOB:BOOL:GENERATD */
     auto prob = rand_int(8);
-    if (prob < 3)
+    if (prob < 1)
+      col_type = Column::INTEGER;
+    else if (prob < 3)
       col_type = Column::INT;
     else if (prob < 5)
       col_type = Column::VARCHAR;
@@ -1912,6 +1957,10 @@ void Table::DeleteRandomRow(Thd1 *thd) {
       case Column::GENERATED:
         where = col_pos;
         break;
+      case Column::INTEGER:
+        if (rand_int(1000) < 10)
+          where = col_pos;
+        break;
       case Column::COLUMN_MAX:
         break;
       }
@@ -1947,7 +1996,7 @@ void Table::DeleteRandomRow(Thd1 *thd) {
     sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
            columns_->at(where)->rand_value();
   else
-    sql += " LIKE '%" + columns_->at(where)->rand_value() + "%'";
+    sql += " LIKE " + columns_->at(where)->rand_value() + "%'";
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -1955,7 +2004,31 @@ void Table::DeleteRandomRow(Thd1 *thd) {
 
 void Table::SelectRandomRow(Thd1 *thd) {
   table_mutex.lock();
-  auto where = rand_int(columns_->size() - 1);
+  auto where = -1;
+  while (where < 0) {
+    auto col_pos = rand_int(columns_->size() - 1);
+    switch (columns_->at(col_pos)->type_) {
+    case Column::BOOL:
+      if (rand_int(1000) < 10)
+        where = col_pos;
+      break;
+    case Column::INT:
+    case Column::FLOAT:
+    case Column::DOUBLE:
+    case Column::VARCHAR:
+    case Column::CHAR:
+    case Column::BLOB:
+    case Column::GENERATED:
+      where = col_pos;
+      break;
+    case Column::INTEGER:
+      if (rand_int(1000) < 10)
+        where = col_pos;
+      break;
+    case Column::COLUMN_MAX:
+      break;
+    }
+  }
   std::string sql = "SELECT * FROM " + name_;
 
   /* if it partition table randomly pick some partition */
@@ -1994,8 +2067,8 @@ void Table::SelectRandomRow(Thd1 *thd) {
           columns_->at(where)->rand_value() + ", " +
           columns_->at(where)->rand_value() + ")";
   else if (prob <= 98)
-    sql += " LIKE '%" +
-          columns_->at(where)->rand_value() + "%'";
+    // todo add % in the like
+    sql += " LIKE " + columns_->at(where)->rand_value();
   else
     sql += " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
@@ -2009,7 +2082,31 @@ void Table::SelectRandomRow(Thd1 *thd) {
 void Table::UpdateRandomROW(Thd1 *thd) {
   table_mutex.lock();
   auto set = rand_int(columns_->size() - 1);
-  auto where = rand_int(columns_->size() - 1);
+  auto where = -1;
+  while (where < 0) {
+    auto col_pos = rand_int(columns_->size() - 1);
+    switch (columns_->at(col_pos)->type_) {
+    case Column::BOOL:
+      if (rand_int(1000) < 10)
+        where = col_pos;
+      break;
+    case Column::INT:
+    case Column::FLOAT:
+    case Column::DOUBLE:
+    case Column::VARCHAR:
+    case Column::CHAR:
+    case Column::BLOB:
+    case Column::GENERATED:
+      where = col_pos;
+      break;
+    case Column::INTEGER:
+      if (rand_int(1000) < 10)
+        where = col_pos;
+      break;
+    case Column::COLUMN_MAX:
+      break;
+    }
+  }
   std::string sql = "UPDATE " + name_;
 
   if (type == PARTITION && rand_int(10) < 2) {
@@ -2040,9 +2137,10 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     sql += columns_->at(where)->name_ + " = " +
           columns_->at(where)->rand_value();
   else if (prob <= 92)
-    sql += columns_->at(where)->name_ + " >= " +
-          columns_->at(where)->rand_value() + " AND " + " <= " +
-          columns_->at(where)->rand_value();
+    sql += columns_->at(where)->name_ +
+           " >= " + columns_->at(where)->rand_value() + " AND " +
+           columns_->at(where)->name_ +
+           " >= " + columns_->at(where)->rand_value();
   else if (prob <= 94)
     sql += columns_->at(where)->name_ + " IN (" +
           columns_->at(where)->rand_value() + "," +
@@ -2052,8 +2150,8 @@ void Table::UpdateRandomROW(Thd1 *thd) {
           columns_->at(where)->rand_value() + " AND " +
           columns_->at(where)->rand_value();
   else
-    sql += columns_->at(where)->name_ + " LIKE '%" +
-          columns_->at(where)->rand_value() + "%'";
+    sql += columns_->at(where)->name_ + " LIKE " +
+           columns_->at(where)->rand_value();
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -2482,7 +2580,8 @@ static std::string load_metadata_from_file() {
 
       if (type.compare("INT") == 0 || type.compare("CHAR") == 0 ||
           type.compare("VARCHAR") == 0 || type.compare("BOOL") == 0 ||
-          type.compare("FLOAT") == 0 || type.compare("DOUBLE") == 0) {
+          type.compare("FLOAT") == 0 || type.compare("DOUBLE") == 0 ||
+          type.compare("INTEGER") == 0) {
         a = new Column(col["name"].GetString(), type, table);
       } else if (type.compare("GENERATED") == 0) {
         auto name = col["name"].GetString();

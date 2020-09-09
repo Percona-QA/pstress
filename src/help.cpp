@@ -219,6 +219,12 @@ void add_options() {
   opt->setArgs(no_argument);
   opt->setBool(false);
 
+  /* No Partition tables */
+  opt = newOption(Option::BOOL, Option::NO_PARTITION, "no-partition-tables");
+  opt->help = "do not work on partition tables";
+  opt->setArgs(no_argument);
+  opt->setBool(false);
+
   /* NO Temporary tables */
   opt = newOption(Option::BOOL, Option::NO_TEMPORARY, "no-temp-tables");
   opt->help = "do not work on temporary tables";

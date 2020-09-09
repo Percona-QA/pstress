@@ -42,6 +42,9 @@ struct Table;
 class Column {
 public:
   enum COLUMN_TYPES {
+    /* interger type columns are small ints. they are used for LIST
+             PARTITION */
+    INTEGER,
     INT,
     CHAR,
     VARCHAR,
@@ -73,8 +76,7 @@ public:
   /* return the clause of column */
 private:
   virtual std::string clause() {
-    std::string str;
-    str = col_type_to_string(type_);
+    std::string str = col_type_to_string(type_);
     if (length > 0)
       str += "(" + std::to_string(length) + ")";
     return str;
@@ -242,6 +244,7 @@ public:
     case KEY:
       return "KEY";
     }
+    return "FAIL";
   }
 
   void set_part_type(const std::string &sb_type) {
@@ -259,17 +262,24 @@ public:
   static std::vector<PART_TYPE> supported;
   /* how ranges are distributed */
 
-  struct PartitionRange {
-    PartitionRange(std::string n, int r) : name(n), range(r){};
+  struct Range {
+    Range(std::string n, int r) : name(n), range(r){};
     std::string name;
     int range;
   };
 
-  static bool compareRange(PartitionRange P1, PartitionRange P2) {
-    return P1.range < P2.range;
-  }
+  static bool compareRange(Range P1, Range P2) { return P1.range < P2.range; }
 
-  std::vector<PartitionRange> positions;
+  /* used by range parititon */
+  std::vector<Range> positions;
+
+  struct List {
+    List(std::string n) : name(n){};
+    std::string name;
+    std::vector<int> list;
+  };
+
+  std::vector<List> lists;
 };
 
 /* Temporary table */
