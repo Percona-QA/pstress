@@ -330,6 +330,13 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /* alter instance rotate innodb system key */
+  opt = newOption(Option::INT, Option::ALTER_ENCRYPTION_KEY, "rotate-encryption-key");
+  opt->help = "Alter instance rotate innodb system key X";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* rotate redo log key */
   opt = newOption(Option::INT, Option::ROTATE_REDO_LOG_KEY,
                   "rotate-redo-log-key");

@@ -120,6 +120,7 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
     opt_int_set(ALTER_TABLESPACE_ENCRYPTION, 0);
     opt_int_set(ALTER_MASTER_KEY, 0);
+    opt_int_set(ALTER_ENCRYPTION_KEY, 0);
     opt_int_set(ROTATE_REDO_LOG_KEY, 0);
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
   }
@@ -1091,14 +1092,30 @@ std::string Table::definition() {
 
   def += " )";
   static auto no_encryption = opt_bool(NO_ENCRYPTION);
+  bool keyring_key_encrypt_flag = 0;
 
-  if (!no_encryption && type != TEMPORARY)
-    def += " ENCRYPTION='" + encryption + "'";
+  if (!no_encryption && type != TEMPORARY) {
+    if (rand_int(1) == 0) {
+      def += " ENCRYPTION='" + encryption + "'";
+      if (encryption == "KEYRING")
+        keyring_key_encrypt_flag = 1;
+    }
+    else {
+      if (rand_int(1) == 0) {
+        def += " ENCRYPTION_KEY_ID=" + std::to_string(rand_int(9));
+        keyring_key_encrypt_flag = 1;
+      }
+      else {
+        def += " ENCRYPTION='KEYRING' ENCRYPTION_KEY_ID=" + std::to_string(rand_int(9));
+        keyring_key_encrypt_flag = 1;
+      }
+    }
+  }
 
   if (!compression.empty())
     def += " COMPRESSION='" + compression + "'";
 
-  if (!tablespace.empty() && encryption != "KEYRING")
+  if (!tablespace.empty() && !keyring_key_encrypt_flag)
     def += " TABLESPACE=" + tablespace;
 
   if (key_block_size > 1)
@@ -2497,6 +2514,9 @@ void Thd1::run_some_query() {
       break;
     case Option::ALTER_MASTER_KEY:
       execute_sql("ALTER INSTANCE ROTATE INNODB MASTER KEY", this);
+      break;
+    case Option::ALTER_ENCRYPTION_KEY:
+      execute_sql("ALTER INSTANCE ROTATE INNODB SYSTEM KEY " + std::to_string(rand_int(9)), this);
       break;
     case Option::ROTATE_REDO_LOG_KEY:
       execute_sql("SELECT rotate_system_key(\"percona_redo\")", this);
