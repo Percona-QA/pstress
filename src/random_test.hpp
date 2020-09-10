@@ -42,6 +42,9 @@ struct Table;
 class Column {
 public:
   enum COLUMN_TYPES {
+    /* interger type columns are small ints. they are used for LIST
+             PARTITION */
+    INTEGER,
     INT,
     CHAR,
     VARCHAR,
@@ -73,8 +76,7 @@ public:
   /* return the clause of column */
 private:
   virtual std::string clause() {
-    std::string str;
-    str = col_type_to_string(type_);
+    std::string str = col_type_to_string(type_);
     if (length > 0)
       str += "(" + std::to_string(length) + ")";
     return str;
@@ -169,8 +171,7 @@ struct Thd1 {
 
 /* Table basic properties */
 struct Table {
-public:
-  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, TABLE_MAX } type;
+  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY } type;
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id, Thd1 *thd);
@@ -178,13 +179,14 @@ public:
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
-  void CreateDefaultColumn();
+  virtual void CreateDefaultColumn();
   void CreateDefaultIndex();
   void CopyDefaultColumn(Table *table);
   void CopyDefaultIndex(Table *table);
   void DropCreate(Thd1 *thd);
   void Optimize(Thd1 *thd);
   void Analyze(Thd1 *thd);
+  void Check(Thd1 *thd);
   void Truncate(Thd1 *thd);
   void SetEncryption(Thd1 *thd);
   void SetEncryptionInplace(Thd1 *thd);
@@ -215,15 +217,90 @@ public:
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
   std::mutex table_mutex;
+
+  const std::string get_type() const {
+    switch (type) {
+    case NORMAL:
+      return "NORMAL";
+      break;
+    case PARTITION:
+      return "PARTITION";
+    case TEMPORARY:
+      return "TEMPORARY";
+    }
+    return "FAIL";
+  };
+
+  void set_type(std::string s) {
+    if (s.compare("PARTITION") == 0)
+      type = PARTITION;
+    else if (s.compare("NORMAL") == 0)
+      type = NORMAL;
+    else if (s.compare("TEMPORARY") == 0)
+      type = TEMPORARY;
+  };
 };
 
 /* Partition table */
-struct Partition_table : public Table {
+struct Partition : public Table {
 public:
-  Partition_table(std::string n) : Table(n){};
-  ~Partition_table() {}
-  std::string partition_start;
-  //  string partiton_type() { return partition_start; }
+  enum PART_TYPE { RANGE, LIST, HASH, KEY } part_type;
+
+  Partition(std::string n);
+
+  Partition(std::string n, std::string part_type_, int number_of_part_);
+
+  /* add drop partitions */
+  void AddDrop(Thd1 *thd);
+  ~Partition() {}
+
+  const std::string get_part_type() const {
+    switch (part_type) {
+    case LIST:
+      return "LIST";
+    case RANGE:
+      return "RANGE";
+    case HASH:
+      return "HASH";
+    case KEY:
+      return "KEY";
+    }
+    return "FAIL";
+  }
+
+  void set_part_type(const std::string &sb_type) {
+    if (sb_type.compare("LIST") == 0)
+      part_type = LIST;
+    else if (sb_type.compare("RANGE") == 0)
+      part_type = RANGE;
+    else if (sb_type.compare("HASH") == 0)
+      part_type = HASH;
+    else if (sb_type.compare("KEY") == 0)
+      part_type = KEY;
+  }
+  int number_of_part;
+  /* type of partition supported for current run */
+  static std::vector<PART_TYPE> supported;
+  /* how ranges are distributed */
+
+  struct Range {
+    Range(std::string n, int r) : name(n), range(r){};
+    std::string name;
+    int range;
+  };
+
+  static bool compareRange(Range P1, Range P2) { return P1.range < P2.range; }
+
+  /* used by range parititon */
+  std::vector<Range> positions;
+
+  struct List {
+    List(std::string n) : name(n){};
+    std::string name;
+    std::vector<int> list;
+  };
+
+  std::vector<List> lists;
 };
 
 /* Temporary table */

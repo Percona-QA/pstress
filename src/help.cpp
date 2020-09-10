@@ -219,6 +219,12 @@ void add_options() {
   opt->setArgs(no_argument);
   opt->setBool(false);
 
+  /* No Partition tables */
+  opt = newOption(Option::BOOL, Option::NO_PARTITION, "no-partition-tables");
+  opt->help = "do not work on partition tables";
+  opt->setArgs(no_argument);
+  opt->setBool(false);
+
   /* NO Temporary tables */
   opt = newOption(Option::BOOL, Option::NO_TEMPORARY, "no-temp-tables");
   opt->help = "do not work on temporary tables";
@@ -319,7 +325,7 @@ void add_options() {
   /* alter instance disable/enable redo logging */
   opt = newOption(Option::INT, Option::ALTER_REDO_LOGGING, "alter-redo-log");
   opt->help = "Alter instance enable/disable redo log";
-  opt->setInt(1);
+  opt->setInt(0);
   opt->setSQL();
   opt->setDDL();
 
@@ -393,8 +399,9 @@ void add_options() {
   opt->setArgs(no_argument);
 
   /* Select all row */
-  opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-row");
-  opt->help = "select all data probability";
+  opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-rows");
+  opt->help = "select all table data and in case of partition randomly pick "
+              "some partition";
   opt->setInt(8);
   opt->setSQL();
 
@@ -418,7 +425,7 @@ void add_options() {
   opt->setSQL();
 
   /* Delete all rows */
-  opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-all-row");
+  opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-all-rows");
   opt->help = "delete all rows of a table";
   opt->setInt(1);
   opt->setSQL();
@@ -467,21 +474,52 @@ void add_options() {
 
   /* Analyze Table */
   opt = newOption(Option::INT, Option::ANALYZE, "analyze");
-  opt->help = "analyze table";
+  opt->help = "analyze table, for partition table randomly analyze either "
+              "partition or full table";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
 
+  /* Check Table */
+  opt = newOption(Option::INT, Option::CHECK_TABLE, "check");
+  opt->help = "check table, for partition table randomly check either "
+              "partition or full table";
+  opt->setInt(5);
+  opt->setSQL();
+
+  /* Add drop Partition */
+  opt =
+      newOption(Option::INT, Option::ADD_DROP_PARTITION, "add-drop-partition");
+  opt->help = "randomly add drop new partitions";
+  opt->setInt(3);
+  opt->setSQL();
+  opt->setDDL();
+
+  /* maximum number Partition */
+  opt = newOption(Option::INT, Option::MAX_PARTITIONS, "max-partitions");
+  opt->help = "maximum number of partitions in table";
+  opt->setInt(100);
+
+  /* Total number of partition supported */
+  opt =
+      newOption(Option::STRING, Option::PARTITION_SUPPORTED, "partition-types");
+  opt->help =
+      "total partition supported, all for LIST, HASH, KEY, RANGE or to provide "
+      "or pass for example --partition_supported LIST, HASH "
+      "RANGE";
+  opt->setString("all");
+
   /* Optimize Table */
   opt = newOption(Option::INT, Option::OPTIMIZE, "optimize");
-  opt->help = "optimize table";
+  opt->help = "optimize table, for paritition table randomly optimize either "
+              "partition or full table ";
   opt->setInt(3);
   opt->setSQL();
   opt->setDDL();
 
   /* Truncate table */
   opt = newOption(Option::INT, Option::TRUNCATE, "truncate");
-  opt->help = "truncate table";
+  opt->help = "truncate table or in case of partition truncate partition";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
