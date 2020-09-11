@@ -213,6 +213,13 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* Only Partition tables */
+  opt =
+      newOption(Option::BOOL, Option::ONLY_PARTITION, "only-partition-tables");
+  opt->help = "Work only on Partition tables";
+  opt->setArgs(no_argument);
+  opt->setBool(false);
+
   /* Only Temporary tables */
   opt = newOption(Option::BOOL, Option::ONLY_TEMPORARY, "only-temp-tables");
   opt->help = "Work only on temporary tables";

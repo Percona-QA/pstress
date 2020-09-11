@@ -283,23 +283,22 @@ public:
   static std::vector<PART_TYPE> supported;
   /* how ranges are distributed */
 
+  /* Used by Range Parititon */
   struct Range {
     Range(std::string n, int r) : name(n), range(r){};
     std::string name;
     int range;
   };
-
+  std::vector<Range> positions;
   static bool compareRange(Range P1, Range P2) { return P1.range < P2.range; }
 
-  /* used by range parititon */
-  std::vector<Range> positions;
-
+  /* Used by List Partition */
   struct List {
     List(std::string n) : name(n){};
     std::string name;
     std::vector<int> list;
   };
-
+  std::vector<int> total_left_list;
   std::vector<List> lists;
 };
 

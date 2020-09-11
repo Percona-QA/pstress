@@ -67,6 +67,8 @@ int sum_of_all_options(Thd1 *thd) {
     Partition::supported.push_back(Partition::HASH);
     Partition::supported.push_back(Partition::RANGE);
   } else {
+    std::transform(part_supp.begin(), part_supp.end(), part_supp.begin(),
+                   ::toupper);
     if (part_supp.find("HASH") != std::string::npos)
       Partition::supported.push_back(Partition::HASH);
     if (part_supp.find("KEY") != std::string::npos)
@@ -111,6 +113,13 @@ int sum_of_all_options(Thd1 *thd) {
     if (!options->at(Option::COLUMNS)->cl)
       options->at(Option::COLUMNS)->setInt(7);
   }
+
+  if (options->at(Option::ONLY_PARTITION)->getBool() &&
+      options->at(Option::ONLY_TEMPORARY)->getBool())
+    throw std::runtime_error("choose either only partition or only temporary ");
+
+  if (options->at(Option::ONLY_PARTITION)->getBool())
+    options->at(Option::NO_TEMPORARY)->setBool("false");
 
   /* if select is set as zero, disable all type of selects */
   if (options->at(Option::NO_SELECT)->getBool()) {
@@ -729,6 +738,19 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
         writer.EndObject();
       }
       writer.EndArray();
+    } else if (part_table->part_type == Partition::LIST) {
+
+      writer.String("LISTS");
+      writer.StartArray();
+      for (auto list : part_table->lists) {
+        writer.StartArray();
+        writer.String(list.name.c_str(),
+                      static_cast<SizeType>(list.name.length()));
+        for (auto i : list.list)
+          writer.Int(i);
+        writer.EndArray();
+      };
+      writer.EndArray();
     }
   }
 
@@ -859,9 +881,8 @@ Partition::Partition(std::string n) : Table(n) {
       number_of_records = number_of_part;
 
     /* temporary vector to store all number_of_recoreds */
-    std::vector<int> total_list;
     for (int i = 0; i < number_of_records; i++)
-      total_list.push_back(i);
+      total_left_list.push_back(i);
 
     for (int i = 0; i < number_of_part; i++) {
       lists.emplace_back("p" + std::to_string(i));
@@ -871,16 +892,10 @@ Partition::Partition(std::string n) : Table(n) {
         number_of_records_in_partition = 1;
 
       for (int j = 0; j < number_of_records_in_partition; j++) {
-        auto curr = rand_int(total_list.size() - 1);
-        lists.at(i).list.push_back(total_list.at(curr));
-        total_list.erase(total_list.begin() + curr);
+        auto curr = rand_int(total_left_list.size() - 1);
+        lists.at(i).list.push_back(total_left_list.at(curr));
+        total_left_list.erase(total_left_list.begin() + curr);
       }
-    }
-
-    for (int i = 0; i < number_of_part; i++) {
-      std::cout << lists.at(i).name << std::endl;
-      for (auto j : lists.at(i).list)
-        std::cout << j << std::endl;
     }
   }
 }
@@ -945,6 +960,7 @@ void Table::Analyze(Thd1 *thd) {
 void Table::Truncate(Thd1 *thd) {
   /* 99% truncate the some partition */
   if (type == PARTITION && rand_int(100) > 98) {
+    table_mutex.lock();
     std::string part_name;
     auto part_table = static_cast<Partition *>(this);
     if (part_table->part_type == Partition::HASH ||
@@ -954,10 +970,13 @@ void Table::Truncate(Thd1 *thd) {
       part_name =
           part_table->positions.at(rand_int(part_table->positions.size() - 1))
               .name;
+    } else if (part_table->part_type == Partition::LIST) {
+      part_name =
+          part_table->lists.at(rand_int(part_table->lists.size() - 1)).name;
     }
+    table_mutex.unlock();
     execute_sql("ALTER TABLE " + name_ + " TRUNCATE PARTITION " + part_name,
                 thd);
-
   } else {
     execute_sql("TRUNCATE TABLE " + name_, thd);
   }
@@ -1004,10 +1023,12 @@ void Partition::AddDrop(Thd1 *thd) {
       }
     } else {
       /* add partition */
-      size_t pst = rand_int(positions.size() - 1, 1);
-      if (positions.at(pst).range - positions.at(pst - 1).range <= 2)
-        return;
       table_mutex.lock();
+      size_t pst = rand_int(positions.size() - 1, 1);
+      if (positions.at(pst).range - positions.at(pst - 1).range <= 2) {
+        table_mutex.unlock();
+        return;
+      }
       auto par = positions.at(pst);
       auto prev_par = positions.at(pst - 1);
       auto first = rand_int(par.range, prev_par.range);
@@ -1033,6 +1054,77 @@ void Partition::AddDrop(Thd1 *thd) {
         positions.emplace_back(par.name + "b", second);
         std::sort(positions.begin(), positions.end(), Partition::compareRange);
         table_mutex.unlock();
+      }
+    }
+  } else if (part_type == LIST) {
+    if (rand_int(1) == 0) {
+      /* drop partition */
+      table_mutex.lock();
+      auto par = lists.at(rand_int(lists.size() - 1));
+      auto part_name = par.name;
+      table_mutex.unlock();
+      if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
+                      thd)) {
+        table_mutex.lock();
+        number_of_part -= 1;
+        for (auto i = lists.begin(); i != lists.end(); i++) {
+          if (i->name.compare(part_name) == 0) {
+            for (auto j : i->list)
+              total_left_list.push_back(j);
+            lists.erase(i);
+            break;
+          }
+        }
+        table_mutex.unlock();
+      }
+
+    } else {
+      /* add partition */
+      size_t number_of_records_in_partition =
+          rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()) /
+          rand_int(options->at(Option::MAX_PARTITIONS)->getInt(), 1);
+
+      if (number_of_records_in_partition == 0)
+        number_of_records_in_partition = 1;
+      table_mutex.lock();
+      if (number_of_records_in_partition > total_left_list.size()) {
+        table_mutex.unlock();
+        return;
+      } else {
+        std::vector<int> temp_list;
+        while (temp_list.size() != number_of_records_in_partition) {
+          auto curr = rand_int(total_left_list.size() - 1);
+          int flag = false;
+          for (auto l : temp_list) {
+            if (l == curr)
+              flag = true;
+          }
+          if (flag == false)
+            temp_list.push_back(curr);
+        }
+        table_mutex.unlock();
+        std::string new_part_name = "p" + std::to_string(rand_int(1000, 100));
+        std::string sql = "ALTER TABLE " + name_ +
+                          " ADD PARTITION (PARTITION " + new_part_name +
+                          " VALUES IN (";
+        for (size_t i = 0; i < temp_list.size(); i++) {
+          sql += " " + std::to_string(temp_list.at(i));
+          if (i != temp_list.size() - 1)
+            sql += ",";
+        }
+        sql += "))";
+        if (execute_sql(sql, thd)) {
+          table_mutex.lock();
+          number_of_part++;
+          lists.emplace_back(new_part_name);
+          for (auto l : temp_list) {
+            lists.at(lists.size() - 1).list.push_back(l);
+            total_left_list.erase(
+                std::remove(total_left_list.begin(), total_left_list.end(), l),
+                total_left_list.end());
+          }
+          table_mutex.unlock();
+        }
       }
     }
   }
@@ -1381,7 +1473,6 @@ std::string Table::definition() {
   if (!engine.empty())
     def += " ENGINE=" + engine;
 
-  std::cout << def << std::endl;
 
   if (type == PARTITION) {
     auto par = static_cast<Partition *>(this);
@@ -1434,7 +1525,8 @@ void create_default_tables(Thd1 *thd) {
 
   if (!only_temporary_tables) {
     for (int i = 1; i <= tables; i++) {
-      all_tables->push_back(Table::table_id(Table::NORMAL, i, thd));
+      if (!options->at(Option::ONLY_PARTITION)->getBool())
+        all_tables->push_back(Table::table_id(Table::NORMAL, i, thd));
       if (!options->at(Option::NO_PARTITION)->getBool())
         all_tables->push_back(Table::table_id(Table::PARTITION, i, thd));
     }
@@ -1895,8 +1987,10 @@ void Table::DeleteAllRows(Thd1 *thd) {
   if (type == PARTITION && rand_int(100) < 98) {
     sql += " PARTITION (";
     auto part = static_cast<Partition *>(this);
+    table_mutex.lock();
     if (part->part_type == Partition::RANGE) {
       sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
+      /* below randomness is added intentionally */
       for (int i = 0; i < rand_int(part->positions.size()); i++) {
         if (rand_int(5) == 1)
           sql += "," +
@@ -1909,7 +2003,15 @@ void Table::DeleteAllRows(Thd1 *thd) {
         if (rand_int(2) == 1)
           sql += ", p" + std::to_string(rand_int(part->number_of_part - 1));
       }
+    } else if (part->part_type == Partition::LIST) {
+      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
+      /* below randomness is added intentionally */
+      for (int i = 0; i < rand_int(part->lists.size()); i++) {
+        if (rand_int(5) == 1)
+          sql += "," + part->lists.at(rand_int(part->lists.size() - 1)).name;
+      }
     }
+    table_mutex.unlock();
     sql += ")";
   }
   execute_sql(sql, thd);
@@ -1920,6 +2022,7 @@ void Table::SelectAllRow(Thd1 *thd) {
   if (type == PARTITION && rand_int(100) < 98) {
     sql += " PARTITION (";
     auto part = static_cast<Partition *>(this);
+    table_mutex.lock();
     if (part->part_type == Partition::RANGE) {
       sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
       for (int i = 0; i < rand_int(part->positions.size()); i++) {
@@ -1934,8 +2037,15 @@ void Table::SelectAllRow(Thd1 *thd) {
         if (rand_int(2) == 1)
           sql += ", p" + std::to_string(rand_int(part->number_of_part - 1));
       }
+    } else if (part->part_type == Partition::RANGE) {
+      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
+      for (int i = 0; i < rand_int(part->lists.size()); i++) {
+        if (rand_int(2) == 1)
+          sql += "," + part->lists.at(rand_int(part->lists.size() - 1)).name;
+      }
     }
     sql += ")";
+    table_mutex.unlock();
   }
   execute_sql(sql, thd);
 }
@@ -2018,6 +2128,8 @@ void Table::DeleteRandomRow(Thd1 *thd) {
     } else if (part->part_type == Partition::KEY ||
                part->part_type == Partition::HASH) {
       sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+    } else if (part->part_type == Partition::LIST) {
+      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
     }
 
     sql += ")";
@@ -2082,6 +2194,8 @@ void Table::SelectRandomRow(Thd1 *thd) {
     } else if (part->part_type == Partition::KEY ||
                part->part_type == Partition::HASH) {
       sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+    } else if (part->part_type == Partition::LIST) {
+      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
     }
 
     sql += ")";
@@ -2159,6 +2273,9 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     } else if (part->part_type == Partition::KEY ||
                part->part_type == Partition::HASH) {
       sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+    }
+    if (part->part_type == Partition::LIST) {
+      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
     }
 
     sql += ")";
