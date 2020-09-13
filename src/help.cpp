@@ -139,7 +139,7 @@ void add_options() {
   opt->help =
       "all ==> keyring/Y/N \n oracle ==> Y/N \n x ==> x \n if some string "
       "other than all/oracle is given it would use it as encryption type";
-  opt->setString("all");
+  opt->setString("oracle");
 
   /* create,alter,drop undo tablespace */
   opt = newOption(Option::INT, Option::UNDO_SQL, "undo-tbs-sql");

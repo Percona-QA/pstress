@@ -1268,25 +1268,27 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
    * tablespaces */
   static int tbs_count = opt_int(NUMBER_OF_GENERAL_TABLESPACE);
 
-  /* temporary table can't have tablespace */
-  if (table->type != TEMPORARY && table->type != PARTITION &&
-      g_tablespace.size() > 0 && rand_int(tbs_count) != 0 &&
-      options->at(Option::ENCRYPTION_TYPE)->getString() != "KEYRING") {
-    table->tablespace = g_tablespace[rand_int(g_tablespace.size() - 1)];
-
-    if (table->tablespace.substr(table->tablespace.size() - 2, 2)
-            .compare("_e") == 0)
-      table->encryption = "Y";
-    table->row_format.clear();
-    if (g_innodb_page_size > INNODB_16K_PAGE_SIZE ||
-        table->tablespace.compare("innodb_system") == 0 ||
-        stoi(table->tablespace.substr(3, 2)) == g_innodb_page_size)
-      table->key_block_size = 0;
-    else
-      table->key_block_size = std::stoi(table->tablespace.substr(3, 2));
-  } else if (table->type != TEMPORARY && !no_encryption &&
-             g_encryption.size() > 0) {
+  /* partition and temporary tables don't have tablespaces */
+  if (table->type == PARTITION && !no_encryption) {
     table->encryption = g_encryption[rand_int(g_encryption.size() - 1)];
+  } else if (table->type != TEMPORARY && !no_encryption) {
+      for (size_t i=0; i < g_encryption.size(); i++) {
+        if (g_encryption.at(i) == "Y" || g_encryption.at(i) == "N") {
+          if (g_tablespace.size() > 0 && rand_int(tbs_count) != 0) {
+            table->tablespace = g_tablespace[rand_int(g_tablespace.size() - 1)];
+            if (table->tablespace.substr(table->tablespace.size() - 2, 2).compare("_e") == 0)
+              table->encryption = "Y";
+          table->row_format.clear();
+          if (g_innodb_page_size > INNODB_16K_PAGE_SIZE ||
+              table->tablespace.compare("innodb_system") == 0 ||
+              stoi(table->tablespace.substr(3, 2)) == g_innodb_page_size)
+            table->key_block_size = 0;
+          else
+            table->key_block_size = std::stoi(table->tablespace.substr(3, 2));
+          }
+        } else
+            table->encryption = g_encryption.at(i);
+      }
   }
 
   /* if temporary table encrypt variable set create encrypt table */
@@ -1295,7 +1297,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
 
   if (strcmp(FORK, "Percona-Server") == 0 && db_branch().compare("5.7") == 0 &&
       temp_table_encrypt.compare("1") == 0 && table->type == TEMPORARY)
-    table->encryption = 'y';
+    table->encryption = 'Y';
 
   /* if innodb system is encrypt , create encrypt table */
   static auto system_table_encrypt =
@@ -1304,7 +1306,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   if (strcmp(FORK, "Percona-Server") == 0 && table->tablespace.size() > 0 &&
       table->tablespace.compare("innodb_system") == 0 &&
       system_table_encrypt.compare("1") == 0) {
-    table->encryption = 'y';
+    table->encryption = 'Y';
   }
 
   /* 25 % tables are compress */
@@ -1367,19 +1369,20 @@ std::string Table::definition() {
   bool keyring_key_encrypt_flag = 0;
 
   if (!no_encryption && type != TEMPORARY) {
-    if (rand_int(1) == 0) {
+    if (encryption == "Y" || encryption == "N")
       def += " ENCRYPTION='" + encryption + "'";
-      if (encryption == "KEYRING")
-        keyring_key_encrypt_flag = 1;
-    }
-    else {
-      if (rand_int(1) == 0) {
+    else if (encryption == "KEYRING") {
+      keyring_key_encrypt_flag = 1;
+      switch (rand_int(2)) {
+      case 0:
+        def += "ENCRYPTION='KEYRING'";
+        break;
+      case 1:
         def += " ENCRYPTION_KEY_ID=" + std::to_string(rand_int(9));
-        keyring_key_encrypt_flag = 1;
-      }
-      else {
+        break;
+      case 2:
         def += " ENCRYPTION='KEYRING' ENCRYPTION_KEY_ID=" + std::to_string(rand_int(9));
-        keyring_key_encrypt_flag = 1;
+        break;
       }
     }
   }
