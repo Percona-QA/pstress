@@ -496,7 +496,8 @@ void add_options() {
 
   /* maximum number Partition */
   opt = newOption(Option::INT, Option::MAX_PARTITIONS, "max-partitions");
-  opt->help = "maximum number of partitions in table";
+  opt->help =
+      "maximum number of partitions in table. choose between 1 and 8192";
   opt->setInt(100);
 
   /* Total number of partition supported */
@@ -504,8 +505,7 @@ void add_options() {
       newOption(Option::STRING, Option::PARTITION_SUPPORTED, "partition-types");
   opt->help =
       "total partition supported, all for LIST, HASH, KEY, RANGE or to provide "
-      "or pass for example --partition_supported LIST, HASH "
-      "RANGE";
+      "or pass for example --partition-types LIST,HASH,RANGE without space";
   opt->setString("all");
 
   /* Optimize Table */

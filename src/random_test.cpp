@@ -79,6 +79,12 @@ int sum_of_all_options(Thd1 *thd) {
       Partition::supported.push_back(Partition::RANGE);
   }
 
+  if (options->at(Option::MAX_PARTITIONS)->getInt() < 1 ||
+      options->at(Option::MAX_PARTITIONS)->getInt() > 8192)
+    throw std::runtime_error(
+        "invalid range for --max-partition. Choose between 1 and 8192");
+    ;
+
   /* for 5.7 disable some features */
   if (db_branch().compare("5.7") == 0) {
     opt_int_set(ALTER_TABLESPACE_RENAME, 0);
@@ -117,6 +123,10 @@ int sum_of_all_options(Thd1 *thd) {
   if (options->at(Option::ONLY_PARTITION)->getBool() &&
       options->at(Option::ONLY_TEMPORARY)->getBool())
     throw std::runtime_error("choose either only partition or only temporary ");
+
+  if (options->at(Option::ONLY_PARTITION)->getBool() &&
+      options->at(Option::NO_PARTITION)->getBool())
+    throw std::runtime_error("choose either only partition or no partition");
 
   if (options->at(Option::ONLY_PARTITION)->getBool())
     options->at(Option::NO_TEMPORARY)->setBool("false");
