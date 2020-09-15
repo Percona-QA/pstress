@@ -464,6 +464,13 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /* Rename Index */
+  opt = newOption(Option::INT, Option::RENAME_INDEX, "rename-index");
+  opt->help = "alter table rename index";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* Rename Column */
   opt = newOption(Option::INT, Option::RENAME_COLUMN, "rename-column");
   opt->help = "alter table rename column";

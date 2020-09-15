@@ -2060,6 +2060,31 @@ void Table::SelectAllRow(Thd1 *thd) {
   execute_sql(sql, thd);
 }
 
+void Table::IndexRename(Thd1 *thd) {
+  table_mutex.lock();
+  auto ps = rand_int(indexes_->size() - 1);
+  auto name = indexes_->at(ps)->name_;
+  /* ALTER index to _rename or back to orignal_name */
+  std::string new_name = "_rename";
+  static auto s = new_name.size();
+  if (name.size() > s && name.substr(name.length() - s).compare("_rename") == 0)
+    new_name = name.substr(0, name.length() - s);
+  else
+    new_name = name + new_name;
+  std::string sql =
+      "ALTER TABLE " + name_ + " RENAME INDEX " + name + " To " + new_name;
+  sql += pick_algorithm_lock();
+  table_mutex.unlock();
+  if (execute_sql(sql, thd)) {
+    table_mutex.lock();
+    for (auto &ind : *indexes_) {
+      if (ind->name_.compare(name) == 0)
+        ind->name_ = new_name;
+    }
+    table_mutex.unlock();
+  }
+}
+
 void Table::ColumnRename(Thd1 *thd) {
   table_mutex.lock();
   auto ps = rand_int(columns_->size() - 1);
@@ -2073,6 +2098,7 @@ void Table::ColumnRename(Thd1 *thd) {
     new_name = name + new_name;
   std::string sql =
       "ALTER TABLE " + name_ + " RENAME COLUMN " + name + " To " + new_name;
+  sql += pick_algorithm_lock();
   table_mutex.unlock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
@@ -3085,6 +3111,9 @@ void Thd1::run_some_query() {
       break;
     case Option::RENAME_COLUMN:
       table->ColumnRename(this);
+      break;
+    case Option::RENAME_INDEX:
+      table->IndexRename(this);
       break;
     case Option::ALTER_MASTER_KEY:
       execute_sql("ALTER INSTANCE ROTATE INNODB MASTER KEY", this);

@@ -87,6 +87,7 @@ struct Option {
     DROP_INDEX,
     ADD_INDEX,
     RENAME_COLUMN,
+    RENAME_INDEX,
     OPTIMIZE,
     ANALYZE,
     TRUNCATE,

@@ -203,6 +203,7 @@ struct Table {
   void SelectAllRow(Thd1 *thd);
   void DeleteAllRows(Thd1 *thd);
   void ColumnRename(Thd1 *thd);
+  void IndexRename(Thd1 *thd);
   template <typename Writer> void Serialize(Writer &writer) const;
   virtual ~Table();
 
