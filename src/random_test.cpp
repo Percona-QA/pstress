@@ -90,7 +90,6 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_TABLESPACE_RENAME, 0);
     opt_int_set(RENAME_COLUMN, 0);
     opt_int_set(UNDO_SQL, 0);
-    opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
     opt_int_set(ALTER_REDO_LOGGING, 0);
   }
 
@@ -102,8 +101,10 @@ int sum_of_all_options(Thd1 *thd) {
     if (strcmp(FORK, "Percona-Server") == 0) {
       g_encryption.push_back("KEYRING");
     }
-  } else if (enc_type.compare("oracle") == 0)
-    g_encryption = {"Y", "N"};
+  } else if (enc_type.compare("oracle") == 0) {
+      g_encryption = {"Y", "N"};
+      options->at(Option::ALTER_ENCRYPTION_KEY)->setInt(0);
+    }
   else
     g_encryption = {enc_type};
 
@@ -111,7 +112,7 @@ int sum_of_all_options(Thd1 *thd) {
   if (strcmp(FORK, "MySQL") == 0) {
     options->at(Option::ALTER_DATABASE_ENCRYPTION)->setInt(0);
     options->at(Option::NO_COLUMN_COMPRESSION)->setBool("true");
-    opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
+    options->at(Option::ALTER_ENCRYPTION_KEY)->setInt(0);
   }
 
   if (db_branch().compare("8.0") == 0) {
@@ -157,9 +158,9 @@ int sum_of_all_options(Thd1 *thd) {
   /* If no-encryption is set, disable all encryption options */
   if (options->at(Option::NO_ENCRYPTION)->getBool()) {
     opt_int_set(ALTER_TABLE_ENCRYPTION, 0);
-    opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
     opt_int_set(ALTER_TABLESPACE_ENCRYPTION, 0);
     opt_int_set(ALTER_MASTER_KEY, 0);
+    opt_int_set(ALTER_ENCRYPTION_KEY, 0);
     opt_int_set(ROTATE_REDO_LOG_KEY, 0);
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
   }
@@ -1369,24 +1370,26 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
    * tablespaces */
   static int tbs_count = opt_int(NUMBER_OF_GENERAL_TABLESPACE);
 
-  /* temporary table can't have tablespace */
-  if (table->type != TEMPORARY && table->type != PARTITION &&
-      g_tablespace.size() > 0 && rand_int(tbs_count) != 0) {
-    table->tablespace = g_tablespace[rand_int(g_tablespace.size() - 1)];
-
-    if (table->tablespace.substr(table->tablespace.size() - 2, 2)
-            .compare("_e") == 0)
-      table->encryption = "Y";
-    table->row_format.clear();
-    if (g_innodb_page_size > INNODB_16K_PAGE_SIZE ||
-        table->tablespace.compare("innodb_system") == 0 ||
-        stoi(table->tablespace.substr(3, 2)) == g_innodb_page_size)
-      table->key_block_size = 0;
-    else
-      table->key_block_size = std::stoi(table->tablespace.substr(3, 2));
-  } else if (table->type != TEMPORARY && !no_encryption &&
-             g_encryption.size() > 0) {
+  /* partition and temporary tables don't have tablespaces */
+  if (table->type == PARTITION && !no_encryption) {
     table->encryption = g_encryption[rand_int(g_encryption.size() - 1)];
+  } else if (table->type != TEMPORARY && !no_encryption) {
+      int rand_index = rand_int(g_encryption.size() - 1);
+      if (g_encryption.at(rand_index) == "Y" || g_encryption.at(rand_index) == "N") {
+        if (g_tablespace.size() > 0 && rand_int(tbs_count) != 0) {
+          table->tablespace = g_tablespace[rand_int(g_tablespace.size() - 1)];
+          if (table->tablespace.substr(table->tablespace.size() - 2, 2).compare("_e") == 0)
+            table->encryption = "Y";
+        table->row_format.clear();
+        if (g_innodb_page_size > INNODB_16K_PAGE_SIZE ||
+            table->tablespace.compare("innodb_system") == 0 ||
+            stoi(table->tablespace.substr(3, 2)) == g_innodb_page_size)
+          table->key_block_size = 0;
+        else
+          table->key_block_size = std::stoi(table->tablespace.substr(3, 2));
+        }
+      } else
+          table->encryption = g_encryption.at(rand_index);
   }
 
   /* if temporary table encrypt variable set create encrypt table */
@@ -1395,7 +1398,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
 
   if (strcmp(FORK, "Percona-Server") == 0 && db_branch().compare("5.7") == 0 &&
       temp_table_encrypt.compare("1") == 0 && table->type == TEMPORARY)
-    table->encryption = 'y';
+    table->encryption = 'Y';
 
   /* if innodb system is encrypt , create encrypt table */
   static auto system_table_encrypt =
@@ -1404,7 +1407,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   if (strcmp(FORK, "Percona-Server") == 0 && table->tablespace.size() > 0 &&
       table->tablespace.compare("innodb_system") == 0 &&
       system_table_encrypt.compare("1") == 0) {
-    table->encryption = 'y';
+    table->encryption = 'Y';
   }
 
   /* 25 % tables are compress */
@@ -1464,14 +1467,31 @@ std::string Table::definition() {
 
   def += " )";
   static auto no_encryption = opt_bool(NO_ENCRYPTION);
+  bool keyring_key_encrypt_flag = 0;
 
-  if (!no_encryption && type != TEMPORARY)
-    def += " ENCRYPTION='" + encryption + "'";
+  if (!no_encryption && type != TEMPORARY) {
+    if (encryption == "Y" || encryption == "N")
+      def += " ENCRYPTION='" + encryption + "'";
+    else if (encryption == "KEYRING") {
+      keyring_key_encrypt_flag = 1;
+      switch (rand_int(2)) {
+      case 0:
+        def += "ENCRYPTION='KEYRING'";
+        break;
+      case 1:
+        def += " ENCRYPTION_KEY_ID=" + std::to_string(rand_int(9));
+        break;
+      case 2:
+        def += " ENCRYPTION='KEYRING' ENCRYPTION_KEY_ID=" + std::to_string(rand_int(9));
+        break;
+      }
+    }
+  }
 
   if (!compression.empty())
     def += " COMPRESSION='" + compression + "'";
 
-  if (!tablespace.empty())
+  if (!tablespace.empty() && !keyring_key_encrypt_flag)
     def += " TABLESPACE=" + tablespace;
 
   if (key_block_size > 1)
@@ -1665,17 +1685,6 @@ void load_default_data(Table *table, Thd1 *thd) {
 
 void Table::SetEncryption(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " ENCRYPTION = '";
-  std::string enc = g_encryption[rand_int(g_encryption.size() - 1)];
-  sql += enc + "'";
-  if (execute_sql(sql, thd)) {
-    table_mutex.lock();
-    encryption = enc;
-    table_mutex.unlock();
-  }
-}
-
-void Table::SetEncryptionInplace(Thd1 *thd) {
-  std::string sql = "ALTER TABLESPACE `test/" + name_ + "` ENCRYPTION = '";
   std::string enc = g_encryption[rand_int(g_encryption.size() - 1)];
   sql += enc + "'";
   if (execute_sql(sql, thd)) {
@@ -3060,9 +3069,6 @@ void Thd1::run_some_query() {
     case Option::ALTER_TABLE_ENCRYPTION:
       table->SetEncryption(this);
       break;
-    case Option::ALTER_TABLE_ENCRYPTION_INPLACE:
-      table->SetEncryptionInplace(this);
-      break;
     case Option::ALTER_TABLE_COMPRESSION:
       table->SetTableCompression(this);
       break;
@@ -3117,6 +3123,9 @@ void Thd1::run_some_query() {
       break;
     case Option::ALTER_MASTER_KEY:
       execute_sql("ALTER INSTANCE ROTATE INNODB MASTER KEY", this);
+      break;
+    case Option::ALTER_ENCRYPTION_KEY:
+      execute_sql("ALTER INSTANCE ROTATE INNODB SYSTEM KEY " + std::to_string(rand_int(9)), this);
       break;
     case Option::ROTATE_REDO_LOG_KEY:
       execute_sql("SELECT rotate_system_key(\"percona_redo\")", this);

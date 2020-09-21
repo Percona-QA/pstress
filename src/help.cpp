@@ -261,14 +261,6 @@ void add_options() {
   opt->help = "Probability of adding primary key in a table";
   opt->setInt(50);
 
-  /*Encrypt table inplace encryption */
-  opt = newOption(Option::INT, Option::ALTER_TABLE_ENCRYPTION_INPLACE,
-                  "alter-table-encrypt-inplace");
-  opt->help = "Alter table set Encryption inplace.\nOnly available for ps";
-  opt->setInt(10);
-  opt->setSQL();
-  opt->setDDL();
-
   /*Encrypt table */
   opt = newOption(Option::INT, Option::ALTER_TABLE_ENCRYPTION,
                   "alter-table-encrypt");
@@ -338,6 +330,13 @@ void add_options() {
   /* alter instance rotate innodb master key */
   opt = newOption(Option::INT, Option::ALTER_MASTER_KEY, "rotate-master-key");
   opt->help = "Alter instance rotate innodb master key";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
+  /* alter instance rotate innodb system key */
+  opt = newOption(Option::INT, Option::ALTER_ENCRYPTION_KEY, "rotate-encryption-key");
+  opt->help = "Alter instance rotate innodb system key X";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
