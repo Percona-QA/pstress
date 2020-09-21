@@ -261,15 +261,6 @@ void add_options() {
   opt->help = "Probability of adding primary key in a table";
   opt->setInt(50);
 
-  /*Encrypt table inplace encryption */
-  opt = newOption(Option::INT, Option::ALTER_TABLE_ENCRYPTION_INPLACE,
-                  "alter-table-encrypt-inplace");
-  opt->help = "Alter table set Encryption inplace.\nFeature not yet ready on PS";
-  /* This feature is not yet supported on PS. Hence, disabling by default */
-  opt->setInt(0);
-  opt->setSQL();
-  opt->setDDL();
-
   /*Encrypt table */
   opt = newOption(Option::INT, Option::ALTER_TABLE_ENCRYPTION,
                   "alter-table-encrypt");

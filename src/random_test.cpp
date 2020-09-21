@@ -84,7 +84,6 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_TABLESPACE_RENAME, 0);
     opt_int_set(RENAME_COLUMN, 0);
     opt_int_set(UNDO_SQL, 0);
-    opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
     opt_int_set(ALTER_REDO_LOGGING, 0);
   }
 
@@ -96,8 +95,10 @@ int sum_of_all_options(Thd1 *thd) {
     if (strcmp(FORK, "Percona-Server") == 0) {
       g_encryption.push_back("KEYRING");
     }
-  } else if (enc_type.compare("oracle") == 0)
-    g_encryption = {"Y", "N"};
+  } else if (enc_type.compare("oracle") == 0) {
+      g_encryption = {"Y", "N"};
+      options->at(Option::ALTER_ENCRYPTION_KEY)->setInt(0);
+    }
   else
     g_encryption = {enc_type};
 
@@ -105,7 +106,7 @@ int sum_of_all_options(Thd1 *thd) {
   if (strcmp(FORK, "MySQL") == 0) {
     options->at(Option::ALTER_DATABASE_ENCRYPTION)->setInt(0);
     options->at(Option::NO_COLUMN_COMPRESSION)->setBool("true");
-    opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
+    options->at(Option::ALTER_ENCRYPTION_KEY)->setInt(0);
   }
 
   if (db_branch().compare("8.0") == 0) {
@@ -147,7 +148,6 @@ int sum_of_all_options(Thd1 *thd) {
   /* If no-encryption is set, disable all encryption options */
   if (options->at(Option::NO_ENCRYPTION)->getBool()) {
     opt_int_set(ALTER_TABLE_ENCRYPTION, 0);
-    opt_int_set(ALTER_TABLE_ENCRYPTION_INPLACE, 0);
     opt_int_set(ALTER_TABLESPACE_ENCRYPTION, 0);
     opt_int_set(ALTER_MASTER_KEY, 0);
     opt_int_set(ALTER_ENCRYPTION_KEY, 0);
@@ -1684,17 +1684,6 @@ void Table::SetEncryption(Thd1 *thd) {
   }
 }
 
-void Table::SetEncryptionInplace(Thd1 *thd) {
-  std::string sql = "ALTER TABLESPACE `test/" + name_ + "` ENCRYPTION = '";
-  std::string enc = g_encryption[rand_int(g_encryption.size() - 1)];
-  sql += enc + "'";
-  if (execute_sql(sql, thd)) {
-    table_mutex.lock();
-    encryption = enc;
-    table_mutex.unlock();
-  }
-}
-
 // todo pick relevant table //
 void Table::SetTableCompression(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " COMPRESSION= '";
@@ -3043,9 +3032,6 @@ void Thd1::run_some_query() {
       break;
     case Option::ALTER_TABLE_ENCRYPTION:
       table->SetEncryption(this);
-      break;
-    case Option::ALTER_TABLE_ENCRYPTION_INPLACE:
-      table->SetEncryptionInplace(this);
       break;
     case Option::ALTER_TABLE_COMPRESSION:
       table->SetTableCompression(this);
