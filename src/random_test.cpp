@@ -2071,26 +2071,30 @@ void Table::SelectAllRow(Thd1 *thd) {
 
 void Table::IndexRename(Thd1 *thd) {
   table_mutex.lock();
-  auto ps = rand_int(indexes_->size() - 1);
-  auto name = indexes_->at(ps)->name_;
-  /* ALTER index to _rename or back to orignal_name */
-  std::string new_name = "_rename";
-  static auto s = new_name.size();
-  if (name.size() > s && name.substr(name.length() - s).compare("_rename") == 0)
-    new_name = name.substr(0, name.length() - s);
-  else
-    new_name = name + new_name;
-  std::string sql =
-      "ALTER TABLE " + name_ + " RENAME INDEX " + name + " To " + new_name;
-  sql += pick_algorithm_lock();
-  table_mutex.unlock();
-  if (execute_sql(sql, thd)) {
-    table_mutex.lock();
-    for (auto &ind : *indexes_) {
-      if (ind->name_.compare(name) == 0)
-        ind->name_ = new_name;
-    }
+  if (indexes_->size() == 0)
     table_mutex.unlock();
+  else {
+    auto ps = rand_int(indexes_->size() - 1);
+    auto name = indexes_->at(ps)->name_;
+    /* ALTER index to _rename or back to orignal_name */
+    std::string new_name = "_rename";
+    static auto s = new_name.size();
+    if (name.size() > s && name.substr(name.length() - s).compare("_rename") == 0)
+      new_name = name.substr(0, name.length() - s);
+    else
+      new_name = name + new_name;
+    std::string sql =
+        "ALTER TABLE " + name_ + " RENAME INDEX " + name + " To " + new_name;
+    sql += pick_algorithm_lock();
+    table_mutex.unlock();
+    if (execute_sql(sql, thd)) {
+      table_mutex.lock();
+      for (auto &ind : *indexes_) {
+        if (ind->name_.compare(name) == 0)
+          ind->name_ = new_name;
+      }
+      table_mutex.unlock();
+    }
   }
 }
 
