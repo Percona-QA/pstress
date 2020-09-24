@@ -14,7 +14,7 @@ using namespace rapidjson;
 std::mt19937 rng;
 
 const std::string partition_string = "_p";
-const int version = 1;
+const int version = 2;
 /* range for int, integers, floats and double */
 const int g_integer_range = 100;
 
@@ -737,28 +737,28 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
     writer.String("number_of_part");
     writer.Int(part_table->number_of_part);
     if (part_table->part_type == Partition::RANGE) {
-      writer.String("partition_range");
+      writer.String("part_range");
       writer.StartArray();
       for (auto par : part_table->positions) {
-        writer.StartObject();
-        writer.String("name");
+        writer.StartArray();
         writer.String(par.name.c_str(),
                       static_cast<SizeType>(par.name.length()));
-        writer.String("range");
         writer.Int(par.range);
-        writer.EndObject();
+        writer.EndArray();
       }
       writer.EndArray();
     } else if (part_table->part_type == Partition::LIST) {
 
-      writer.String("LISTS");
+      writer.String("part_list");
       writer.StartArray();
       for (auto list : part_table->lists) {
         writer.StartArray();
         writer.String(list.name.c_str(),
                       static_cast<SizeType>(list.name.length()));
+        writer.StartArray();
         for (auto i : list.list)
           writer.Int(i);
+        writer.EndArray();
         writer.EndArray();
       };
       writer.EndArray();
@@ -2748,12 +2748,25 @@ static std::string load_metadata_from_file() {
     std::string table_type = tab["type"].GetString();
 
     if (table_type.compare("PARTITION") == 0) {
-      table = new Partition(name, tab["part_type"].GetString(),
-                            tab["number_of_part"].GetInt());
+      std::string part_type = tab["part_type"].GetString();
+      table = new Partition(name, part_type, tab["number_of_part"].GetInt());
 
-      for (auto &par_range : tab["partition_range"].GetArray()) {
-        static_cast<Partition *>(table)->positions.emplace_back(
-            par_range["name"].GetString(), par_range["range"].GetInt());
+      if (part_type.compare("RANGE") == 0) {
+        for (auto &par_range : tab["part_range"].GetArray()) {
+          static_cast<Partition *>(table)->positions.emplace_back(
+              par_range[0].GetString(), par_range[1].GetInt());
+        }
+      } else if (part_type.compare("LIST") == 0) {
+        int curr_index_of_list = 0;
+        for (auto &par_list : tab["part_list"].GetArray()) {
+          static_cast<Partition *>(table)->lists.emplace_back(
+              par_list[0].GetString());
+          for (auto &list_value : par_list[1].GetArray())
+            static_cast<Partition *>(table)
+                ->lists.at(curr_index_of_list)
+                .list.push_back(list_value.GetInt());
+          curr_index_of_list++;
+        }
       }
     } else if (table_type.compare("NORMAL") == 0) {
       table = new Table(name);
