@@ -504,7 +504,7 @@ void add_options() {
   opt = newOption(Option::INT, Option::MAX_PARTITIONS, "max-partitions");
   opt->help =
       "maximum number of partitions in table. choose between 1 and 8192";
-  opt->setInt(100);
+  opt->setInt(25);
 
   /* Total number of partition supported */
   opt =
