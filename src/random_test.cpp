@@ -1017,60 +1017,84 @@ void Partition::AddDrop(Thd1 *thd) {
       }
     }
   } else if (part_type == RANGE) {
-    /* drop partition */
+    /* drop partition, else add partition */
     if (rand_int(1) == 1) {
-      auto par = positions.at(rand_int(positions.size() - 1));
-      auto part_name = par.name;
-      if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
-                      thd)) {
-        table_mutex.lock();
-        number_of_part -= 1;
-        for (auto i = positions.begin(); i != positions.end(); i++) {
-          if (i->name.compare(part_name) == 0) {
-            positions.erase(i);
-          }
-        }
+      table_mutex.lock();
+      if (positions.size()) {
+        auto par = positions.at(rand_int(positions.size() - 1));
+        auto part_name = par.name;
         table_mutex.unlock();
-      }
+        if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
+                        thd)) {
+          table_mutex.lock();
+          number_of_part -= 1;
+          for (auto i = positions.begin(); i != positions.end(); i++) {
+            if (i->name.compare(part_name) == 0) {
+              positions.erase(i);
+              break;
+            }
+          }
+          table_mutex.unlock();
+        }
+      } else
+        table_mutex.unlock();
     } else {
       /* add partition */
       table_mutex.lock();
-      size_t pst = rand_int(positions.size() - 1, 1);
-      if (positions.at(pst).range - positions.at(pst - 1).range <= 2) {
-        table_mutex.unlock();
-        return;
-      }
-      auto par = positions.at(pst);
-      auto prev_par = positions.at(pst - 1);
-      auto first = rand_int(par.range, prev_par.range);
-      auto second = par.range;
-      auto par_name = par.name;
-      table_mutex.unlock();
+      int first;
+      int second;
+      std::string par_name;
+      if (positions.size()) {
+        if (positions.size() > 1) {
+          size_t pst = rand_int(positions.size() - 1, 1);
 
-      std::string sql = "ALTER TABLE " + name_ + " REORGANIZE PARTITION " +
-                        par.name + " INTO ( PARTITION " + par.name +
-                        "a VALUES LESS THAN " + "(" + std::to_string(first) +
-                        "), PARTITION " + par.name + "b VALUES LESS THAN (" +
-                        std::to_string(second) + "))";
-
-      if (execute_sql(sql, thd)) {
-        table_mutex.lock();
-        for (auto i = positions.begin(); i != positions.end(); i++) {
-          if (i->name.compare(par_name) == 0) {
-            positions.erase(i);
-            break;
+          if (positions.at(pst).range - positions.at(pst - 1).range <= 2) {
+            table_mutex.unlock();
+            return;
           }
+          auto par = positions.at(pst);
+          auto prev_par = positions.at(pst - 1);
+          first = rand_int(par.range, prev_par.range);
+          second = par.range;
+          par_name = par.name;
+        } else {
+          auto par = positions.at(0);
+          first = rand_int(par.range);
+          second = par.range;
+          par_name = par.name;
         }
-        positions.emplace_back(par.name + "a", first);
-        positions.emplace_back(par.name + "b", second);
-        std::sort(positions.begin(), positions.end(), Partition::compareRange);
+
+        std::string sql = "ALTER TABLE " + name_ + " REORGANIZE PARTITION " +
+                          par_name + " INTO ( PARTITION " + par_name +
+                          "a VALUES LESS THAN " + "(" + std::to_string(first) +
+                          "), PARTITION " + par_name + "b VALUES LESS THAN (" +
+                          std::to_string(second) + "))";
         table_mutex.unlock();
-      }
+
+        if (execute_sql(sql, thd)) {
+          table_mutex.lock();
+          for (auto i = positions.begin(); i != positions.end(); i++) {
+            if (i->name.compare(par_name) == 0) {
+              positions.erase(i);
+              break;
+            }
+          }
+          positions.emplace_back(par_name + "a", first);
+          positions.emplace_back(par_name + "b", second);
+          std::sort(positions.begin(), positions.end(),
+                    Partition::compareRange);
+
+          table_mutex.unlock();
+        }
+      } else
+        table_mutex.unlock();
     }
   } else if (part_type == LIST) {
+
+    /* drop partition or add partition */
     if (rand_int(1) == 0) {
-      /* drop partition */
       table_mutex.lock();
+
       auto par = lists.at(rand_int(lists.size() - 1));
       auto part_name = par.name;
       table_mutex.unlock();
