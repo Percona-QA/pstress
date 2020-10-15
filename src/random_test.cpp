@@ -997,7 +997,9 @@ void Table::Truncate(Thd1 *thd) {
 void Partition::AddDrop(Thd1 *thd) {
   if (part_type == KEY || part_type == HASH) {
     int new_partition =
-        rand_int(options->at(Option::MAX_PARTITIONS)->getInt() / 10, 1);
+        rand_int(options->at(Option::MAX_PARTITIONS)->getInt()) / 10;
+    if (new_partition == 0)
+      new_partition = 1;
 
     if (rand_int(1) == 0) {
       if (execute_sql("ALTER TABLE " + name_ + " ADD PARTITION PARTITIONS " +
