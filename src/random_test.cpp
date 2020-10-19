@@ -937,8 +937,10 @@ void Table::DropCreate(Thd1 *thd) {
 
 void Table::Optimize(Thd1 *thd) {
   if (type == PARTITION && rand_int(4) == 1) {
+    table_mutex.lock();
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
+    table_mutex.unlock();
     execute_sql("ALTER TABLE " + name_ + " OPTIMIZE PARTITION p" +
                     std::to_string(partition),
                 thd);
@@ -948,8 +950,10 @@ void Table::Optimize(Thd1 *thd) {
 
 void Table::Check(Thd1 *thd) {
   if (type == PARTITION && rand_int(4) == 1) {
+    table_mutex.lock();
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
+    table_mutex.unlock();
     execute_sql("ALTER TABLE " + name_ + " CHECK PARTITION p" +
                     std::to_string(partition),
                 thd);
@@ -959,8 +963,10 @@ void Table::Check(Thd1 *thd) {
 
 void Table::Analyze(Thd1 *thd) {
   if (type == PARTITION && rand_int(4) == 1) {
+    table_mutex.lock();
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
+    table_mutex.unlock();
     execute_sql("ALTER TABLE " + name_ + " ANALYZE PARTITION p" +
                     std::to_string(partition),
                 thd);
@@ -1006,7 +1012,7 @@ void Partition::AddDrop(Thd1 *thd) {
                           std::to_string(new_partition),
                       thd)) {
         table_mutex.lock();
-        number_of_part -= new_partition;
+        number_of_part += new_partition;
         table_mutex.unlock();
       }
     } else {
@@ -1014,7 +1020,7 @@ void Partition::AddDrop(Thd1 *thd) {
                           std::to_string(new_partition),
                       thd)) {
         table_mutex.lock();
-        number_of_part += new_partition;
+        number_of_part -= new_partition;
         table_mutex.unlock();
       }
     }
@@ -1029,7 +1035,7 @@ void Partition::AddDrop(Thd1 *thd) {
         if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
                         thd)) {
           table_mutex.lock();
-          number_of_part -= 1;
+          number_of_part--;
           for (auto i = positions.begin(); i != positions.end(); i++) {
             if (i->name.compare(part_name) == 0) {
               positions.erase(i);
@@ -1085,7 +1091,7 @@ void Partition::AddDrop(Thd1 *thd) {
           positions.emplace_back(par_name + "b", second);
           std::sort(positions.begin(), positions.end(),
                     Partition::compareRange);
-
+          number_of_part++;
           table_mutex.unlock();
         }
       } else
@@ -1103,7 +1109,7 @@ void Partition::AddDrop(Thd1 *thd) {
       if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
                       thd)) {
         table_mutex.lock();
-        number_of_part -= 1;
+        number_of_part--;
         for (auto i = lists.begin(); i != lists.end(); i++) {
           if (i->name.compare(part_name) == 0) {
             for (auto j : i->list)
