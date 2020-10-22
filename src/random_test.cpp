@@ -252,7 +252,7 @@ inline static std::string pick_algorithm_lock() {
   static auto lock = opt_string(LOCK);
   static auto algorithm = opt_string(ALGORITHM);
   std::string locks[] = {"DEFAULT", "EXCLUSIVE", "SHARED", "NONE"};
-  std::string algorithms[] = {"INPLACE", "COPY", "DEFAULT"};
+  std::string algorithms[] = {"INPLACE", "COPY", "INSTANT"};
   std::string current_lock;
   std::string current_algo;
   if (lock.compare("all") == 0 && algorithm.compare("all") == 0) {
@@ -275,7 +275,7 @@ inline static std::string pick_algorithm_lock() {
     current_lock = lock;
     current_algo = algorithm;
   }
-  return ", LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
+  return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
 }
 
 /* set seed of current thread */
@@ -976,7 +976,8 @@ void Table::Analyze(Thd1 *thd) {
 
 void Table::Truncate(Thd1 *thd) {
   /* 99% truncate the some partition */
-  if (type == PARTITION && rand_int(100) > 98) {
+  if ((type == PARTITION && rand_int(100) > 98) ||
+     options->at(Option::ONLY_PARTITION)->getBool()) {
     table_mutex.lock();
     std::string part_name;
     auto part_table = static_cast<Partition *>(this);
@@ -992,7 +993,7 @@ void Table::Truncate(Thd1 *thd) {
           part_table->lists.at(rand_int(part_table->lists.size() - 1)).name;
     }
     table_mutex.unlock();
-    execute_sql("ALTER TABLE " + name_ + " TRUNCATE PARTITION " + part_name,
+    execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() + ", TRUNCATE PARTITION " + part_name,
                 thd);
   } else {
     execute_sql("TRUNCATE TABLE " + name_, thd);
@@ -1016,7 +1017,7 @@ void Partition::AddDrop(Thd1 *thd) {
         table_mutex.unlock();
       }
     } else {
-      if (execute_sql("ALTER TABLE " + name_ + " COALESCE PARTITION " +
+      if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() + ", COALESCE PARTITION " +
                           std::to_string(new_partition),
                       thd)) {
         table_mutex.lock();
@@ -1032,7 +1033,7 @@ void Partition::AddDrop(Thd1 *thd) {
         auto par = positions.at(rand_int(positions.size() - 1));
         auto part_name = par.name;
         table_mutex.unlock();
-        if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
+        if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() + ", DROP PARTITION " + part_name,
                         thd)) {
           table_mutex.lock();
           number_of_part--;
@@ -1106,7 +1107,7 @@ void Partition::AddDrop(Thd1 *thd) {
       auto par = lists.at(rand_int(lists.size() - 1));
       auto part_name = par.name;
       table_mutex.unlock();
-      if (execute_sql("ALTER TABLE " + name_ + " DROP PARTITION " + part_name,
+      if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() + ", DROP PARTITION " + part_name,
                       thd)) {
         table_mutex.lock();
         number_of_part--;
@@ -1791,7 +1792,7 @@ void Table::ModifyColumn(Thd1 *thd) {
             col->type_ == Column::VARCHAR))
     col->compressed = true;
 
-  sql += " " + col->definition() + pick_algorithm_lock();
+  sql += " " + col->definition() + "," + pick_algorithm_lock();
 
   /* if not successful rollback */
   if (!execute_sql(sql, thd)) {
@@ -1821,7 +1822,7 @@ void Table::DropColumn(Thd1 *thd) {
     return;
   }
 
-  std::string sql = "ALTER TABLE " + name_ + " DROP COLUMN " + name;
+  std::string sql = "ALTER TABLE " + name_ + " DROP COLUMN " + name + ",";
 
   sql += pick_algorithm_lock();
   table_mutex.unlock();
@@ -1920,7 +1921,7 @@ void Table::AddColumn(Thd1 *thd) {
   else
     tc = new Column(name, this, col_type);
 
-  sql += " " + tc->definition();
+  sql += " " + tc->definition() + ",";
   sql += pick_algorithm_lock();
 
   table_mutex.unlock();
@@ -1950,7 +1951,7 @@ void Table::DropIndex(Thd1 *thd) {
   if (indexes_ != nullptr && indexes_->size() > 0) {
     auto index = indexes_->at(rand_int(indexes_->size() - 1));
     auto name = index->name_;
-    std::string sql = "ALTER TABLE " + name_ + " DROP INDEX " + name;
+    std::string sql = "ALTER TABLE " + name_ + " DROP INDEX " + name + ",";
     sql += pick_algorithm_lock();
     table_mutex.unlock();
     if (execute_sql(sql, thd)) {
@@ -2011,7 +2012,7 @@ void Table::AddIndex(Thd1 *thd) {
     id->AddInternalColumn(new Ind_col(col, column_desc)); // desc is set as true
   }
 
-  std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition();
+  std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition() + ",";
   sql += pick_algorithm_lock();
   table_mutex.unlock();
 
@@ -2116,7 +2117,7 @@ void Table::IndexRename(Thd1 *thd) {
     else
       new_name = name + new_name;
     std::string sql =
-        "ALTER TABLE " + name_ + " RENAME INDEX " + name + " To " + new_name;
+        "ALTER TABLE " + name_ + " RENAME INDEX " + name + " To " + new_name + ",";
     sql += pick_algorithm_lock();
     table_mutex.unlock();
     if (execute_sql(sql, thd)) {
@@ -2142,7 +2143,7 @@ void Table::ColumnRename(Thd1 *thd) {
   else
     new_name = name + new_name;
   std::string sql =
-      "ALTER TABLE " + name_ + " RENAME COLUMN " + name + " To " + new_name;
+      "ALTER TABLE " + name_ + " RENAME COLUMN " + name + " To " + new_name + ",";
   sql += pick_algorithm_lock();
   table_mutex.unlock();
   if (execute_sql(sql, thd)) {
