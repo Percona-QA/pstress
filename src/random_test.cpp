@@ -252,14 +252,14 @@ inline static std::string pick_algorithm_lock() {
   static auto lock = opt_string(LOCK);
   static auto algorithm = opt_string(ALGORITHM);
   std::string locks[] = {"DEFAULT", "EXCLUSIVE", "SHARED", "NONE"};
-  std::string algorithms[] = {"INPLACE", "COPY", "INSTANT"};
+  std::string algorithms[] = {"INPLACE", "COPY", "INSTANT", "DEFAULT"};
   std::string current_lock;
   std::string current_algo;
   if (lock.compare("all") == 0 && algorithm.compare("all") == 0) {
     auto lock_index = rand_int(3);
-    auto algo_index = rand_int(2);
+    auto algo_index = rand_int(3);
     /* lock=none;algo=inplace|copy not supported */
-    if (lock_index == 3 && algo_index != 2)
+    if (lock_index == 3 && algo_index < 2)
       lock_index = 0;
     current_lock = locks[lock_index];
     current_algo = algorithms[algo_index];
@@ -268,7 +268,7 @@ inline static std::string pick_algorithm_lock() {
     current_lock = locks[lock_index];
     current_algo = algorithm;
   } else if (algorithm.compare("all") == 0) {
-    auto algo_index = rand_int(2);
+    auto algo_index = rand_int(3);
     current_algo = algorithms[algo_index];
     current_lock = lock;
   } else {
@@ -976,8 +976,7 @@ void Table::Analyze(Thd1 *thd) {
 
 void Table::Truncate(Thd1 *thd) {
   /* 99% truncate the some partition */
-  if ((type == PARTITION && rand_int(100) > 98) ||
-     options->at(Option::ONLY_PARTITION)->getBool()) {
+  if (type == PARTITION && rand_int(100) > 1) {
     table_mutex.lock();
     std::string part_name;
     auto part_table = static_cast<Partition *>(this);
