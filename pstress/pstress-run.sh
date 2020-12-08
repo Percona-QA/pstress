@@ -28,7 +28,6 @@ export ASAN_OPTIONS=quarantine_size_mb=512:atexit=true:detect_invalid_pointer_pa
 if [ "$1" != "" ]; then CONFIGURATION_FILE=$1; fi
 if [ ! -r ${SCRIPT_PWD}/${CONFIGURATION_FILE} ]; then echo "Assert: the confiruation file ${SCRIPT_PWD}/${CONFIGURATION_FILE} cannot be read!"; exit 1; fi
 source ${SCRIPT_PWD}/$CONFIGURATION_FILE
-PQUERY_TOOL_NAME=$(basename ${PQUERY_BIN})
 if [ "${SEED}" == "" ]; then SEED=${RANDOMD}; fi
 
 if [[ ${SIGNAL} -ne 15 && ${SIGNAL} -ne 4 && ${SIGNAL} -ne 9 ]]; then
@@ -46,8 +45,8 @@ if [ "${SKIPCHECKDIRS}" == "" ]; then  # Used in/by pquery-reach.sh TODO: find a
 fi
 
 # Other safety checks
-if [ "$(echo ${PQUERY_BIN} | sed 's|\(^/pquery\)|\1|')" == "/pquery" ]; then echo "Assert! \$PQUERY_BIN == '${PQUERY_BIN}' - is it missing the \$SCRIPT_PWD prefix?"; exit 1; fi
-if [ ! -r ${PQUERY_BIN} ]; then echo "${PQUERY_BIN} specified in the configuration file used (${SCRIPT_PWD}/${CONFIGURATION_FILE}) cannot be found/read"; exit 1; fi
+if [ "$(echo ${PSTRESS_BIN} | sed 's|\(^/pquery\)|\1|')" == "/pquery" ]; then echo "Assert! \$PSTRESS_BIN == '${PSTRESS_BIN}' - is it missing the \$SCRIPT_PWD prefix?"; exit 1; fi
+if [ ! -r ${PSTRESS_BIN} ]; then echo "${PSTRESS_BIN} specified in the configuration file used (${SCRIPT_PWD}/${CONFIGURATION_FILE}) cannot be found/read"; exit 1; fi
 if [ ! -r ${OPTIONS_INFILE} ]; then echo "${OPTIONS_INFILE} specified in the configuration file used (${SCRIPT_PWD}/${CONFIGURATION_FILE}) cannot be found/read"; exit 1; fi
 
 # Try and raise ulimit for user processes (see setup_server.sh for how to set correct soft/hard nproc settings in limits.conf)
@@ -171,9 +170,9 @@ if [ "${PXC}" == "1" ]; then
     echoit "Note: As this is a PXC=1 run, and QUERIES_PER_THREAD was set to only ${QUERIES_PER_THREAD}, this script is setting the queries per thread to the required minimum of 2147483647 for this run."
     QUERIES_PER_THREAD=2147483647  # Max int
   fi
-  if [ ${PQUERY_RUN_TIMEOUT} -lt 60 ]; then  # Starting up a cluster takes more time, so don't rotate too quickly
-    echoit "Note: As this is a PXC=1 run, and PQUERY_RUN_TIMEOUT was set to only ${PQUERY_RUN_TIMEOUT}, this script is setting the timeout to the required minimum of 120 for this run."
-    PQUERY_RUN_TIMEOUT=60
+  if [ ${PSTRESS_RUN_TIMEOUT} -lt 60 ]; then  # Starting up a cluster takes more time, so don't rotate too quickly
+    echoit "Note: As this is a PXC=1 run, and PSTRESS_RUN_TIMEOUT was set to only ${PSTRESS_RUN_TIMEOUT}, this script is setting the timeout to the required minimum of 120 for this run."
+    PSTRESS_RUN_TIMEOUT=60
   fi
   ADD_RANDOM_OPTIONS=0
   ADD_RANDOM_TOKUDB_OPTIONS=0
@@ -187,9 +186,9 @@ if [ "${GRP_RPL}" == "1" ]; then
     echoit "Note: As this is a GRP_RPL=1 run, and QUERIES_PER_THREAD was set to only ${QUERIES_PER_THREAD}, this script is setting the queries per thread to the required minimum of 2147483647 for this run."
     QUERIES_PER_THREAD=2147483647  # Max int
   fi
-  if [ ${PQUERY_RUN_TIMEOUT} -lt 120 ]; then  # Starting up a cluster takes more time, so don't rotate too quickly
-    echoit "Note: As this is a GRP_RPL=1 run, and PQUERY_RUN_TIMEOUT was set to only ${PQUERY_RUN_TIMEOUT}, this script is setting the timeout to the required minimum of 120 for this run."
-    PQUERY_RUN_TIMEOUT=120
+  if [ ${PSTRESS_RUN_TIMEOUT} -lt 120 ]; then  # Starting up a cluster takes more time, so don't rotate too quickly
+    echoit "Note: As this is a GRP_RPL=1 run, and PSTRESS_RUN_TIMEOUT was set to only ${PSTRESS_RUN_TIMEOUT}, this script is setting the timeout to the required minimum of 120 for this run."
+    PSTRESS_RUN_TIMEOUT=120
   fi
   ADD_RANDOM_TOKUDB_OPTIONS=0
   ADD_RANDOM_ROCKSDB_OPTIONS=0
@@ -211,9 +210,9 @@ else
   fi
 fi
 if [ ${THREADS} -gt 1 ]; then  # We may want to drop this to 20 seconds required?
-  if [ ${PQUERY_RUN_TIMEOUT} -lt 30 ]; then
-    echoit "Note: As this is a multi-threaded run, and PQUERY_RUN_TIMEOUT was set to only ${PQUERY_RUN_TIMEOUT}, this script is setting the timeout to the required minimum of 60 for this run."
-    PQUERY_RUN_TIMEOUT=60
+  if [ ${PSTRESS_RUN_TIMEOUT} -lt 30 ]; then
+    echoit "Note: As this is a multi-threaded run, and PSTRESS_RUN_TIMEOUT was set to only ${PSTRESS_RUN_TIMEOUT}, this script is setting the timeout to the required minimum of 60 for this run."
+    PSTRESS_RUN_TIMEOUT=60
   fi
 fi
 if [ "${VALGRIND_RUN}" == "1" ]; then
@@ -223,8 +222,8 @@ if [ "${VALGRIND_RUN}" == "1" ]; then
     echoit "Note: As this is a VALGRIND_RUN=1 run, and MYSQLD_START_TIMEOUT was set to only ${MYSQLD_START_TIMEOUT}), this script is setting the timeout to the required minimum of 300 for this run."
     MYSQLD_START_TIMEOUT=300
   fi
-  echoit "Note: As this is a VALGRIND_RUN=1 run, this script is increasing PQUERY_RUN_TIMEOUT (${PQUERY_RUN_TIMEOUT}) by 180 seconds because Valgrind is very slow in processing SQL."
-  PQUERY_RUN_TIMEOUT=$[ ${PQUERY_RUN_TIMEOUT} + 180 ]
+  echoit "Note: As this is a VALGRIND_RUN=1 run, this script is increasing PSTRESS_RUN_TIMEOUT (${PSTRESS_RUN_TIMEOUT}) by 180 seconds because Valgrind is very slow in processing SQL."
+  PSTRESS_RUN_TIMEOUT=$[ ${PSTRESS_RUN_TIMEOUT} + 180 ]
 fi
 
 # Trap ctrl-c
@@ -972,21 +971,21 @@ pstress_test(){
       echoit "Loading metadata from ${WORKDIR}/step_$((${TRIAL}-1)).dll ..."
     fi
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
-      CMD="${PQUERY_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL} --user=root --socket=${SOCKET} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PQUERY_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+      CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL} --user=root --socket=${SOCKET} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     elif [ ${PXC_CLUSTER_RUN} -eq 1 ]; then
       cat ${PXC_CLUSTER_CONFIG} \
           | sed -e "s|\/tmp|${RUNDIR}\/${TRIAL}|" \
           > ${RUNDIR}/${TRIAL}/pstress-cluster-pxc.cfg
-      CMD="${PQUERY_BIN} --database=test --config-file=${RUNDIR}/${TRIAL}/pstress-cluster-pxc.cfg --queries-per-thread=${QUERIES_PER_THREAD} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PQUERY_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+      CMD="${PSTRESS_BIN} --database=test --config-file=${RUNDIR}/${TRIAL}/pstress-cluster-pxc.cfg --queries-per-thread=${QUERIES_PER_THREAD} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     else
-      CMD="${PQUERY_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL}/node1/ --user=root --socket=${SOCKET1} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PQUERY_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+      CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL}/node1/ --user=root --socket=${SOCKET1} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     fi
     echoit "$CMD"
     $CMD >${RUNDIR}/${TRIAL}/pstress.log 2>&1 &
     PQPID="$!"
     TIMEOUT_REACHED=0
-    echoit "pstress running (Max duration: ${PQUERY_RUN_TIMEOUT}s)..."
-    for X in $(seq 1 ${PQUERY_RUN_TIMEOUT}); do
+    echoit "pstress running (Max duration: ${PSTRESS_RUN_TIMEOUT}s)..."
+    for X in $(seq 1 ${PSTRESS_RUN_TIMEOUT}); do
       sleep 1
       if grep -qi "error while loading shared libraries" ${RUNDIR}/${TRIAL}/pstress.log; then
         if grep -qi "error while loading shared libraries.*libssl" ${RUNDIR}/${TRIAL}/pstress.log; then
@@ -1010,8 +1009,8 @@ pstress_test(){
           break 
         fi
       fi
-      if [ $X -ge ${PQUERY_RUN_TIMEOUT} ]; then
-        echoit "${PQUERY_RUN_TIMEOUT}s timeout reached. Terminating this trial..."
+      if [ $X -ge ${PSTRESS_RUN_TIMEOUT} ]; then
+        echoit "${PSTRESS_RUN_TIMEOUT}s timeout reached. Terminating this trial..."
         TIMEOUT_REACHED=1
         if [ ${TIMEOUT_INCREMENT} != 0 ]; then
           echoit "TIMEOUT_INCREMENT option was enabled and set to ${TIMEOUT_INCREMENT} sec"
@@ -1019,7 +1018,7 @@ pstress_test(){
         else
           echoit "TIMEOUT_INCREMENT option was disabled and set to 0"
         fi
-        PQUERY_RUN_TIMEOUT=$[ ${PQUERY_RUN_TIMEOUT} + ${TIMEOUT_INCREMENT} ]
+        PSTRESS_RUN_TIMEOUT=$[ ${PSTRESS_RUN_TIMEOUT} + ${TIMEOUT_INCREMENT} ]
         break
       fi
     done
@@ -1053,7 +1052,7 @@ pstress_test(){
   TRIAL_SAVED=0;
   sleep 2  # Delay to ensure core was written completely (if any)
   # NOTE**: Do not kill PQPID here/before shutdown. The reason is that pstress may still be writing queries it's executing to the log. The only way to halt pstress properly is by
-  # actually shutting down the server which will auto-terminate pstress due to 250 consecutive queries failing. If 250 queries failed and ${PQUERY_RUN_TIMEOUT}s timeout was reached,
+  # actually shutting down the server which will auto-terminate pstress due to 250 consecutive queries failing. If 250 queries failed and ${PSTRESS_RUN_TIMEOUT}s timeout was reached,
   # and if there is no core/Valgrind issue and there is no output of percona-qa/search_string.sh either (in case core dumps are not configured correctly, and thus no core file is
   # generated, search_string.sh will still produce output in case the server crashed based on the information in the error log), then we do not need to save this trial (as it is a
   # standard occurence for this to happen). If however we saw 250 queries failed before the timeout was complete, then there may be another problem and the trial should be saved.
@@ -1357,13 +1356,13 @@ fi
 echoit "mysqld Start Timeout: ${MYSQLD_START_TIMEOUT} | Client Threads: ${THREADS} | Queries/Thread: ${QUERIES_PER_THREAD} | Trials: ${TRIALS} | Save coredump/valgrind issue trials only: `if [ ${SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY} -eq 1 ]; then echo -n 'TRUE'; if [ ${SAVE_SQL} -eq 1 ]; then echo ' + save all SQL traces'; else echo ''; fi; else echo 'FALSE'; fi`"
 
 SQL_INPUT_TEXT="SQL file used: ${INFILE}"
-echoit "Valgrind run: `if [ "${VALGRIND_RUN}" == "1" ]; then echo -n 'TRUE'; else echo -n 'FALSE'; fi` | pstress timeout: ${PQUERY_RUN_TIMEOUT}"
-echoit "pstress Binary: ${PQUERY_BIN}"
+echoit "Valgrind run: `if [ "${VALGRIND_RUN}" == "1" ]; then echo -n 'TRUE'; else echo -n 'FALSE'; fi` | pstress timeout: ${PSTRESS_RUN_TIMEOUT}"
+echoit "pstress Binary: ${PSTRESS_BIN}"
 if [ "${MYINIT}" != "" ]; then echoit "MYINIT: ${MYINIT}"; fi
 if [ "${MYSAFE}" != "" ]; then echoit "MYSAFE: ${MYSAFE}"; fi
 if [ "${MYEXTRA}" != "" ]; then echoit "MYEXTRA: ${MYEXTRA}"; fi
-echoit "Making a copy of the pstress binary used (${PQUERY_BIN}) to ${WORKDIR}/ (handy for later re-runs/reference etc.)"
-cp ${PQUERY_BIN} ${WORKDIR}
+echoit "Making a copy of the pstress binary used (${PSTRESS_BIN}) to ${WORKDIR}/ (handy for later re-runs/reference etc.)"
+cp ${PSTRESS_BIN} ${WORKDIR}
 if [ ${STORE_COPY_OF_INFILE} -eq 1 ]; then
   echoit "Making a copy of the SQL input file used (${INFILE}) to ${WORKDIR}/ for reference..."
   cp ${INFILE} ${WORKDIR}
