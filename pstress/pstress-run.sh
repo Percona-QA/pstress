@@ -526,7 +526,7 @@ pxc_startup(){
 
   fi
   if [ "$IS_STARTUP" == "startup" ]; then
-    ${BASEDIR}/bin/mysql -uroot -S${WORKDIR}/node${NR}.template/node${NR}_socket.sock -e "create database if not exists test" > /dev/null 2>&1
+    ${BASEDIR}/bin/mysql -uroot -S${WORKDIR}/node1.template/node1_socket.sock -e "create database if not exists test" > /dev/null 2>&1
   fi
 }
 
