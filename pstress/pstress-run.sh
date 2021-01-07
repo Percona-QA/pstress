@@ -1392,6 +1392,8 @@ if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
   echoit "Making a copy of the mysqld used to ${WORKDIR}/mysqld (handy for coredump analysis and manual bundle creation)..."
   mkdir ${WORKDIR}/mysqld
   cp ${BIN} ${WORKDIR}/mysqld
+  echoit "Making a copy of the conf file pstress-run.conf(useful later during repeating the crashes)..."
+  cp ${SCRIPT_PWD}/pstress-run.conf ${WORKDIR}/
   echoit "Making a copy of the ldd files required for mysqld core analysis to ${WORKDIR}/mysqld..."
   PWDTMPSAVE=$PWD
   cd ${WORKDIR}/mysqld
