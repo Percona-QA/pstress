@@ -57,7 +57,8 @@ mkdir $RANDOMD
 workdir=`pwd`/$RANDOMD
 SCRIPT_PWD=$(cd `dirname $0` && pwd)
 CONFIGURATION_FILE=pstress-run.conf
-source ${SCRIPT_PWD}/$CONFIGURATION_FILE
+source $incident_directory/$CONFIGURATION_FILE
+SEED=$(<$incident_directory/seed)
 
 
 if [ ! -d "$incident_directory" ]; then
