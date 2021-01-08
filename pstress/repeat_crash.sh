@@ -192,6 +192,21 @@ fi
 kill_server $SIGNAL
 sleep 1 #^ Ensure the mysqld is gone completely
 echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' $workdir/$TRIAL/*.sql $workdir/$TRIAL/*.log | sed 's|.*:||')"
+
+if [ $SIGNAL -ne 4 ]; then
+  if [ $(ls -l $workdir/$TRIAL/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then
+    echoit "mysqld coredump detected at $(ls $workdir/$TRIAL/*/*core* 2>/dev/null)"
+    echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err)"
+  fi
+elif [ $SIGNAL -eq 4 ]; then
+  if [[ $(grep -i "mysqld got signal 4" $workdir/$TRIAL/log/master.err 2>/dev/null | wc -l) -ge 1 ]]; then
+    echoit "mysqld coredump detected due to SIGNAL(kill -4) at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+  else
+    echoit "mysqld coredump detected at $(ls $workdir/$TRIAL/*/*core* 2>/dev/null)"
+    echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err)"
+  fi
+fi
+
 }
 
 # Start actual pstress runs
