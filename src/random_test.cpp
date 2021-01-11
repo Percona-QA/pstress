@@ -1438,7 +1438,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
 
   if (strcmp(FORK, "Percona-Server") == 0 && table->tablespace.size() > 0 &&
       table->tablespace.compare("innodb_system") == 0 &&
-      system_table_encrypt.compare("1") == 0) {
+      system_table_encrypt.compare("ON") == 0) {
     table->encryption = 'Y';
   }
 
