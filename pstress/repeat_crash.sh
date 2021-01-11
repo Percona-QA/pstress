@@ -147,8 +147,7 @@ MPID="$!"
 
 for X in $(seq 0 $mysqld_start_timeout); do
  sleep 1
- if [ "${MPID}" == "" ]; then echoit "Assert! ${MPID} empty. Terminating!"; exit 1; fi
- # TODO: Add a check if while starting the server a core is found, come out of wait immediately
+ if [ "$MPID" == "" ]; then echoit "Assert! $MPID empty. Terminating!"; exit 1; fi
 done
 
 # Check if mysqld is started successfully, so pstress will run
@@ -157,7 +156,6 @@ if $basedir/bin/mysqladmin -uroot -S$socket ping > /dev/null 2>&1; then
   ISSTARTED=1
 else
   echoit "Server failed to start. Can not continue."
-  exit 1
 fi
 
 if [ $ISSTARTED -eq 1 ]; then
@@ -167,12 +165,12 @@ if [ $ISSTARTED -eq 1 ]; then
   $CMD > $workdir/$TRIAL/pstress.log 2>&1 &
   PSPID="$!"
   echoit "pstress running (Max duration: ${PSTRESS_RUN_TIMEOUT}s)..."
-  for X in $(seq 1 ${PSTRESS_RUN_TIMEOUT}); do
+  for X in $(seq 1 $PSTRESS_RUN_TIMEOUT); do
     sleep 1
     if [ "`ps -ef | grep $PSPID | grep -v grep`" == "" ]; then  # pstress ended
       break
     fi
-    if [ $X -ge ${PSTRESS_RUN_TIMEOUT} ]; then
+    if [ $X -ge $PSTRESS_RUN_TIMEOUT ]; then
       echoit "${PSTRESS_RUN_TIMEOUT}s timeout reached. Terminating this trial..."
       if [ ${TIMEOUT_INCREMENT} != 0 ]; then
         echoit "TIMEOUT_INCREMENT option was enabled and set to ${TIMEOUT_INCREMENT} sec"
@@ -185,8 +183,11 @@ if [ $ISSTARTED -eq 1 ]; then
     fi
   done
 else
-  #TODO: Kill any leftover mysqld process
-  echo "ToDo"
+  echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $mysqld_start_timeout} seconds. Will issue extra kill -9 to ensure it's gone..."
+  (sleep 0.2; kill -9 $MPID >/dev/null 2>&1; timeout -k4 -s9 4s wait $MPID >/dev/null 2>&1) &
+   timeout -k5 -s9 5s wait $MPID >/dev/null 2>&1
+   sleep 2; sync
+  exit 1
 fi
 
 kill_server $SIGNAL
@@ -210,7 +211,7 @@ fi
 }
 
 # Start actual pstress runs
-echoit "Resuming pstress iterations from step:$TRIAL"
+echoit "Resuming pstress iterations after step:$TRIAL"
 LEFT_TRIALS=$[ $TRIALS - $TRIAL ]
 for X in $(seq 1 $LEFT_TRIALS); do
   repeat_crash
@@ -219,8 +220,8 @@ done
 # All done
 echoit "pstress finished requested number of trials ... Terminating"
 KILL_PIDS=`ps -ef | grep "$RANDOMD" | grep -v "grep" | awk '{print $2}' | tr '\n' ' '`
-if [ "${KILL_PIDS}" != "" ]; then
-  echoit "Terminating the following PID's: ${KILL_PIDS}"
-  kill -9 ${KILL_PIDS} >/dev/null 2>&1
+if [ "$KILL_PIDS" != "" ]; then
+  echoit "Terminating the following PID's: $KILL_PIDS"
+  kill -9 $KILL_PIDS >/dev/null 2>&1
 fi
 exit 0
