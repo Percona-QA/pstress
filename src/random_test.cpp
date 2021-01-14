@@ -1429,7 +1429,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
       get_result("select @@innodb_temp_tablespace_encrypt", thd);
 
   if (strcmp(FORK, "Percona-Server") == 0 && db_branch().compare("5.7") == 0 &&
-      temp_table_encrypt.compare("1") == 0 && table->type == TEMPORARY)
+      temp_table_encrypt.compare("ON") == 0 && table->type == TEMPORARY)
     table->encryption = 'Y';
 
   /* if innodb system is encrypt , create encrypt table */
@@ -1438,7 +1438,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
 
   if (strcmp(FORK, "Percona-Server") == 0 && table->tablespace.size() > 0 &&
       table->tablespace.compare("innodb_system") == 0 &&
-      system_table_encrypt.compare("1") == 0) {
+      system_table_encrypt.compare("ON") == 0) {
     table->encryption = 'Y';
   }
 
