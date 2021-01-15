@@ -16,7 +16,7 @@ Help()
 echo "Syntax: repeat_crash [-i|s|m|b]";
 echo "options:
 -i	Path to the Incident Directory where pstress was executed
--s	Nth step where the crash is seen
+-s	Nth step where the problem is seen
 -m	Select the mode: previous|current|after
         previous=> Resume pstress from (Nth-2) step
         current => Resume pstress from (Nth-1) step
@@ -41,8 +41,114 @@ do
 done
 
 # Output Function
-echoit() {
+echoit(){
   echo "[$(date +'%T')] $1"
+}
+
+# Kill the server
+kill_server(){
+  SIG=$1
+  echoit "Killing the server with Signal $SIG";
+  { kill -$SIG ${MPID} && wait ${MPID}; } 2>/dev/null
+}
+
+# Trap ctrl-c
+trap ctrl-c SIGINT
+
+ctrl-c(){
+  echoit "CTRL+C was pressed. Attempting to terminate running processes..."
+  KILL_PIDS=`ps -ef | grep "$RANDOMD" | grep -v "grep" | awk '{print $2}' | tr '\n' ' '`
+  if [ "${KILL_PIDS}" != "" ]; then
+    echoit "Terminating the following PID's: ${KILL_PIDS}"
+    kill -9 ${KILL_PIDS} >/dev/null 2>&1
+  fi
+  echoit "Done. Terminating repeat_crash.sh with exit code 2..."
+  exit 2
+}
+
+repeat_crash(){
+  TRIAL=$[ $TRIAL + 1 ]
+  echoit "====== TRIAL #$TRIAL ======"
+  echoit "Ensuring there are no relevant mysqld server running"
+  KILLPID=$(ps -ef | grep $workdir | grep -v grep | awk '{print $2}' | tr '\n' ' ')
+    (sleep 0.2; kill -9 $KILLPID >/dev/null 2>&1; timeout -k4 -s9 4s wait $KILLPID >/dev/null 2>&1) &
+  echoit "Copying the datadir from previous trial $workdir/$(($TRIAL-1)) into $workdir/$TRIAL";
+  mkdir $workdir/$TRIAL $workdir/$TRIAL/log
+  rsync -ar --exclude='*core*' $workdir/$(($TRIAL-1))/data/ $workdir/$TRIAL/data 2>&1
+  datadir=$workdir/$TRIAL/data
+
+  ISSTARTED=0
+  echoit "Starting the mysqld server..."
+  MYSQLD="$basedir/bin/mysqld $myextra --datadir=$datadir --plugin-dir=$basedir/lib/plugin --core-file --port=$port --socket=$socket --log-output=none --log-error=$workdir/$TRIAL/log/master.err"
+  echoit "$MYSQLD"
+  $MYSQLD > $workdir/$TRIAL/log/master.err 2>&1 &
+  MPID="$!"
+
+  for X in $(seq 0 $mysqld_start_timeout); do
+    sleep 1
+    if [ "$MPID" == "" ]; then echoit "Assert! $MPID empty. Terminating!"; exit 1; fi
+  done
+
+# Check if mysqld is started successfully, so pstress will run
+  if $basedir/bin/mysqladmin -uroot -S$socket ping > /dev/null 2>&1; then
+    echoit "Server started ok."
+    ISSTARTED=1
+  else
+    echoit "Server failed to start. Can not continue."
+  fi
+
+  if [ $ISSTARTED -eq 1 ]; then
+    echoit "Starting pstress run for step:$TRIAL ..."
+    CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=$workdir/$TRIAL/ --user=root --socket=$socket --seed $SEED --step $TRIAL --metadata-path $workdir/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+    echoit "$CMD"
+    $CMD > $workdir/$TRIAL/pstress.log 2>&1 &
+    PSPID="$!"
+    echoit "pstress running (Max duration: ${PSTRESS_RUN_TIMEOUT}s)..."
+    for X in $(seq 1 $PSTRESS_RUN_TIMEOUT); do
+      sleep 1
+      if [ "`ps -ef | grep $PSPID | grep -v grep`" == "" ]; then  # pstress ended
+        break
+      fi
+      if [ $X -ge $PSTRESS_RUN_TIMEOUT ]; then
+        echoit "${PSTRESS_RUN_TIMEOUT}s timeout reached. Terminating this trial..."
+        if [ ${TIMEOUT_INCREMENT} != 0 ]; then
+          echoit "TIMEOUT_INCREMENT option was enabled and set to ${TIMEOUT_INCREMENT} sec"
+          echoit "${TIMEOUT_INCREMENT}s will be added to the next trial timeout."
+        else
+          echoit "TIMEOUT_INCREMENT option was disabled and set to 0"
+        fi
+        PSTRESS_RUN_TIMEOUT=$[ ${PSTRESS_RUN_TIMEOUT} + ${TIMEOUT_INCREMENT} ]
+        break
+      fi
+    done
+  else
+    echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $mysqld_start_timeout} seconds. Will issue extra kill -9 to ensure it's gone..."
+    (sleep 0.2; kill -9 $MPID >/dev/null 2>&1; timeout -k4 -s9 4s wait $MPID >/dev/null 2>&1) &
+     timeout -k5 -s9 5s wait $MPID >/dev/null 2>&1
+     sleep 2; sync
+    exit 1
+  fi
+
+  kill_server $SIGNAL
+  sleep 1 #^ Ensure the mysqld is gone completely
+  echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' $workdir/$TRIAL/*.sql $workdir/$TRIAL/*.log | sed 's|.*:||')"
+
+  if [ $SIGNAL -ne 4 ]; then
+    if [ $(ls -l $workdir/$TRIAL/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then
+      echoit "mysqld coredump detected at $(ls $workdir/$TRIAL/*/*core* 2>/dev/null)"
+      echoit "Assertion found (as per error log): $(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err)"
+    elif [ "$(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err 2>/dev/null)" != "" ]; then
+      echoit "mysqld error detected in the log via search_string.sh scan"
+      echoit "Error found: $(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err)"
+    fi
+  elif [ $SIGNAL -eq 4 ]; then
+    if [[ $(grep -i "mysqld got signal 4" $workdir/$TRIAL/log/master.err 2>/dev/null | wc -l) -ge 1 ]]; then
+      echoit "mysqld coredump detected due to SIGNAL(kill -4) at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
+    else
+      echoit "mysqld coredump detected at $(ls $workdir/$TRIAL/*/*core* 2>/dev/null)"
+      echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err)"
+    fi
+  fi
 }
 
 echoit "========================================================="
@@ -51,15 +157,6 @@ echoit "Nth step: $step";
 echoit "Mode previous|current|after: $mode";
 echoit "Base directory: $basedir";
 echoit "========================================================="
-
-RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/')
-mkdir $RANDOMD
-workdir=`pwd`/$RANDOMD
-SCRIPT_PWD=$(cd `dirname $0` && pwd)
-CONFIGURATION_FILE=pstress-run.conf
-source $incident_directory/$CONFIGURATION_FILE
-SEED=$(<$incident_directory/seed)
-
 
 if [ ! -d "$incident_directory" ]; then
   echo "Error: ${incident_directory} not found. Can not continue."
@@ -75,6 +172,15 @@ if [ ! -d "$basedir" ]; then
   echo "Error: Invalid basedir=$basedir. Can not continue."
   exit 1
 fi
+
+RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/')
+mkdir $RANDOMD
+workdir=`pwd`/$RANDOMD
+echoit $workdir
+SCRIPT_PWD=$(cd `dirname $0` && pwd)
+CONFIGURATION_FILE=pstress-run.conf
+source $incident_directory/$CONFIGURATION_FILE
+SEED=$(<$incident_directory/seed)
 
 if [[ "$mode" == "current" ]]; then
   TRIAL=$[ $step - 1 ]
@@ -118,97 +224,6 @@ myextra=$(<$incident_directory/$step/MYEXTRA)
 mysqld_start_timeout=30
 port=50661
 socket=/tmp/mysql_50661.sock
-
-# Kill the server
-kill_server(){
-  SIG=$1
-  echoit "Killing the server with Signal $SIG";
-  { kill -$SIG ${MPID} && wait ${MPID}; } 2>/dev/null
-}
-
-repeat_crash() {
-
-TRIAL=$[ $TRIAL + 1 ]
-echoit "====== TRIAL #$TRIAL ======"
-echoit "Ensuring there are no relevant mysqld server running"
-KILLPID=$(ps -ef | grep "mysqld" | grep -v grep | awk '{print $2}' | tr '\n' ' ')
-  (sleep 0.2; kill -9 $KILLPID >/dev/null 2>&1; timeout -k4 -s9 4s wait $KILLPID >/dev/null 2>&1) &
-echoit "Copying the datadir from previous trial $workdir/$(($TRIAL-1)) into $workdir/$TRIAL";
-mkdir $workdir/$TRIAL $workdir/$TRIAL/log
-rsync -ar --exclude='*core*' $workdir/$(($TRIAL-1))/data/ $workdir/$TRIAL/data 2>&1
-datadir=$workdir/$TRIAL/data
-
-ISSTARTED=0
-echoit "Starting the mysqld server..."
-MYSQLD="$basedir/bin/mysqld $myextra --datadir=$datadir --plugin-dir=$basedir/lib/plugin --core-file --port=$port --socket=$socket --log-output=none --log-error=$workdir/$TRIAL/log/master.err"
-echoit "$MYSQLD"
-$MYSQLD > $workdir/$TRIAL/log/master.err 2>&1 &
-MPID="$!"
-
-for X in $(seq 0 $mysqld_start_timeout); do
- sleep 1
- if [ "$MPID" == "" ]; then echoit "Assert! $MPID empty. Terminating!"; exit 1; fi
-done
-
-# Check if mysqld is started successfully, so pstress will run
-if $basedir/bin/mysqladmin -uroot -S$socket ping > /dev/null 2>&1; then
-  echoit "Server started ok."
-  ISSTARTED=1
-else
-  echoit "Server failed to start. Can not continue."
-fi
-
-if [ $ISSTARTED -eq 1 ]; then
-  echoit "Starting pstress run for step:$TRIAL ..."
-  CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=$workdir/$TRIAL/ --user=root --socket=$socket --seed $SEED --step $TRIAL --metadata-path $workdir/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
-  echoit "$CMD"
-  $CMD > $workdir/$TRIAL/pstress.log 2>&1 &
-  PSPID="$!"
-  echoit "pstress running (Max duration: ${PSTRESS_RUN_TIMEOUT}s)..."
-  for X in $(seq 1 $PSTRESS_RUN_TIMEOUT); do
-    sleep 1
-    if [ "`ps -ef | grep $PSPID | grep -v grep`" == "" ]; then  # pstress ended
-      break
-    fi
-    if [ $X -ge $PSTRESS_RUN_TIMEOUT ]; then
-      echoit "${PSTRESS_RUN_TIMEOUT}s timeout reached. Terminating this trial..."
-      if [ ${TIMEOUT_INCREMENT} != 0 ]; then
-        echoit "TIMEOUT_INCREMENT option was enabled and set to ${TIMEOUT_INCREMENT} sec"
-        echoit "${TIMEOUT_INCREMENT}s will be added to the next trial timeout."
-      else
-        echoit "TIMEOUT_INCREMENT option was disabled and set to 0"
-      fi
-      PSTRESS_RUN_TIMEOUT=$[ ${PSTRESS_RUN_TIMEOUT} + ${TIMEOUT_INCREMENT} ]
-      break
-    fi
-  done
-else
-  echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $mysqld_start_timeout} seconds. Will issue extra kill -9 to ensure it's gone..."
-  (sleep 0.2; kill -9 $MPID >/dev/null 2>&1; timeout -k4 -s9 4s wait $MPID >/dev/null 2>&1) &
-   timeout -k5 -s9 5s wait $MPID >/dev/null 2>&1
-   sleep 2; sync
-  exit 1
-fi
-
-kill_server $SIGNAL
-sleep 1 #^ Ensure the mysqld is gone completely
-echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' $workdir/$TRIAL/*.sql $workdir/$TRIAL/*.log | sed 's|.*:||')"
-
-if [ $SIGNAL -ne 4 ]; then
-  if [ $(ls -l $workdir/$TRIAL/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then
-    echoit "mysqld coredump detected at $(ls $workdir/$TRIAL/*/*core* 2>/dev/null)"
-    echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err)"
-  fi
-elif [ $SIGNAL -eq 4 ]; then
-  if [[ $(grep -i "mysqld got signal 4" $workdir/$TRIAL/log/master.err 2>/dev/null | wc -l) -ge 1 ]]; then
-    echoit "mysqld coredump detected due to SIGNAL(kill -4) at $(ls ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null)"
-  else
-    echoit "mysqld coredump detected at $(ls $workdir/$TRIAL/*/*core* 2>/dev/null)"
-    echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh $workdir/$TRIAL/log/master.err)"
-  fi
-fi
-
-}
 
 # Start actual pstress runs
 echoit "Resuming pstress iterations after step:$TRIAL"
