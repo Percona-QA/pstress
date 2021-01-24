@@ -5,9 +5,9 @@
 RANDOM=`date +%s%N | cut -b14-19`;
 RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/');
 CONFIG_FLAG=0;INCIDENT_FLAG=0;STEP_FLAG=0;REPEAT_FLAG=0;NORMAL_MODE=0;
-RESUME_MODE=0;REPEAT_MODE=0;
-SCRIPT_PWD=$(cd `dirname $0` && pwd);
-MYSQLD_START_TIMEOUT=30;
+RESUME_MODE=0;REPEAT_MODE=0;TRIAL_SAVED=1;IS_STARTED=0;WORKDIRACTIVE=0;
+TRIAL=0;SCRIPT_PWD=$(cd `dirname $0` && pwd);
+MYSQLD_START_TIMEOUT=60;
 
 Help()
 {
@@ -17,7 +17,6 @@ echo "	--incident: The incident directory that must be used to repeat a scenario
 echo "	--repeat: Repeat the step provided number of times"
 echo "	--step: The step from where the pstress runs will be resumed. If --repeat option
                 is provided, only the mentioned step would be repeated"
-
 }
 
 # Read command line options. In future, if a new option is added, please ensure
@@ -79,16 +78,11 @@ while true; do
     shift
 done
 
+
 # Output Function
 echoit(){
-  echo "[$(date +'%T')] $1"
-}
-
-# Kill the server
-kill_server(){
-  SIG=$1
-  echoit "Killing the server with Signal $SIG";
-  { kill -$SIG $MPID && wait $MPID; } 2>/dev/null
+  echo "[$(date +'%T')] [$TRIAL] $1"
+  if [ ${WORKDIRACTIVE} -eq 1 ]; then echo "[$(date +'%T')] [$TRIAL] $1" >> /${WORKDIR}/pstress-run.log; fi
 }
 
 # Trap ctrl-c
@@ -105,20 +99,25 @@ ctrl-c(){
   exit 2
 }
 
+# Kill the server
+kill_server(){
+  SIG=$1
+  echoit "Killing the server with Signal $SIG";
+  { kill -$SIG $MPID && wait $MPID; } 2>/dev/null
+}
 
 # Start normal pstress runs
-pstress_run() {
+normal_run() {
   TRIAL=$[ $TRIAL + 1 ]
   SOCKET=${RUNDIR}/${TRIAL}/socket.sock
   echoit "====== TRIAL #$TRIAL ======"
   echoit "Ensuring there are no relevant mysqld server running"
   KILLPID=$(ps -ef | grep "${RUNDIR}" | grep -v grep | awk '{print $2}' | tr '\n' ' ')
-  (sleep 0.2; kill -9 $KILLPID >/dev/null 2>&1; timeout -k4 -s9 4s wait $KILLPID >/dev/null 2>&1) &
-  timeout -k5 -s9 5s wait $KILLPID >/dev/null 2>&1
+  { kill -9 $KILLPID && wait $KILLPID; } 2>/dev/null
   echoit "Clearing rundir..."
   rm -Rf ${RUNDIR}/*
   echoit "Generating new trial workdir ${RUNDIR}/${TRIAL}..."
-  mkdir -p ${RUNDIR}/${TRIAL}/data ${RUNDIR}/${TRIAL}/log
+  mkdir -p ${RUNDIR}/${TRIAL}/data ${RUNDIR}/${TRIAL}/tmp ${RUNDIR}/${TRIAL}/log
   if [ ${TRIAL} -gt 1 ]; then
     echoit "Copying datadir from Trial ${WORKDIR}/$((${TRIAL}-1)) into ${WORKDIR}/${TRIAL}..."
   else
@@ -135,21 +134,31 @@ pstress_run() {
   fi
 
   # Start server
+  SOCKET=${RUNDIR}/${TRIAL}/socket.sock
+  DATADIR=${RUNDIR}/${TRIAL}/data
+  TEMPDIR=${RUNDIR}/${TRIAL}/tmp
+  ERROR=${RUNDIR}/${TRIAL}/log/master.err
+  PID_FILE=${RUNDIR}/${TRIAL}/pid.pid
   start_server
 
-  for X in $(seq 0 $mysqld_start_timeout); do
-    sleep 1
-    if [ "$MPID" == "" ]; then echoit "Assert! $MPID empty. Terminating!"; exit 1; fi
-  done
-
-  # Check if mysqld is started successfully, so pstress will run
-  if $basedir/bin/mysqladmin -uroot -S$socket ping > /dev/null 2>&1; then
-    echoit "Server started ok."
+  if [ $IS_STARTED ]; then
+    LOGDIR=${RUNDIR}/${TRIAL}
+    METADATA_PATH=${WORKDIR}
+    PSTRESS_LOG=${RUNDIR}/${TRIAL}/pstress.log
+    start_pstress
   else
-    echoit "Server failed to start. Can not continue."
+    echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $MYSQLD_START_TIMEOUT} seconds. Will issue extra kill -9 to ensure it's gone..."
+    { kill -9 $MPID && wait $MPID; } 2>/dev/null
+    exit 1
   fi
 
+  kill_server $SIGNAL
+  sleep 1 #^ Ensure the mysqld is gone completely
+  echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/*.sql ${RUNDIR}/${TRIAL}/*.log | sed 's|.*:||')"
 
+  if [ $TRIAL_SAVED -eq 1 ]; then
+    savetrial
+  fi
 
 }
 
@@ -159,8 +168,71 @@ echo "Todo: repeat the given step mentioned number of times"
 }
 
 # Resume pstress runs from a particular step
-resume_pstress_run() {
-echo "Todo: resume pstress runs from the given step"
+resume_pstress() {
+  TRIAL=$[ $TRIAL + 1 ]
+  echoit "====== TRIAL #$TRIAL ======"
+  echoit "Ensuring there are no relevant mysqld server running"
+  KILLPID=$(ps -ef | grep ${RESUME_DIR} | grep -v grep | awk '{print $2}' | tr '\n' ' ')
+  { kill -9 $KILLPID && wait $KILLPID; } 2>/dev/null
+  mkdir -p ${RESUME_DIR}/$TRIAL/data ${RESUME_DIR}/$TRIAL/log ${RESUME_DIR}/$TRIAL/tmp
+  echoit "Copying the datadir from previous trial ${RESUME_DIR}/$(($TRIAL-1)) into ${RESUME_DIR}/$TRIAL";
+  rsync -ar --exclude='*core*' ${RESUME_DIR}/$(($TRIAL-1))/data/ ${RESUME_DIR}/$TRIAL/data 2>&1
+
+  # Start server
+  SOCKET=${RESUME_DIR}/${TRIAL}/socket.sock
+  DATADIR=${RESUME_DIR}/${TRIAL}/data
+  TEMPDIR=${RESUME_DIR}/${TRIAL}/tmp
+  ERROR=${RESUME_DIR}/${TRIAL}/log/master.err
+  PID_FILE=${RESUME_DIR}/${TRIAL}/pid.pid
+  start_server
+
+  if [ $IS_STARTED ]; then
+    LOGDIR=${RESUME_DIR}/${TRIAL}
+    METADATA_PATH=${RESUME_DIR}
+    PSTRESS_LOG=${RESUME_DIR}/${TRIAL}/pstress.log
+    start_pstress
+  else
+    echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $MYSQLD_START_TIMEOUT} seconds. Will issue extra kill -9 to ensure it's gone..."
+    { kill -9 $MPID && wait $MPID; } 2>/dev/null
+    exit 1
+  fi
+
+  kill_server $SIGNAL
+  sleep 1 #^ Ensure the mysqld is gone completely
+  echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RESUME_DIR}/${TRIAL}/*.sql ${RESUME_DIR}/${TRIAL}/*.log | sed 's|.*:||')"
+
+}
+
+savetrial() {
+  echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/${TRIAL}"
+  mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a /${WORKDIR}/pstress-run.log
+}
+
+# Start pstress on running server
+start_pstress() {
+  echoit "Starting pstress run for step:${TRIAL} ..."
+  CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${LOGDIR}/ --user=root --socket=$SOCKET --seed ${SEED} --step ${TRIAL} --metadata-path ${METADATA_PATH}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+  echoit "$CMD"
+  $CMD > ${PSTRESS_LOG} 2>&1 &
+  PSPID="$!"
+  echoit "pstress running (Max duration: ${PSTRESS_RUN_TIMEOUT}s)..."
+  for X in $(seq 1 ${PSTRESS_RUN_TIMEOUT}); do
+    sleep 1
+    if [ "`ps -ef | grep $PSPID | grep -v grep`" == "" ]; then  # pstress ended
+      break
+    fi
+    if [ $X -ge ${PSTRESS_RUN_TIMEOUT} ]; then
+      echoit "${PSTRESS_RUN_TIMEOUT}s timeout reached. Terminating this trial..."
+      if [ ${TIMEOUT_INCREMENT} != 0 ]; then
+        echoit "TIMEOUT_INCREMENT option was enabled and set to ${TIMEOUT_INCREMENT} sec"
+        echoit "${TIMEOUT_INCREMENT}s will be added to the next trial timeout."
+      else
+        echoit "TIMEOUT_INCREMENT option was disabled and set to 0"
+      fi
+      PSTRESS_RUN_TIMEOUT=$[ ${PSTRESS_RUN_TIMEOUT} + ${TIMEOUT_INCREMENT} ]
+      break
+    fi
+  done
 }
 
 # Shutdown server
@@ -171,14 +243,29 @@ echo "Todo: shutdown the server"
 # Start the server
 start_server() {
   PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
-  SOCKET=${RUNDIR}/${TRIAL}/socket.sock
   echoit "Starting mysqld server..."
-  CMD="${BIN} ${MYSAFE} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data --tmpdir=${RUNDIR}/${TRIAL}/tmp \
---core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
---log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
+  CMD="${BIN} ${MYSAFE} ${MYEXTRA} --basedir=${BASEDIR} --datadir=$DATADIR --tmpdir=$TEMPDIR \
+--core-file --port=$PORT --pid_file=$PID_FILE --socket=$SOCKET \
+--log-output=none --log-error-verbosity=3 --log-error=$ERROR"
   echoit "$CMD"
-  $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
+  $CMD > ${ERROR} 2>&1 &
   MPID="$!"
+
+  echoit "Waiting for mysqld (pid: ${MPID}) to fully start..."
+  for X in $(seq 0 $MYSQLD_START_TIMEOUT); do
+    sleep 1
+    if [ "$MPID" == "" ]; then echoit "Assert! $MPID empty. Terminating!"; exit 1; fi
+  done
+
+  # Check if mysqld is started successfully
+  if ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET} ping > /dev/null 2>&1; then
+    echoit "Server started ok. Client: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET}"
+    ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "CREATE DATABASE IF NOT EXISTS test;" > /dev/null 2>&1
+    IS_STARTED=1
+  else
+    echoit "Server failed to start. Can not continue."
+    exit
+  fi
 }
 
 # Start the PXC server
@@ -201,6 +288,7 @@ else
 fi
 
 source $SCRIPT_PWD/$CONFIGURATION_FILE
+if [ "${SEED}" == "" ]; then SEED=${RANDOMD}; fi
 
 # Find mysqld binary
 if [ -r ${BASEDIR}/bin/mysqld ]; then
@@ -213,6 +301,7 @@ fi
 if [ $NORMAL_MODE -eq 1 ]; then
   rm -Rf ${WORKDIR} ${RUNDIR}
   mkdir ${WORKDIR} ${WORKDIR}/log ${RUNDIR}
+  WORKDIRACTIVE=1
   echoit "Workdir: ${WORKDIR} | Rundir: ${RUNDIR} | Basedir: ${BASEDIR} "
   echoit "mysqld Start Timeout: ${MYSQLD_START_TIMEOUT} | Client Threads: ${THREADS} | Trials: ${TRIALS} "
   echoit "pstress Binary: ${PSTRESS_BIN}"
@@ -227,7 +316,7 @@ if [ $NORMAL_MODE -eq 1 ]; then
   mkdir ${WORKDIR}/mysqld
   cp ${BIN} ${WORKDIR}/mysqld
   echoit "Making a copy of the conf file pstress-run.conf(useful later during repeating the crashes)..."
-  cp ${SCRIPT_PWD}/pstress-run.conf ${WORKDIR}/
+  cp ${SCRIPT_PWD}/$CONFIGURATION_FILE ${WORKDIR}/
   echoit "Making a copy of the seed file..."
   echo "${SEED}" > ${WORKDIR}/seed
   INIT_OPT="--no-defaults --initialize-insecure ${MYINIT}"
@@ -236,14 +325,20 @@ if [ $NORMAL_MODE -eq 1 ]; then
   echo "Starting pstress iterations"
   TRIAL=0
   for X in $(seq 1 $TRIALS); do
-    pstress_run
+    normal_run
   done
 elif [ $RESUME_MODE -eq 1 ]; then
   echo "Resuming pstress iterations after step:$STEP"
   TRIAL=$STEP
+  SEED=$(<$INCIDENT_DIRECTORY/seed)
+  echoit "Taking backup of datadir from $INCIDENT_DIRECTORY/$TRIAL/data into ${RESUME_DIR}/$TRIAL/data"
+  mkdir -p ${RESUME_DIR}/$TRIAL
+  rsync -ar --exclude='*core*' $INCIDENT_DIRECTORY/$TRIAL/data/ ${RESUME_DIR}/$TRIAL/data 2>&1
+  echoit "Copying step_$TRIAL.dll file into ${RESUME_DIR}"
+  cp $INCIDENT_DIRECTORY/step_$TRIAL.dll ${RESUME_DIR}
   LEFT_TRIALS=$[ $TRIALS - $TRIAL ]
   for X in $(seq 1 $LEFT_TRIALS); do
-    resume_pstress_run
+    resume_pstress
   done
 elif [ $REPEAT_MODE -eq 1 ]; then
   echo "Repeating step $step ($REPEAT) number of times"
