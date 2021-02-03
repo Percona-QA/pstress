@@ -5,7 +5,7 @@
 RANDOM=`date +%s%N | cut -b14-19`;
 RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/');
 CONFIG_FLAG=0;INCIDENT_FLAG=0;STEP_FLAG=0;REPEAT_FLAG=0;NORMAL_MODE=0;
-RESUME_MODE=0;REPEAT_MODE=0;TRIAL_SAVED=1;IS_STARTED=0;WORKDIRACTIVE=0;
+RESUME_MODE=0;REPEAT_MODE=0;TRIAL_SAVED=1;WORKDIRACTIVE=0;
 TRIAL=0;SCRIPT_PWD=$(cd `dirname $0` && pwd);
 MYSQLD_START_TIMEOUT=60;
 
@@ -141,17 +141,12 @@ normal_run() {
   PID_FILE=${RUNDIR}/${TRIAL}/pid.pid
   start_server
 
-  if [ $IS_STARTED ]; then
-    LOGDIR=${RUNDIR}/${TRIAL}
-    METADATA_PATH=${WORKDIR}
-    PSTRESS_LOG=${RUNDIR}/${TRIAL}/pstress.log
-    start_pstress
-  else
-    echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $MYSQLD_START_TIMEOUT} seconds. Will issue extra kill -9 to ensure it's gone..."
-    { kill -9 $MPID && wait $MPID; } 2>/dev/null
-    exit 1
-  fi
+# Start pstress
+  LOGDIR=${RUNDIR}/${TRIAL}
+  METADATA_PATH=${WORKDIR}
+  start_pstress
 
+# Terminate mysqld
   kill_server $SIGNAL
   sleep 1 #^ Ensure the mysqld is gone completely
   echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/*.sql ${RUNDIR}/${TRIAL}/*.log | sed 's|.*:||')"
@@ -164,7 +159,33 @@ normal_run() {
 
 # Repeat a particular step
 repeat_step() {
-echo "Todo: repeat the given step mentioned number of times"
+  TRIAL=$STEP
+  echoit "====== TRIAL #$TRIAL ======"
+  echoit "Ensuring there are no relevant mysqld server running..."
+  KILLPID=$(ps -ef | grep ${REPEAT_DIR} | grep -v grep | awk '{print $2}' | tr '\n' ' ')
+  { kill -9 $KILLPID && wait $KILLPID; } 2>/dev/null
+  mkdir -p ${REPEAT_DIR}/$TRIAL.$COUNT/data ${REPEAT_DIR}/$TRIAL.$COUNT/log ${REPEAT_DIR}/$TRIAL.$COUNT/tmp
+  echoit "Copying the datadir from incident directory $INCIDENT_DIRECTORY/$TRIAL/data into ${REPEAT_DIR}/$TRIAL.$COUNT";
+  rsync -ar --exclude='*core*' $INCIDENT_DIRECTORY/$TRIAL/data/ ${REPEAT_DIR}/$TRIAL.$COUNT/data 2>&1
+
+# Start server
+  SOCKET=${REPEAT_DIR}/$TRIAL.$COUNT/socket.sock
+  DATADIR=${REPEAT_DIR}/$TRIAL.$COUNT/data
+  TEMPDIR=${REPEAT_DIR}/$TRIAL.$COUNT/tmp
+  ERROR=${REPEAT_DIR}/$TRIAL.$COUNT/log/master.err
+  PID_FILE=${REPEAT_DIR}/$TRIAL.$COUNT/pid.pid
+  start_server
+
+# Start pstress
+  LOGDIR=${REPEAT_DIR}/$TRIAL.$COUNT/
+  METADATA_PATH=${REPEAT_DIR}
+  start_pstress
+
+# Terminate mysqld
+  kill_server $SIGNAL
+  sleep 1 #^ Ensure the mysqld is gone completely
+  echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${REPEAT_DIR}/$TRIAL.$COUNT/*.sql ${REPEAT_DIR}/$TRIAL.$COUNT/*.log | sed 's|.*:||')"
+
 }
 
 # Resume pstress runs from a particular step
@@ -178,7 +199,7 @@ resume_pstress() {
   echoit "Copying the datadir from previous trial ${RESUME_DIR}/$(($TRIAL-1)) into ${RESUME_DIR}/$TRIAL";
   rsync -ar --exclude='*core*' ${RESUME_DIR}/$(($TRIAL-1))/data/ ${RESUME_DIR}/$TRIAL/data 2>&1
 
-  # Start server
+# Start server
   SOCKET=${RESUME_DIR}/${TRIAL}/socket.sock
   DATADIR=${RESUME_DIR}/${TRIAL}/data
   TEMPDIR=${RESUME_DIR}/${TRIAL}/tmp
@@ -186,21 +207,15 @@ resume_pstress() {
   PID_FILE=${RESUME_DIR}/${TRIAL}/pid.pid
   start_server
 
-  if [ $IS_STARTED ]; then
-    LOGDIR=${RESUME_DIR}/${TRIAL}
-    METADATA_PATH=${RESUME_DIR}
-    PSTRESS_LOG=${RESUME_DIR}/${TRIAL}/pstress.log
-    start_pstress
-  else
-    echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $MYSQLD_START_TIMEOUT} seconds. Will issue extra kill -9 to ensure it's gone..."
-    { kill -9 $MPID && wait $MPID; } 2>/dev/null
-    exit 1
-  fi
+# Start pstress
+  LOGDIR=${RESUME_DIR}/${TRIAL}
+  METADATA_PATH=${RESUME_DIR}
+  start_pstress
 
+# Terminate mysqld
   kill_server $SIGNAL
   sleep 1 #^ Ensure the mysqld is gone completely
   echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RESUME_DIR}/${TRIAL}/*.sql ${RESUME_DIR}/${TRIAL}/*.log | sed 's|.*:||')"
-
 }
 
 savetrial() {
@@ -211,9 +226,9 @@ savetrial() {
 # Start pstress on running server
 start_pstress() {
   echoit "Starting pstress run for step:${TRIAL} ..."
-  CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${LOGDIR}/ --user=root --socket=$SOCKET --seed ${SEED} --step ${TRIAL} --metadata-path ${METADATA_PATH}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+  CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${LOGDIR} --user=root --socket=$SOCKET --seed ${SEED} --step ${TRIAL} --metadata-path ${METADATA_PATH}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
   echoit "$CMD"
-  $CMD > ${PSTRESS_LOG} 2>&1 &
+  $CMD > ${LOGDIR}/pstress.log 2>&1 &
   PSPID="$!"
   echoit "pstress running (Max duration: ${PSTRESS_RUN_TIMEOUT}s)..."
   for X in $(seq 1 ${PSTRESS_RUN_TIMEOUT}); do
@@ -237,7 +252,7 @@ start_pstress() {
 
 # Shutdown server
 shutdown_server() {
-echo "Todo: shutdown the server"
+  echo "Todo: shutdown the server"
 }
 
 # Start the server
@@ -257,13 +272,13 @@ start_server() {
     if [ "$MPID" == "" ]; then echoit "Assert! $MPID empty. Terminating!"; exit 1; fi
   done
 
-  # Check if mysqld is started successfully
+# Check if mysqld is started successfully
   if ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET} ping > /dev/null 2>&1; then
     echoit "Server started ok. Client: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET}"
     ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "CREATE DATABASE IF NOT EXISTS test;" > /dev/null 2>&1
-    IS_STARTED=1
   else
-    echoit "Server failed to start. Can not continue."
+    echoit "Server (PID: $MPID | Socket: $SOCKET) failed to start after $MYSQLD_START_TIMEOUT} seconds. Will issue extra kill -9 to ensure it's gone..."
+    { kill -9 $MPID && wait $MPID; } 2>/dev/null
     exit
   fi
 }
@@ -328,21 +343,43 @@ if [ $NORMAL_MODE -eq 1 ]; then
     normal_run
   done
 elif [ $RESUME_MODE -eq 1 ]; then
+  if [ ${RESUME_DIR} == "" ]; then
+    echo "Please configure the path for RESUME_DIR in the $CONFIGURATION_FILE. Can not continue"
+     exit
+  fi
   echo "Resuming pstress iterations after step:$STEP"
   TRIAL=$STEP
   SEED=$(<$INCIDENT_DIRECTORY/seed)
-  echoit "Taking backup of datadir from $INCIDENT_DIRECTORY/$TRIAL/data into ${RESUME_DIR}/$TRIAL/data"
+  echoit "Taking backup of datadir from $INCIDENT_DIRECTORY/$TRIAL/data into ${RESUME_DIR}/$TRIAL/"
   mkdir -p ${RESUME_DIR}/$TRIAL
   rsync -ar --exclude='*core*' $INCIDENT_DIRECTORY/$TRIAL/data/ ${RESUME_DIR}/$TRIAL/data 2>&1
   echoit "Copying step_$TRIAL.dll file into ${RESUME_DIR}"
   cp $INCIDENT_DIRECTORY/step_$TRIAL.dll ${RESUME_DIR}
-  LEFT_TRIALS=$[ $TRIALS - $TRIAL ]
+  LEFT_TRIALS=$[ ${TRIALS} - $TRIAL ]
   for X in $(seq 1 $LEFT_TRIALS); do
     resume_pstress
   done
 elif [ $REPEAT_MODE -eq 1 ]; then
-  echo "Repeating step $step ($REPEAT) number of times"
-  for X in $(seq 1 $REPEAT); do
+  if [ "${REPEAT_DIR}" == "" ]; then
+    echo "Please configure the path for REPEAT_DIR in the $CONFIGURATION_FILE. Can not continue"
+    exit
+  fi
+  echoit "Repeating step $STEP ($REPEAT) number of times"
+  SEED=$(<$INCIDENT_DIRECTORY/seed)
+  echoit "Taking backup of datadir from $INCIDENT_DIRECTORY/$STEP/data into ${REPEAT_DIR}/$STEP/"
+  mkdir -p ${REPEAT_DIR}/$STEP
+  rsync -ar --exclude='*core*' $INCIDENT_DIRECTORY/$STEP/data/ ${REPEAT_DIR}/$STEP/data 2>&1
+  if [ $STEP -gt 1 ]; then
+    echoit "Copying step_$(($STEP-1)).dll file into ${REPEAT_DIR}"
+    cp $INCIDENT_DIRECTORY/step_$(($STEP-1)).dll ${REPEAT_DIR}
+  elif [ $STEP -eq 1 ]; then
+    echoit "If you intend to repeat step 1, please perform a normal run using same seed number"
+    exit
+  else
+    echoit "Invalid step provided. Exiting..."
+    exit
+  fi
+  for COUNT in $(seq 1 $REPEAT); do
     repeat_step
   done
 fi
