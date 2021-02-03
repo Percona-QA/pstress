@@ -50,25 +50,21 @@ while true; do
         shift
         CONFIGURATION_FILE=$1
         CONFIG_FLAG=1
-        echo "Config file is: $CONFIGURATION_FILE"
         ;;
     --incident)
         shift
         INCIDENT_DIRECTORY=$1
         INCIDENT_FLAG=1
-        echo "Incident Directory is: $INCIDENT_DIRECTORY"
         ;;
     --repeat)
         shift
         REPEAT=$1
         REPEAT_FLAG=1
-        echo "Repeat is: $REPEAT"
         ;;
     --step)
         shift
         STEP=$1
         STEP_FLAG=1
-        echo "Step is: $STEP"
         ;;
     --)
         shift
@@ -160,7 +156,7 @@ normal_run() {
 # Repeat a particular step
 repeat_step() {
   TRIAL=$STEP
-  echoit "====== TRIAL #$TRIAL ======"
+  echoit "====== TRIAL #$TRIAL ($COUNT) ======"
   echoit "Ensuring there are no relevant mysqld server running..."
   KILLPID=$(ps -ef | grep ${REPEAT_DIR} | grep -v grep | awk '{print $2}' | tr '\n' ' ')
   { kill -9 $KILLPID && wait $KILLPID; } 2>/dev/null
@@ -323,11 +319,7 @@ if [ $NORMAL_MODE -eq 1 ]; then
   if [ "${MYINIT}" != "" ]; then echoit "MYINIT: ${MYINIT}"; fi
   if [ "${MYSAFE}" != "" ]; then echoit "MYSAFE: ${MYSAFE}"; fi
   if [ "${MYEXTRA}" != "" ]; then echoit "MYEXTRA: ${MYEXTRA}"; fi
-  if [ ${STORE_COPY_OF_INFILE} -eq 1 ]; then
-    echoit "Making a copy of the SQL input file used (${INFILE}) to ${WORKDIR}/ for reference..."
-    cp ${INFILE} ${WORKDIR}
-  fi
-  echoit "Making a copy of the mysqld used to ${WORKDIR}/mysqld (handy for coredump analysis and manual bundle creation)..."
+  echoit "Making a copy of the mysqld binary to ${WORKDIR}/mysqld (useful during debugging the crashes)..."
   mkdir ${WORKDIR}/mysqld
   cp ${BIN} ${WORKDIR}/mysqld
   echoit "Making a copy of the conf file pstress-run.conf(useful later during repeating the crashes)..."
@@ -337,7 +329,7 @@ if [ $NORMAL_MODE -eq 1 ]; then
   INIT_OPT="--no-defaults --initialize-insecure ${MYINIT}"
   echoit "Generating datadir template (using mysql_install_db or mysqld --init)..."
   ${BIN} ${INIT_OPT} --basedir=${BASEDIR} --datadir=${WORKDIR}/data.template > ${WORKDIR}/log/mysql_install_db.txt 2>&1
-  echo "Starting pstress iterations"
+  echo "Starting pstress iterations..."
   TRIAL=0
   for X in $(seq 1 $TRIALS); do
     normal_run
@@ -364,7 +356,7 @@ elif [ $REPEAT_MODE -eq 1 ]; then
     echo "Please configure the path for REPEAT_DIR in the $CONFIGURATION_FILE. Can not continue"
     exit
   fi
-  echoit "Repeating step $STEP ($REPEAT) number of times"
+  echo "Repeating step $STEP ($REPEAT) number of times"
   SEED=$(<$INCIDENT_DIRECTORY/seed)
   echoit "Taking backup of datadir from $INCIDENT_DIRECTORY/$STEP/data into ${REPEAT_DIR}/$STEP/"
   mkdir -p ${REPEAT_DIR}/$STEP
@@ -383,4 +375,14 @@ elif [ $REPEAT_MODE -eq 1 ]; then
     repeat_step
   done
 fi
-
+echoit "Done. Attempting to cleanup the pstress rundir ${RUNDIR}..."
+rm -Rf ${RUNDIR}
+if [ $NORMAL_MODE -eq 1 ]; then
+  echoit "The results of this run can be found in the workdir ${WORKDIR}..."
+elif [ $RESUME_MODE -eq 1 ]; then
+  echoit "The results of this run can be found in the resume dir ${RESUME_DIR}..."
+elif [ $REPEAT_MODE -eq 1 ]; then
+  echoit "The results of this run can be found in the repeat dir ${REPEAT_DIR}..."
+fi
+echoit "Done. Exiting $0 with exit code 0..."
+exit 0
