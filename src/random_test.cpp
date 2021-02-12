@@ -288,7 +288,7 @@ int set_seed(Thd1 *thd) {
   rng = std::mt19937(initial_seed);
   thd->thread_log << "Initial seed " << initial_seed << std::endl;
   for (int i = 0; i < thd->thread_id; i++)
-    rand_int(MIN_SEED_SIZE, MAX_SEED_SIZE);
+    rand_int(MAX_SEED_SIZE, MIN_SEED_SIZE);
   thd->seed = rand_int(MAX_SEED_SIZE, MIN_SEED_SIZE);
   thd->thread_log << "CURRENT SEED IS " << thd->seed << std::endl;
   return thd->seed;
@@ -2976,7 +2976,8 @@ bool Thd1::load_metadata() {
   /* create in-memory data for general tablespaces */
   create_in_memory_data();
 
-  if (options->at(Option::STEP)->getInt() > 1) {
+  if (options->at(Option::STEP)->getInt() > 0 &&
+      !options->at(Option::PREPARE)->getBool()) {
     auto file = load_metadata_from_file();
     std::cout << "metadata loaded from " << file << std::endl;
   } else {
@@ -3021,8 +3022,8 @@ void Thd1::run_some_query() {
     }
   }
 
-  /* if step is 1 then , create all tables */
-  if (options->at(Option::STEP)->getInt() == 1) {
+  /* prepare is passed, create all tables */
+  if (options->at(Option::PREPARE)->getBool()) {
     auto current = table_started++;
     while (current < all_tables->size()) {
       auto table = all_tables->at(current);
@@ -3046,7 +3047,7 @@ void Thd1::run_some_query() {
     }
   }
 
-  if (just_ddl)
+  if (just_ddl || options->at(Option::PREPARE)->getBool())
     return;
 
   if (!lock_stream.test_and_set())
