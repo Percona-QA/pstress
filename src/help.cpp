@@ -248,8 +248,18 @@ void add_options() {
 
   /* Initial Records in table */
   opt = newOption(Option::INT, Option::INITIAL_RECORDS_IN_TABLE, "records");
-  opt->help = "Number of initial records in table";
+  opt->help =
+      "Number of initial records (N) in each table. The table will have random "
+      "records in range of 0 to N. Also check --exact-initial-records ";
   opt->setInt(1000);
+
+  /* Initial Records in table */
+  opt = newOption(Option::BOOL, Option::EXACT_INITIAL_RECORDS,
+                  "exact-initial-records");
+  opt->help = " When passed with --records (N) option "
+              "inserts exact number of  N records in tables.";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
 
   /* Execute workload for number of seconds */
   opt = newOption(Option::INT, Option::NUMBER_OF_SECONDS_WORKLOAD, "seconds");
