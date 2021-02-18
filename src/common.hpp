@@ -129,6 +129,7 @@ struct Option {
     ANALYZE,
     TRUNCATE,
     DROP_CREATE,
+    EXACT_INITIAL_RECORDS,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

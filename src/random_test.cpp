@@ -1709,7 +1709,9 @@ void load_default_data(Table *table, Thd1 *thd) {
   thd->ddl_query = false;
   static int initial_records =
       options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
-  int rec = rand_int(initial_records);
+  int rec = options->at(Option::EXACT_INITIAL_RECORDS)->getBool()
+                ? initial_records
+                : rand_int(initial_records);
   for (int i = 0; i < rec; i++) {
     table->InsertRandomRow(thd, false);
   }
