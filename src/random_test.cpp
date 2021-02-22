@@ -458,7 +458,7 @@ std::string Column::rand_value() {
 }
 
 /* prepare single quoted string for LIKE clause */
-std::string Table::prepare_like_string(int where, std::string str) {
+std::string Table::prepare_like_string(std::string&& str) {
 /* Processing the single quoted values that are returned by 'rand_string' */
   if (str.at(0) == '\'') {
     str = str.substr(0,2);
@@ -2176,7 +2176,7 @@ void Table::ColumnRename(Thd1 *thd) {
 
 void Table::DeleteRandomRow(Thd1 *thd) {
   table_mutex.lock();
-  int where = -1;
+  auto where = -1;
   bool only_bool = true;
   int pk_pos = -1;
 
@@ -2246,11 +2246,11 @@ void Table::DeleteRandomRow(Thd1 *thd) {
   else if (prob <= 96)
     sql += " IN (" + columns_->at(where)->rand_value() + "," +
            columns_->at(where)->rand_value() + ")";
-  else if (prob <=99)
-    sql += " LIKE " + prepare_like_string(where,columns_->at(where)->rand_value());
-  else
+  else if (prob <= 99)
     sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
            columns_->at(where)->rand_value();
+  else
+    sql += " LIKE " + prepare_like_string(columns_->at(where)->rand_value());
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -2258,7 +2258,7 @@ void Table::DeleteRandomRow(Thd1 *thd) {
 
 void Table::SelectRandomRow(Thd1 *thd) {
   table_mutex.lock();
-  int where = -1;
+  auto where = -1;
   while (where < 0) {
     auto col_pos = rand_int(columns_->size() - 1);
     switch (columns_->at(col_pos)->type_) {
@@ -2322,8 +2322,8 @@ void Table::SelectRandomRow(Thd1 *thd) {
     sql += " IN (" +
           columns_->at(where)->rand_value() + ", " +
           columns_->at(where)->rand_value() + ")";
-  else if (prob <=96)
-    sql += " LIKE " + prepare_like_string(where,columns_->at(where)->rand_value());
+  else if (prob <= 98)
+    sql += " LIKE " + prepare_like_string(columns_->at(where)->rand_value());
   else
     sql += " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
@@ -2337,7 +2337,7 @@ void Table::SelectRandomRow(Thd1 *thd) {
 void Table::UpdateRandomROW(Thd1 *thd) {
   table_mutex.lock();
   auto set = rand_int(columns_->size() - 1);
-  int where = -1;
+  auto where = -1;
   while (where < 0) {
     auto col_pos = rand_int(columns_->size() - 1);
     switch (columns_->at(col_pos)->type_) {
@@ -2403,14 +2403,13 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     sql += columns_->at(where)->name_ + " IN (" +
           columns_->at(where)->rand_value() + "," +
           columns_->at(where)->rand_value() + ")";
-  else if (prob <= 98) {
+  else if (prob <= 98)
     sql += columns_->at(where)->name_ + " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
           columns_->at(where)->rand_value();
-  }
   else
     sql += columns_->at(where)->name_ + " LIKE " +
-           prepare_like_string(where,columns_->at(where)->rand_value());
+           prepare_like_string(columns_->at(where)->rand_value());
 
   table_mutex.unlock();
   execute_sql(sql, thd);
