@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <regex>
 #include <sstream>
+#include <string>
 
 using namespace rapidjson;
 std::mt19937 rng;
@@ -443,6 +444,7 @@ std::string Column::rand_value() {
   case CHAR:
   case VARCHAR:
     return "\'" + rand_string(length) + "\'";
+    break;
   case BOOL:
     return (rand_int(1) == 1 ? "true" : "false");
     break;
@@ -2229,11 +2231,16 @@ void Table::DeleteRandomRow(Thd1 *thd) {
   else if (prob <= 96)
     sql += " IN (" + columns_->at(where)->rand_value() + "," +
            columns_->at(where)->rand_value() + ")";
-  else if (prob <= 99)
+  else if (columns_->at(where)->rand_value().at(0) == '\'') {
+    std::string str = columns_->at(where)->rand_value().substr(0,2);
+    str = str.insert(2,1,'\'');
+    str = str.insert(1,1,'%');
+    str = str.insert(3,1,'%');
+    sql += " LIKE " + str;
+  }
+  else
     sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
            columns_->at(where)->rand_value();
-  else
-    sql += " LIKE " + columns_->at(where)->rand_value() + "%'";
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -2305,9 +2312,13 @@ void Table::SelectRandomRow(Thd1 *thd) {
     sql += " IN (" +
           columns_->at(where)->rand_value() + ", " +
           columns_->at(where)->rand_value() + ")";
-  else if (prob <= 98)
-    // todo add % in the like
-    sql += " LIKE " + columns_->at(where)->rand_value();
+  else if (columns_->at(where)->rand_value().at(0) == '\'') {
+    std::string str = columns_->at(where)->rand_value().substr(0,2);
+    str = str.insert(2,1,'\'');
+    str = str.insert(1,1,'%');
+    str = str.insert(3,1,'%');
+    sql += " LIKE " + str;
+  }
   else
     sql += " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
@@ -2387,13 +2398,17 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     sql += columns_->at(where)->name_ + " IN (" +
           columns_->at(where)->rand_value() + "," +
           columns_->at(where)->rand_value() + ")";
-  else if (prob <= 98)
+  else if (columns_->at(where)->rand_value().at(0) == '\'') {
+    std::string str = columns_->at(where)->rand_value().substr(0,2);
+    str = str.insert(2,1,'\'');
+    str = str.insert(1,1,'%');
+    str = str.insert(3,1,'%');
+    sql += columns_->at(where)->name_ + " LIKE " + str;
+  }
+  else
     sql += columns_->at(where)->name_ + " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
           columns_->at(where)->rand_value();
-  else
-    sql += columns_->at(where)->name_ + " LIKE " +
-           columns_->at(where)->rand_value();
 
   table_mutex.unlock();
   execute_sql(sql, thd);
