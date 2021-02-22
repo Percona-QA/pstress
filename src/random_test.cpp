@@ -457,6 +457,21 @@ std::string Column::rand_value() {
   return "";
 }
 
+/* prepare single quoted string for LIKE clause */
+std::string Table::prepare_string(int where, std::string str) {
+/* Processing the single quoted values that are returned by 'rand_string' */
+  if (columns_->at(where)->rand_value().at(0) == '\'') {
+    str = columns_->at(where)->rand_value().substr(0,2);
+    str = str.insert(2,1,'\'');
+    str = str.insert(1,1,'%');
+    str = str.insert(3,1,'%');
+    return str;
+  }
+  else /*Return non-string number with single quotes */
+    return "\'%" + columns_->at(where)->rand_value() + "%\'";
+}
+
+
 /* return table definition */
 std::string Column::definition() {
   std::string def = name_ + " " + clause();
@@ -2161,7 +2176,7 @@ void Table::ColumnRename(Thd1 *thd) {
 
 void Table::DeleteRandomRow(Thd1 *thd) {
   table_mutex.lock();
-  auto where = -1;
+  int where = -1;
   bool only_bool = true;
   int pk_pos = -1;
 
@@ -2231,13 +2246,8 @@ void Table::DeleteRandomRow(Thd1 *thd) {
   else if (prob <= 96)
     sql += " IN (" + columns_->at(where)->rand_value() + "," +
            columns_->at(where)->rand_value() + ")";
-  else if (columns_->at(where)->rand_value().at(0) == '\'') {
-    std::string str = columns_->at(where)->rand_value().substr(0,2);
-    str = str.insert(2,1,'\'');
-    str = str.insert(1,1,'%');
-    str = str.insert(3,1,'%');
-    sql += " LIKE " + str;
-  }
+  else if (prob <=99)
+    sql += " LIKE " + prepare_string(where,columns_->at(where)->rand_value());
   else
     sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
            columns_->at(where)->rand_value();
@@ -2248,7 +2258,7 @@ void Table::DeleteRandomRow(Thd1 *thd) {
 
 void Table::SelectRandomRow(Thd1 *thd) {
   table_mutex.lock();
-  auto where = -1;
+  int where = -1;
   while (where < 0) {
     auto col_pos = rand_int(columns_->size() - 1);
     switch (columns_->at(col_pos)->type_) {
@@ -2312,13 +2322,8 @@ void Table::SelectRandomRow(Thd1 *thd) {
     sql += " IN (" +
           columns_->at(where)->rand_value() + ", " +
           columns_->at(where)->rand_value() + ")";
-  else if (columns_->at(where)->rand_value().at(0) == '\'') {
-    std::string str = columns_->at(where)->rand_value().substr(0,2);
-    str = str.insert(2,1,'\'');
-    str = str.insert(1,1,'%');
-    str = str.insert(3,1,'%');
-    sql += " LIKE " + str;
-  }
+  else if (prob <=96)
+    sql += " LIKE " + prepare_string(where,columns_->at(where)->rand_value());
   else
     sql += " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
@@ -2332,7 +2337,7 @@ void Table::SelectRandomRow(Thd1 *thd) {
 void Table::UpdateRandomROW(Thd1 *thd) {
   table_mutex.lock();
   auto set = rand_int(columns_->size() - 1);
-  auto where = -1;
+  int where = -1;
   while (where < 0) {
     auto col_pos = rand_int(columns_->size() - 1);
     switch (columns_->at(col_pos)->type_) {
@@ -2398,17 +2403,14 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     sql += columns_->at(where)->name_ + " IN (" +
           columns_->at(where)->rand_value() + "," +
           columns_->at(where)->rand_value() + ")";
-  else if (columns_->at(where)->rand_value().at(0) == '\'') {
-    std::string str = columns_->at(where)->rand_value().substr(0,2);
-    str = str.insert(2,1,'\'');
-    str = str.insert(1,1,'%');
-    str = str.insert(3,1,'%');
-    sql += columns_->at(where)->name_ + " LIKE " + str;
-  }
-  else
+  else if (prob <=98) {
     sql += columns_->at(where)->name_ + " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
           columns_->at(where)->rand_value();
+  }
+  else
+    sql += columns_->at(where)->name_ + " LIKE " +
+           prepare_string(where,columns_->at(where)->rand_value());
 
   table_mutex.unlock();
   execute_sql(sql, thd);
