@@ -468,7 +468,7 @@ std::string Table::prepare_like_string(int where, std::string str) {
     return str;
   }
   else /*Return non-string number with single quotes */
-    return "\'%" + columns_->at(where)->rand_value() + "%\'";
+    return "\'%" + str + "%\'";
 }
 
 
