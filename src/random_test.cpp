@@ -280,7 +280,10 @@ inline static std::string pick_algorithm_lock() {
 
 /* set seed of current thread */
 int set_seed(Thd1 *thd) {
+
   auto initial_seed = opt_int(INITIAL_SEED);
+  initial_seed += options->at(Option::STEP)->getInt();
+
   rng = std::mt19937(initial_seed);
   thd->thread_log << "Initial seed " << initial_seed << std::endl;
   for (int i = 0; i < thd->thread_id; i++)
@@ -2943,8 +2946,9 @@ bool Thd1::load_metadata() {
   seed += options->at(Option::STEP)->getInt();
   random_strs = random_strs_generator(seed);
 
-  /*set seed for current thread*/
+  /*set seed for current step*/
   auto initial_seed = opt_int(INITIAL_SEED);
+  initial_seed += options->at(Option::STEP)->getInt();
   rng = std::mt19937(initial_seed);
 
   /* find out innodb page_size */
