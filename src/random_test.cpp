@@ -458,17 +458,18 @@ std::string Column::rand_value() {
 }
 
 /* prepare single quoted string for LIKE clause */
-std::string Table::prepare_like_string(std::string&& str) {
+std::string &Table::prepare_like_string(std::string &&str) {
 /* Processing the single quoted values that are returned by 'rand_string' */
   if (str.at(0) == '\'') {
     str = str.substr(0,2);
     str = str.insert(2,1,'\'');
     str = str.insert(1,1,'%');
     str = str.insert(3,1,'%');
-    return str;
   }
-  else /*Return non-string number with single quotes */
-    return "\'%" + str + "%\'";
+  else /*Return non-string number with single quotes */ {
+    str = "\'%" + str + "%\'";
+  }
+  return str;
 }
 
 
