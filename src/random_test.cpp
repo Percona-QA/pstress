@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <regex>
 #include <sstream>
+#include <string>
 
 using namespace rapidjson;
 std::mt19937 rng;
@@ -446,6 +447,7 @@ std::string Column::rand_value() {
   case CHAR:
   case VARCHAR:
     return "\'" + rand_string(length) + "\'";
+    break;
   case BOOL:
     return (rand_int(1) == 1 ? "true" : "false");
     break;
@@ -457,6 +459,22 @@ std::string Column::rand_value() {
   }
   return "";
 }
+
+/* prepare single quoted string for LIKE clause */
+std::string &Table::prepare_like_string(std::string &&str) {
+/* Processing the single quoted values that are returned by 'rand_string' */
+  if (str.at(0) == '\'') {
+    str = str.substr(0,2);
+    str = str.insert(2,1,'\'');
+    str = str.insert(1,1,'%');
+    str = str.insert(3,1,'%');
+  }
+  else /*Return non-string number with single quotes */ {
+    str = "\'%" + str + "%\'";
+  }
+  return str;
+}
+
 
 /* return table definition */
 std::string Column::definition() {
@@ -2236,7 +2254,7 @@ void Table::DeleteRandomRow(Thd1 *thd) {
     sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
            columns_->at(where)->rand_value();
   else
-    sql += " LIKE " + columns_->at(where)->rand_value() + "%'";
+    sql += " LIKE " + prepare_like_string(columns_->at(where)->rand_value());
 
   table_mutex.unlock();
   execute_sql(sql, thd);
@@ -2309,8 +2327,7 @@ void Table::SelectRandomRow(Thd1 *thd) {
           columns_->at(where)->rand_value() + ", " +
           columns_->at(where)->rand_value() + ")";
   else if (prob <= 98)
-    // todo add % in the like
-    sql += " LIKE " + columns_->at(where)->rand_value();
+    sql += " LIKE " + prepare_like_string(columns_->at(where)->rand_value());
   else
     sql += " BETWEEN " +
           columns_->at(where)->rand_value() + " AND " +
@@ -2396,7 +2413,7 @@ void Table::UpdateRandomROW(Thd1 *thd) {
           columns_->at(where)->rand_value();
   else
     sql += columns_->at(where)->name_ + " LIKE " +
-           columns_->at(where)->rand_value();
+           prepare_like_string(columns_->at(where)->rand_value());
 
   table_mutex.unlock();
   execute_sql(sql, thd);

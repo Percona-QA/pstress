@@ -176,6 +176,7 @@ struct Table {
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id, Thd1 *thd);
   std::string definition();
+  static std::string &prepare_like_string(std::string &&str);
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
