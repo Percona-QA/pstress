@@ -406,6 +406,12 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* PREPARE new metadata */
+  opt = newOption(Option::BOOL, Option::PREPARE, "prepare");
+  opt->help = "create new random tables and insert initial records";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* Select all row */
   opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-rows");
   opt->help = "select all table data and in case of partition randomly pick "
@@ -695,7 +701,7 @@ void add_options() {
   /* steps */
   opt = newOption(Option::INT, Option::STEP, "step");
   opt->help = "current step in pstress script";
-  opt->setInt(1);
+  opt->setInt(0);
 
   /* metadata file path */
   opt = newOption(Option::STRING, Option::METADATA_PATH, "metadata-path");
