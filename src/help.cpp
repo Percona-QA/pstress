@@ -701,7 +701,7 @@ void add_options() {
   /* steps */
   opt = newOption(Option::INT, Option::STEP, "step");
   opt->help = "current step in pstress script";
-  opt->setInt(0);
+  opt->setInt(1);
 
   /* metadata file path */
   opt = newOption(Option::STRING, Option::METADATA_PATH, "metadata-path");

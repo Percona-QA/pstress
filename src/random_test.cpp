@@ -2976,7 +2976,7 @@ bool Thd1::load_metadata() {
   /* create in-memory data for general tablespaces */
   create_in_memory_data();
 
-  if (options->at(Option::STEP)->getInt() > 0 &&
+  if (options->at(Option::STEP)->getInt() > 1 &&
       !options->at(Option::PREPARE)->getBool()) {
     auto file = load_metadata_from_file();
     std::cout << "metadata loaded from " << file << std::endl;
@@ -3023,7 +3023,8 @@ void Thd1::run_some_query() {
   }
 
   /* prepare is passed, create all tables */
-  if (options->at(Option::PREPARE)->getBool()) {
+  if (options->at(Option::PREPARE)->getBool() ||
+      options->at(Option::STEP)->getInt() == 1) {
     auto current = table_started++;
     while (current < all_tables->size()) {
       auto table = all_tables->at(current);
