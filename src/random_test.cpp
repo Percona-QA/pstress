@@ -391,7 +391,7 @@ Column::COLUMN_TYPES Column::col_type(std::string type) {
 }
 
 /* return string from a column type */
-const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
+const std::string Column::col_type_to_string(COLUMN_TYPES type) {
   switch (type) {
   case INTEGER:
     return "INT";
@@ -419,45 +419,57 @@ const std::string Column::col_type_to_string(COLUMN_TYPES type) const {
 
 /* integer range */
 
-/* return random value of any string */
-std::string Column::rand_value() {
+static std::string rand_value_universal(Column::COLUMN_TYPES type_,
+                                        int length) {
+  int rand_length;
   switch (type_) {
-  case (COLUMN_TYPES::INTEGER):
+  case (Column::COLUMN_TYPES::INTEGER):
     static auto rec0 = options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
     return std::to_string(rand_int(rec0));
     break;
-  case (COLUMN_TYPES::INT):
+  case (Column::COLUMN_TYPES::INT):
     static auto rec = g_integer_range * opt_int(INITIAL_RECORDS_IN_TABLE);
     return std::to_string(rand_int(rec));
     break;
-  case (COLUMN_TYPES::FLOAT):
-  {
+  case (Column::COLUMN_TYPES::FLOAT): {
     static float rec1 =
         (1 / g_integer_range) * opt_int(INITIAL_RECORDS_IN_TABLE);
     return rand_float(rec1);
     break;
   }
-  case (COLUMN_TYPES::DOUBLE):
-  {
+  case (Column::COLUMN_TYPES::DOUBLE): {
     static float rec2 = (1 / g_integer_range / g_integer_range) *
                         opt_int(INITIAL_RECORDS_IN_TABLE);
     return rand_double(rec2);
     break;
   }
-  case CHAR:
-  case VARCHAR:
+  case Column::COLUMN_TYPES::CHAR:
+  case Column::COLUMN_TYPES::VARCHAR:
     return "\'" + rand_string(length) + "\'";
     break;
-  case BOOL:
+  case Column::COLUMN_TYPES::BOOL:
     return (rand_int(1) == 1 ? "true" : "false");
     break;
-  case BLOB:
-  case GENERATED:
-  case COLUMN_MAX:
-    throw std::runtime_error("unhandled " + col_type_to_string(type_) +
+  case Column::COLUMN_TYPES::BLOB:
+    rand_length = rand_int(length);
+    if (rand_int(10) != 10)
+      rand_length /= 10;
+    return "\'" + rand_string(rand_length) + "\'";
+    break;
+  case Column::COLUMN_TYPES::GENERATED:
+  case Column::COLUMN_TYPES::COLUMN_MAX:
+    throw std::runtime_error("unhandled " + Column::col_type_to_string(type_) +
                              " at line " + std::to_string(__LINE__));
   }
   return "";
+}
+
+/* return random value of any string */
+std::string Column::rand_value() { return rand_value_universal(type_, length); }
+
+/* return random value of sub string */
+std::string Generated_Column::rand_value() {
+  return rand_value_universal(g_type, length);
 }
 
 /* prepare single quoted string for LIKE clause */
@@ -2340,7 +2352,13 @@ void Table::SelectRandomRow(Thd1 *thd) {
 /* update random row */
 void Table::UpdateRandomROW(Thd1 *thd) {
   table_mutex.lock();
-  auto set = rand_int(columns_->size() - 1);
+  int set;
+  while (true) {
+    set = rand_int(columns_->size() - 1);
+    if (columns_->at(set)->type_ != Column::GENERATED)
+      break;
+  }
+
   auto where = -1;
   while (where < 0) {
     auto col_pos = rand_int(columns_->size() - 1);
@@ -2431,7 +2449,11 @@ void Table::InsertRandomRow(Thd1 *thd, bool is_lock) {
   std::string sql = type + " INTO " + name_ + "  ( ";
   for (auto &column : *columns_) {
     sql += column->name_ + " ,";
-    auto val = column->rand_value();
+    std::string val;
+    if (column->type_ == Column::COLUMN_TYPES::GENERATED)
+      val = "default";
+    else
+      val = column->rand_value();
     if (column->auto_increment == true && rand_int(100) < 10)
       val = "NULL";
     vals += " " + val + ",";
