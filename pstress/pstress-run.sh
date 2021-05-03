@@ -1389,18 +1389,15 @@ elif [ "${VERSION_INFO}" != "5.7" -a "${VERSION_INFO}" != "8.0" ]; then
 fi
 
 if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
-  echoit "Making a copy of the mysqld used to ${WORKDIR}/mysqld (handy for coredump analysis and manual bundle creation)..."
+  echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
   mkdir ${WORKDIR}/mysqld
-  cp ${BIN} ${WORKDIR}/mysqld
+  cp -R ${BASEDIR}/bin ${WORKDIR}/mysqld/
+  echoit "Making a copy of the library files required for starting server from incident directory"
+  cp -R ${BASEDIR}/lib ${WORKDIR}/mysqld/
   echoit "Making a copy of the conf file pstress-run.conf(useful later during repeating the crashes)..."
   cp ${SCRIPT_PWD}/pstress-run.conf ${WORKDIR}/
   echoit "Making a copy of the seed file..."
   echo "${SEED}" > ${WORKDIR}/seed
-  echoit "Making a copy of the ldd files required for mysqld core analysis to ${WORKDIR}/mysqld..."
-  PWDTMPSAVE=$PWD
-  cd ${WORKDIR}/mysqld
-  ${SCRIPT_PWD}/ldd_files.sh
-  cd ${PWDTMPSAVE}
   echoit "Generating datadir template (using mysql_install_db or mysqld --init)..."
   ${INIT_TOOL} ${INIT_OPT} --basedir=${BASEDIR} --datadir=${WORKDIR}/data.template > ${WORKDIR}/log/mysql_install_db.txt 2>&1
   echo "${MYEXTRA}${MYSAFE}" | if grep -qi "innodb[_-]log[_-]checksum[_-]algorithm"; then
@@ -1435,14 +1432,11 @@ if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
     fi
   fi
 elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-  echoit "Making a copy of the mysqld used to ${WORKDIR}/mysqld (handy for coredump analysis and manual bundle creation)..."
+  echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
   mkdir ${WORKDIR}/mysqld
-  cp ${BIN} ${WORKDIR}/mysqld
-  echoit "Making a copy of the ldd files required for mysqld core analysis to ${WORKDIR}/mysqld..."
-  PWDTMPSAVE=$PWD
-  cd ${WORKDIR}/mysqld
-  ${SCRIPT_PWD}/ldd_files.sh
-  cd ${PWDTMPSAVE}
+  cp -R ${BASEDIR}/bin ${WORKDIR}/mysqld/
+  echoit "Making a copy of the library files required for starting server from incident directory"
+  cp -R ${BASEDIR}/lib ${WORKDIR}/mysqld/
   if [[ ${PXC} -eq 1 ]] ;then
     echoit "Ensuring PXC templates created for pstress run.."
     pxc_startup startup
