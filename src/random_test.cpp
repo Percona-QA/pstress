@@ -396,7 +396,7 @@ Column::COLUMN_TYPES Column::col_type(std::string type) {
 const std::string Column::col_type_to_string(COLUMN_TYPES type) {
   switch (type) {
   case INTEGER:
-    return "INT";
+    return "INTEGER";
   case INT:
     return "INT";
   case CHAR:
@@ -597,7 +597,7 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     auto x = rand_int(4, 1);
     if (x <= 1)
       g_type = INT;
-    if (x <= 2)
+    else if (x <= 2)
       g_type = VARCHAR;
     else if (x <= 3)
       g_type = CHAR;
@@ -622,12 +622,14 @@ Generated_Column::Generated_Column(std::string name, Table *table)
   }
 
   if (g_type == INT || g_type == INTEGER) {
-    str = " " + col_type_to_string(g_type) + " AS(";
+    str = " " + col_type_to_string(g_type) + " GENERATED ALWAYS AS (";
     for (auto pos : col_pos) {
       auto col = table->columns_->at(pos);
       if (col->type_ == VARCHAR || col->type_ == CHAR || col->type_ == BLOB)
         str += " LENGTH(" + col->name_ + ")+";
-      else if (col->type_ == INT || col->type_ == BOOL)
+      else if (col->type_ == INT || col->type_ == INTEGER ||
+               col->type_ == BOOL || col->type_ == FLOAT ||
+               col->type_ == DOUBLE)
         str += " " + col->name_ + "+";
       else
         throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
@@ -680,7 +682,7 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     str = " " + col_type_to_string(g_type);
     if (g_type == VARCHAR || g_type == CHAR)
       str += "(" + std::to_string(actual_size) + ")";
-    str += " AS  (CONCAT(";
+    str += " GENERATED ALWAYS AS (CONCAT(";
     str += gen_sql;
     str += ")";
     length = actual_size;
@@ -1961,7 +1963,7 @@ void Table::AddColumn(Thd1 *thd) {
   else
     tc = new Column(name, this, col_type);
 
-  sql += " " + tc->definition() + ",";
+  sql += tc->definition() + ",";
   sql += pick_algorithm_lock();
 
   table_mutex.unlock();
