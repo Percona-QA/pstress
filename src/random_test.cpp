@@ -11,6 +11,8 @@
 #include <sstream>
 #include <string>
 
+#define CR_SERVER_GONE_ERROR 2006
+#define CR_SERVER_LOST 2013
 using namespace rapidjson;
 std::mt19937 rng;
 
@@ -1673,7 +1675,8 @@ bool execute_sql(std::string sql, Thd1 *thd) {
       thd->thread_log << " F " << sql << std::endl;
       thd->thread_log << "Error " << mysql_error(thd->conn) << std::endl;
     }
-    if (mysql_errno(thd->conn) == 2006) {
+    if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
+        mysql_errno(thd->conn) == CR_SERVER_LOST) {
       thd->thread_log << "server gone, while processing " + sql;
       connection_lost = true;
     }
