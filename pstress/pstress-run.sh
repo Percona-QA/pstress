@@ -360,8 +360,8 @@ pxc_startup(){
   SOCKET3=${RUNDIR}/${TRIAL}/node3/node3_socket.sock
   if check_for_version $MYSQL_VERSION "5.7.0" ; then
     if [[ "$ENCRYPTION_RUN" == 1 ]];then
-      MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure --early-plugin-load=keyring_file.so --keyring_file_data=keyring --basedir=${BASEDIR}"
-	else
+      MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure ${KEYRING_PLUGIN} --basedir=${BASEDIR}"
+    else
       MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure --basedir=${BASEDIR}"
     fi
   else
@@ -719,8 +719,24 @@ pstress_test(){
       exit 1
     elif [ ${TRIAL} -gt 1 ]; then
       rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
+      sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
     else
       cp -R ${WORKDIR}/data.template/* ${RUNDIR}/${TRIAL}/data 2>&1
+      if [ "${KEYRING_COMPONENT}" == "1" ]; then
+      echoit "Creating local manifest file mysqld.my"
+      cat << EOF >${RUNDIR}/${TRIAL}/data/mysqld.my
+{
+ "components": "file://component_keyring_file"
+}
+EOF
+      echoit "Creating local configuration file component_keyring_file.cnf"
+      cat << EOF >${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
+{
+ "path": "${RUNDIR}/${TRIAL}/data/component_keyring_file",
+ "read_only": false
+}
+EOF
+      fi
     fi
     MYEXTRA_SAVE_IT=${MYEXTRA}
     if [ ${ADD_RANDOM_OPTIONS} -eq 1 ]; then  # Add random mysqld --options to MYEXTRA
@@ -767,12 +783,12 @@ pstress_test(){
     PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
     echoit "Starting mysqld. Error log is stored at ${RUNDIR}/${TRIAL}/log/master.err"
     if [ "${VALGRIND_RUN}" == "0" ]; then
-      CMD="${BIN} ${MYSAFE} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data --tmpdir=${RUNDIR}/${TRIAL}/tmp \
-        --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+      CMD="${BIN} ${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+	--tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     else
-      CMD="${VALGRIND_CMD} ${BIN} ${MYSAFE} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data --tmpdir=${RUNDIR}/${TRIAL}/tmp \
-        --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+      CMD="${VALGRIND_CMD} ${BIN} ${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+	--tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
         --log-output=none --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
     $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
@@ -805,7 +821,7 @@ pstress_test(){
 	
     echo "${CMD//$RUNDIR/$WORKDIR} --init-file=${WORKDIR}/recovery-user.sql > ${WORKDIR}/${TRIAL}/log/master.err 2>&1 &" >> ${RUNDIR}/${TRIAL}/start_recovery ; chmod +x ${RUNDIR}/${TRIAL}/start_recovery
     # New MYEXTRA/MYSAFE variables pass & VALGRIND run check method as of 2015-07-28 (MYSAFE & MYEXTRA stored in a text file inside the trial dir, VALGRIND file created if used)
-    echo "${MYSAFE} ${MYEXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
+    echo "${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN}" > ${RUNDIR}/${TRIAL}/MYEXTRA
     echo "${MYINIT}" > ${RUNDIR}/${TRIAL}/MYINIT
     if [ "${VALGRIND_RUN}" == "1" ]; then
       touch ${RUNDIR}/${TRIAL}/VALGRIND
@@ -911,7 +927,7 @@ pstress_test(){
       echoit "PXC_WSREP_PROVIDER_ADD_RANDOM_WSREP_PROVIDER_CONFIG_OPTIONS=1: adding wsrep provider configuration option(s) ${OPTIONS_TO_ADD} to this run..."
       WSREP_PROVIDER_OPT="$OPTIONS_TO_ADD"
     fi
-    echo "${MYEXTRA} ${PXC_MYEXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
+    echo "${MYEXTRA} ${KEYRING_PLUGIN} ${PXC_MYEXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
     echo "${MYINIT}" > ${RUNDIR}/${TRIAL}/MYINIT
     echo "$WSREP_PROVIDER_OPT" > ${RUNDIR}/${TRIAL}/WSREP_PROVIDER_OPT
     if [ "${VALGRIND_RUN}" == "1" ]; then
@@ -1387,6 +1403,26 @@ if [ "${VERSION_INFO}" == "5.1" -o "${VERSION_INFO}" == "5.5" -o "${VERSION_INFO
 elif [ "${VERSION_INFO}" != "5.7" -a "${VERSION_INFO}" != "8.0" ]; then
   echo "WARNING: mysqld (${BIN}) version detection failed. This is likely caused by using this script with a non-supported distribution or version of mysqld. Please expand this script to handle (which shoud be easy to do). Even so, the script will now try and continue as-is, but this may fail."
 fi
+
+# Keyring component is unsupported in 5.7
+  if [ "${VERSION_INFO}" == "5.7" ]; then
+    KEYRING_COMPONENT=0
+  fi
+  if [ "${KEYRING_COMPONENT}" == "1" ]; then
+    KEYRING_PLUGIN=""
+    echoit "Creating global manifest file mysqld.my"
+    cat << EOF >${BASEDIR}/bin/mysqld.my
+{
+  "read_local_manifest": true
+}
+EOF
+    echoit "Creating global configuration file component_keyring_file.cnf"
+    cat << EOF >${BASEDIR}/lib/plugin/component_keyring_file.cnf
+{
+  "read_local_config": true
+}
+EOF
+  fi
 
 if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
   echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
