@@ -1164,8 +1164,12 @@ EOF
         fi
       fi
     fi
-    (ps -ef | grep 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -$SIGNAL >/dev/null 2>&1 || true)
-    sleep 2; sync
+    MPID=( $(ps -eaf | grep -e 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}') )
+    echoit "Killing the PXC servers with Signal ${SIGNAL}"
+    for i in "${MPID[@]}"
+    do
+      { kill -$SIG $i && wait $i; } 2>/dev/null
+    done
   fi
   if [ ${ISSTARTED} -eq 1 -a ${TRIAL_SAVED} -ne 1 ]; then  # Do not try and print pstress log for a failed mysqld start
     if [[ ${PXC} -eq 1 && ${PXC_CLUSTER_RUN} -eq 0 ]]; then
