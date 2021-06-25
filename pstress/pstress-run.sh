@@ -719,7 +719,9 @@ pstress_test(){
       exit 1
     elif [ ${TRIAL} -gt 1 ]; then
       rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
-      sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
+      if [ "${KEYRING_COMPONENT}" == "1" ]; then
+        sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
+      fi
     else
       cp -R ${WORKDIR}/data.template/* ${RUNDIR}/${TRIAL}/data 2>&1
       if [ "${KEYRING_COMPONENT}" == "1" ]; then
