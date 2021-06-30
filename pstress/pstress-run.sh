@@ -90,7 +90,7 @@ echoit(){
 # Kill the server
 kill_server(){
   SIG=$1
-  echoit "Killing the server with Signal $SIG";
+  MPID=$2
   { kill -$SIG ${MPID} && wait ${MPID}; } 2>/dev/null
 }
 
@@ -696,7 +696,7 @@ pstress_test(){
   echoit "Ensuring there are no relevant servers running..."
   KILLPID=$(ps -ef | grep "${RUNDIR}" | grep -v grep | awk '{print $2}' | tr '\n' ' ')
   (sleep 0.2; kill -9 $KILLPID >/dev/null 2>&1; timeout -k4 -s9 4s wait $KILLPID >/dev/null 2>&1) &
-  timeout -k5 -s9 5s wait $KILLDPID >/dev/null 2>&1  # The sleep 0.2 + subsequent wait (cought before the kill) avoids the annoying 'Killed' message from being displayed in the output. Thank you to user 'Foonly' @ forums.whirlpool.net.au
+  timeout -k5 -s9 5s wait $KILLPID >/dev/null 2>&1  # The sleep 0.2 + subsequent wait (cought before the kill) avoids the annoying 'Killed' message from being displayed in the output. Thank you to user 'Foonly' @ forums.whirlpool.net.au
   echoit "Clearing rundir..."
   rm -Rf ${RUNDIR}/*
   echoit "Generating new trial workdir ${RUNDIR}/${TRIAL}..."
@@ -1116,7 +1116,8 @@ EOF
         fi
       fi
     fi
-    kill_server $SIGNAL
+    echoit "Killing the server with Signal $SIGNAL";
+    kill_server $SIGNAL $MPID
     sleep 1  # <^ Make sure all is gone
   elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
     if [ "${VALGRIND_RUN}" == "1" ]; then # For Valgrind, we want the full Valgrind output in the error log, hence we need a proper/clean (and slow...) shutdown
@@ -1166,12 +1167,13 @@ EOF
         fi
       fi
     fi
-    MPID=( $(ps -eaf | grep -e 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}') )
-    echoit "Killing the PXC servers with Signal ${SIGNAL}"
-    for i in "${MPID[@]}"
-    do
-      { kill -$SIG $i && wait $i; } 2>/dev/null
-    done
+
+  MPID=( $(ps -ef | grep -e 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}') )
+  echoit "Killing the PXC servers with Signal ${SIGNAL}"
+  for i in "${MPID[@]}"
+  do
+    kill_server $SIGNAL $i
+  done
   fi
   if [ ${ISSTARTED} -eq 1 -a ${TRIAL_SAVED} -ne 1 ]; then  # Do not try and print pstress log for a failed mysqld start
     if [[ ${PXC} -eq 1 && ${PXC_CLUSTER_RUN} -eq 0 ]]; then
