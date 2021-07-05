@@ -17,7 +17,8 @@ CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf
 # Internal variables: DO NOT CHANGE!
 RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/')
 SCRIPT_AND_PATH=$(readlink -f $0); SCRIPT=$(echo ${SCRIPT_AND_PATH} | sed 's|.*/||'); SCRIPT_PWD=$(cd `dirname $0` && pwd)
-WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; TIMEOUT_REACHED=0; STOREANYWAY=0
+WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
+SERVER_FAIL_TO_START_COUNT=0;
 
 # Set ASAN coredump options
 # https://github.com/google/sanitizers/wiki/SanitizerCommonFlags
@@ -710,7 +711,7 @@ pstress_test(){
       mkdir -p ${RUNDIR}/${TRIAL}/data/test ${RUNDIR}/${TRIAL}/data/mysql ${RUNDIR}/${TRIAL}/tmp ${RUNDIR}/${TRIAL}/log
     fi
     echo 'SELECT 1;' > ${RUNDIR}/${TRIAL}/startup_failure_thread-0.sql  # Add fake file enabling pquery-prep-red.sh/reducer.sh to be used with/for mysqld startup issues
-    if [ ${TRIAL} -gt 1 ]; then
+    if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       echoit "Copying datadir from Trial $WORKDIR/$((${TRIAL}-1)) into $WORKDIR/${TRIAL}..."
     else
       echoit "Copying datadir from template..."
@@ -719,7 +720,7 @@ pstress_test(){
       echoit "Assert: ${WORKDIR}/data.template/ is empty? Check ${WORKDIR}/log/mysql_install_db.txt to see if the original template creation worked ok. Terminating."
       echoit "Note that this can be caused by not having perl-Data-Dumper installed (sudo yum install perl-Data-Dumper), which is required for mysql_install_db."
       exit 1
-    elif [ ${TRIAL} -gt 1 ]; then
+    elif [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
       if [ "${KEYRING_COMPONENT}" == "1" ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
@@ -985,7 +986,7 @@ EOF
 
   if [ ${ISSTARTED} -eq 1 ]; then
     rm -f ${RUNDIR}/${TRIAL}/startup_failure_thread-0.sql  # Remove the earlier created fake (SELECT 1; only) file present for startup issues (server is started OK now)
-    if [ "${TRIAL}" == "1" ]; then
+    if [[ "${TRIAL}" == "1" || $REINIT_DATADIR -eq 1 ]]; then
       echoit "Creating metadata randomly using random seed ${SEED} ..."
     else
       echoit "Loading metadata from ${WORKDIR}/step_$((${TRIAL}-1)).dll ..."
@@ -999,6 +1000,10 @@ EOF
       CMD="${PSTRESS_BIN} --database=test --config-file=${RUNDIR}/${TRIAL}/pstress-cluster-pxc.cfg --queries-per-thread=${QUERIES_PER_THREAD} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     else
       CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL}/node1/ --user=root --socket=${SOCKET1} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+    fi
+    if [ $REINIT_DATADIR -eq 1 ]; then
+      CMD="$CMD --prepare"
+      REINIT_DATADIR=0
     fi
     echoit "$CMD"
     $CMD >${RUNDIR}/${TRIAL}/pstress.log 2>&1 &
@@ -1054,6 +1059,11 @@ EOF
       (sleep 0.2; kill -9 ${MPID} >/dev/null 2>&1; timeout -k4 -s9 4s wait ${MPID} >/dev/null 2>&1) &
       timeout -k5 -s9 5s wait ${MPID} >/dev/null 2>&1
       sleep 2; sync
+      SERVER_FAIL_TO_START_COUNT=$[ $SERVER_FAIL_TO_START_COUNT + 1 ]
+      if [ $SERVER_FAIL_TO_START_COUNT -gt 1 ]; then
+        echoit "Server failed to start twice. Reinitializing the data directory"
+        REINIT_DATADIR=1
+      fi
     elif [[ ${PXC} -eq 1 ]]; then
       echoit "3 Node PXC Cluster failed to start after ${PXC_START_TIMEOUT} seconds. Will issue an extra cleanup to ensure nothing remains..."
       (ps -ef | grep 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -9 >/dev/null 2>&1 || true)
