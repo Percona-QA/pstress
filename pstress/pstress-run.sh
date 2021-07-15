@@ -1184,8 +1184,7 @@ EOF
   echoit "Killing the PXC servers with Signal ${SIGNAL}"
   for i in "${MPID[@]}"
   do
-    #kill_server $SIGNAL $i
-    { kill -$SIGNAL $i >/dev/null 2>&1; timeout -k4 -s9 4s wait $i >/dev/null 2>&1; } 2>/dev/null
+    { kill -$SIG ${MPID} && wait ${MPID}; } 2>/dev/null
   done
   fi
   if [ ${ISSTARTED} -eq 1 -a ${TRIAL_SAVED} -ne 1 ]; then  # Do not try and print pstress log for a failed mysqld start
