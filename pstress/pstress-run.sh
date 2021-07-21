@@ -18,7 +18,7 @@ CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf
 RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/')
 SCRIPT_AND_PATH=$(readlink -f $0); SCRIPT=$(echo ${SCRIPT_AND_PATH} | sed 's|.*/||'); SCRIPT_PWD=$(cd `dirname $0` && pwd)
 WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
-SERVER_FAIL_TO_START_COUNT=0;
+SERVER_FAIL_TO_START_COUNT=0;ENGINE=InnoDB;
 
 # Set ASAN coredump options
 # https://github.com/google/sanitizers/wiki/SanitizerCommonFlags
@@ -34,6 +34,11 @@ if [ "${SEED}" == "" ]; then SEED=${RANDOMD}; fi
 if [[ ${SIGNAL} -ne 15 && ${SIGNAL} -ne 4 && ${SIGNAL} -ne 9 ]]; then
   echo "Invalid option SIGNAL=${SIGNAL} passed. Exiting...";
   exit
+fi
+
+# Disable TokuDB in case RocksDB is enabled
+if [ "${ENGINE}" == "RocksDB" ]; then
+  ADD_RANDOM_TOKUDB_OPTIONS=0
 fi
 
 # Safety checks: ensure variables are correctly set to avoid rm -Rf issues (if not set correctly, it was likely due to altering internal variables at the top of this file)
@@ -991,6 +996,9 @@ EOF
     else
       echoit "Loading metadata from ${WORKDIR}/step_$((${TRIAL}-1)).dll ..."
     fi
+    if [[ "${ENGINE}" == "RocksDB" && ${TRIAL} -eq 1 ]]; then
+      ${BASEDIR}/bin/ps-admin --enable-rocksdb -uroot -S${SOCKET}
+    fi
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
       CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL} --user=root --socket=${SOCKET} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     elif [ ${PXC_CLUSTER_RUN} -eq 1 ]; then
@@ -1391,6 +1399,7 @@ fi
 
 echoit "mysqld Start Timeout: ${MYSQLD_START_TIMEOUT} | Client Threads: ${THREADS} | Queries/Thread: ${QUERIES_PER_THREAD} | Trials: ${TRIALS} | Save coredump/valgrind issue trials only: `if [ ${SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY} -eq 1 ]; then echo -n 'TRUE'; if [ ${SAVE_SQL} -eq 1 ]; then echo ' + save all SQL traces'; else echo ''; fi; else echo 'FALSE'; fi`"
 
+echoit "Storage Engine: ${ENGINE}"
 SQL_INPUT_TEXT="SQL file used: ${INFILE}"
 echoit "Valgrind run: `if [ "${VALGRIND_RUN}" == "1" ]; then echo -n 'TRUE'; else echo -n 'FALSE'; fi` | pstress timeout: ${PSTRESS_RUN_TIMEOUT}"
 echoit "pstress Binary: ${PSTRESS_BIN}"
