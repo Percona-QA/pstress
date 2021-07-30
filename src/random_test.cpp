@@ -133,7 +133,8 @@ int sum_of_all_options(Thd1 *thd) {
     throw std::runtime_error("choose either only partition or no partition");
 
   if (options->at(Option::ONLY_PARTITION)->getBool())
-    options->at(Option::NO_TEMPORARY)->setBool("false");
+    options->at(Option::NO_TEMPORARY)->setBool("true");
+
 
   /* if select is set as zero, disable all type of selects */
   if (options->at(Option::NO_SELECT)->getBool()) {
@@ -158,6 +159,18 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_TABLESPACE_RENAME, 0);
     opt_int_set(ALTER_TABLESPACE_ENCRYPTION, 0);
   }
+
+  /* options to disable if engine is not INNODB */
+  std::string engine = options->at(Option::ENGINE)->getString();
+  std::transform(engine.begin(), engine.end(), engine.begin(), ::toupper);
+  if (engine.compare("ROCKSDB") == 0) {
+    options->at(Option::NO_TEMPORARY)->setBool("true");
+    options->at(Option::NO_COLUMN_COMPRESSION)->setBool("true");
+    options->at(Option::NO_ENCRYPTION)->setBool(true);
+    options->at(Option::NO_DESC_INDEX)->setBool(true);
+    options->at(Option::NO_TABLE_COMPRESSION)->setBool(true);
+  }
+
   /* If no-encryption is set, disable all encryption options */
   if (options->at(Option::NO_ENCRYPTION)->getBool()) {
     opt_int_set(ALTER_TABLE_ENCRYPTION, 0);
@@ -168,7 +181,7 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
   }
 
-  /* If no-table-encryption is set, disable all compression */
+  /* If no-table-compression is set, disable all compression */
   if (options->at(Option::NO_TABLE_COMPRESSION)->getBool()) {
     opt_int_set(ALTER_TABLE_COMPRESSION, 0);
     g_compression.clear();
@@ -2776,6 +2789,11 @@ void create_in_memory_data() {
   }
 
   std::string row_format = opt_string(ROW_FORMAT);
+
+  if (row_format.compare("all") == 0 &&
+      options->at(Option::NO_TABLE_COMPRESSION)->getInt() == true)
+    row_format = "uncompressed";
+
   if (row_format.compare("uncompressed") == 0) {
     g_row_format = {"DYNAMIC", "REDUNDANT"};
   } else if (row_format.compare("all") == 0) {
