@@ -362,7 +362,7 @@ void add_options() {
   /*Tablespace Encrytion */
   opt = newOption(Option::INT, Option::ALTER_TABLESPACE_ENCRYPTION,
                   "alt-tbs-enc");
-  opt->help = "Alter tablespace set Encryption";
+  opt->help = "Alter tablespace set Encryption including the msysql tablespace";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();

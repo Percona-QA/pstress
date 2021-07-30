@@ -2492,10 +2492,17 @@ void set_mysqld_variable(Thd1 *thd) {
 
 /* alter tablespace set encryption */
 void alter_tablespace_encryption(Thd1 *thd) {
-  if (g_tablespace.size() > 0) {
-    std::string sql = "ALTER TABLESPACE " +
-                      g_tablespace[rand_int(g_tablespace.size() - 1)] +
-                      " ENCRYPTION ";
+  std::string tablespace;
+
+  if ((rand_int(10) < 2 && db_branch().compare("5.7") != 0) ||
+      g_tablespace.size() == 0) {
+    tablespace = "mysql";
+  } else if (g_tablespace.size() > 0) {
+    tablespace = g_tablespace[rand_int(g_tablespace.size() - 1)];
+  }
+
+  if (tablespace.size() > 0) {
+    std::string sql = "ALTER TABLESPACE " + tablespace + " ENCRYPTION ";
     sql += (rand_int(1) == 0 ? "'Y'" : "'N'");
     execute_sql(sql, thd);
   }
