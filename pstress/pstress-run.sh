@@ -37,8 +37,11 @@ if [[ ${SIGNAL} -ne 15 && ${SIGNAL} -ne 4 && ${SIGNAL} -ne 9 ]]; then
 fi
 
 # Disable TokuDB in case RocksDB is enabled
+# Disable encryption in case RocksDB is enabled
 if [ "${ENGINE}" == "RocksDB" ]; then
   ADD_RANDOM_TOKUDB_OPTIONS=0
+  KEYRING_PLUGIN=""
+  KEYRING_COMPONENT=0
 fi
 
 # Safety checks: ensure variables are correctly set to avoid rm -Rf issues (if not set correctly, it was likely due to altering internal variables at the top of this file)
@@ -801,6 +804,7 @@ EOF
 	--tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
         --log-output=none --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
+    echo $CMD
     $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
     MPID="$!"
     echo "## Good for reproducing mysqld (5.7+) startup issues only (full issues need a data dir, so use mysql_install_db or mysqld --init for those)" > ${RUNDIR}/${TRIAL}/start
@@ -1000,7 +1004,7 @@ EOF
       ${BASEDIR}/bin/ps-admin --enable-rocksdb -uroot -S${SOCKET}
     fi
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
-      CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL} --user=root --socket=${SOCKET} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+      CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL} --user=root --socket=${SOCKET} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER} --engine=${ENGINE}"
     elif [ ${PXC_CLUSTER_RUN} -eq 1 ]; then
       cat ${PXC_CLUSTER_CONFIG} \
           | sed -e "s|\/tmp|${RUNDIR}\/${TRIAL}|" \
@@ -1459,8 +1463,8 @@ if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
   cp -R ${BASEDIR}/bin ${WORKDIR}/mysqld/
   echoit "Making a copy of the library files required for starting server from incident directory"
   cp -R ${BASEDIR}/lib ${WORKDIR}/mysqld/
-  echoit "Making a copy of the conf file pstress-run.conf(useful later during repeating the crashes)..."
-  cp ${SCRIPT_PWD}/pstress-run.conf ${WORKDIR}/
+  echoit "Making a copy of the conf file $CONFIGURATION_FILE (useful later during repeating the crashes)..."
+  cp ${SCRIPT_PWD}/$CONFIGURATION_FILE ${WORKDIR}/
   echoit "Making a copy of the seed file..."
   echo "${SEED}" > ${WORKDIR}/seed
   echoit "Generating datadir template (using mysql_install_db or mysqld --init)..."
@@ -1502,6 +1506,9 @@ elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
   cp -R ${BASEDIR}/bin ${WORKDIR}/mysqld/
   echoit "Making a copy of the library files required for starting server from incident directory"
   cp -R ${BASEDIR}/lib ${WORKDIR}/mysqld/
+  echoit "Making a copy of the conf file $CONFIGURATION_FILE (useful later during repeating the crashes)..."
+  cp ${SCRIPT_PWD}/$CONFIGURATION_FILE ${WORKDIR}/
+
   if [[ ${PXC} -eq 1 ]] ;then
     echoit "Ensuring PXC templates created for pstress run.."
     pxc_startup startup
