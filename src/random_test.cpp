@@ -2577,13 +2577,15 @@ void alter_tablespace_rename(Thd1 *thd) {
 static std::vector<std::string> load_special_sql_from() {
   std::vector<std::string> array;
   auto file = opt_string(SQL_FILE);
-  std::string line;
+  std::string sql;
 
   std::ifstream myfile(file);
   if (myfile.is_open()) {
     while (!myfile.eof()) {
-      getline(myfile, line);
-      array.push_back(line);
+      getline(myfile, sql);
+      /* do not process any blank lines */
+      if (sql.find_first_not_of("\t\n ") != std::string::npos)
+        array.push_back(sql);
     }
     myfile.close();
   } else
