@@ -69,8 +69,8 @@ Option | Function | Example | Default
 --no-virtual | Disable virtual columns | | default: 0
 --tables | Number of initial tables | --tables=10 | default#: 10
 --indexes | maximum indexes in a table,default depends on page-size as well | --indexes=2 | default#: 7
---drop-index | alter table drop random index | | default#: 1
 --add-index | alter table add random index | | default#: 1
+--drop-index | alter table drop random index | | default#: 1
 --rename-index | alter table rename index | | default#: 1
 --alter-algorith | algorithm used in alter table. INPLACE/COPY/DEFAULT/ALL | --alter-algorith=INPLACE | default: all
 --alter-lock | lock mechanism used in alter table. | --alter-lock=NONE | default: all
