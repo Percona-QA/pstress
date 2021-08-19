@@ -173,7 +173,7 @@ cd pstress/pstress
 ```bash
 nohup ./pstress-run.sh pstress-run.conf 2>&1 &
 ```
-Grep logs through tail -f nohup.out
+Check run logs through tail -f nohup.out
 
 
 # Contributors
