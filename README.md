@@ -7,8 +7,6 @@ pstress is extended using the existing framework of pquery and uses a driver scr
 Workload ( multi-threaded program written in C++ that generates random metadata load and SQLs to execute )
 Driver script (written in BASH which integrates the workload to perform concurrency and crash recovery testing )
 
-The tool is currently in beta and is available on GitHub here: https://github.com/Percona-QA/pstress
-
 # What is new in pstress ?
 
 - pstress can be run stand-alone against a running server OR run with the driver shell script and a configuration file. In the later case, the user does not need to start the server manually. The driver shell script starts the server and executes pstress binaries with the set of options passed from the configuration file. After a certain time interval, it stops the server, saves the data directory and restarts the server by varying some server variables and then continues the load. This set of actions is called a step.
