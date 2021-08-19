@@ -45,7 +45,7 @@ $ ... build your other MySQL flavors/forks here in the same way, modifying the b
 ```
 # What options does pstress accept?
 
-First, take a quick look at ``` pstress --help, pstress --config-help, pstress --cli-help, pstress --help --verbose ``` to see available modes and options.
+First, take a quick look at ``` ./pstress-ps --help, ./pstress-ps --help --verbose ``` to see available modes and options.
 
 # Command line options example:
 
@@ -69,19 +69,26 @@ Option | Function | Example | Default
 --no-virtual | Disable virtual columns | | default: 0
 --tables | Number of initial tables | --tables=10 | default#: 10
 --indexes | maximum indexes in a table,default depends on page-size as well | --indexes=2 | default#: 7
+--drop-index | alter table drop random index | | default#: 1
+--add-index | alter table add random index | | default#: 1
+--rename-index | alter table rename index | | default#: 1
 --alter-algorith | algorithm used in alter table. INPLACE/COPY/DEFAULT/ALL | --alter-algorith=INPLACE | default: all
 --alter-lock | lock mechanism used in alter table. | --alter-lock=NONE | default: all
 --columns | maximum columns in a table, default depends on page-size, branch. for 8.0 it is 7 for 5.7 it 10 | --columns=10 | default#: 10
 --index-columns | maximum columns in an index of a table, default depends on page-size as well | --index-columns=5 | default#: 10
 --no-auto-inc | Disable auto inc columns in table, including pkey | | default: 0
 --no-desc-index | Disable index with desc on tables | | default: 0
+--no-partition-tables | do not work on partition tables | | default: 0
+--only-partition-tables | Work only on Partition tables | | default: 0
+--partition-types  | total partition supported | all for LIST, HASH, KEY, RANGE or to provide or pass for example --partition-types LIST,HASH,RANGE without space | default: all
+--add-drop-partition | randomly add drop new partition | | default#: 3
+--max-partitions | maximum number of partitions in table | choose between 1 and 8192 | default#: 25
 --no-temp-tables | do not work on temporary tables | | default: 0
 --only-temp-tables | Work only on temporary tables | | default: 0
 --ratio-normal-temp | ratio of normal to temporary tables. for e.g. if ratio to normal table to temporary is 10 . --tables 40. them only 4 temporary table will be created per session  | --ratio-normal-temp=4 | default#: 10
 --records | Number of initial records in table | --records=100 | default#: 1000
 --seconds | Number of seconds to execute workload | --seconds=100 | default#: 1000
 --alter-table-encrypt | Alter table set Encryption | --alter-table-encrypt=50 | default#: 10
---alter-table-encrypt-inplace | Alter table set Encryption inplace. Only available for ps | --alter-table-encrypt-inplace | default#: 10
 --alter-table-compress | Alter table compression | --alter-table-compress=50 | default#: 10
 --modify-column | Alter table column modify | | default#: 10
 --primary-key-probability | Probability of adding primary key in a table | --primary-key-probability=40 | default#: 50
@@ -89,9 +96,12 @@ Option | Function | Example | Default
 --sof | server options file, MySQL server options file, picks some of the mysqld options, and try to set them during the load , using set global and set session | --sof=innodb_temp_tablespace_encrypt=on=off | default:
 --set-variable | set mysqld variable during the load.(session|global) | --set-variable=autocommit=OFF | default#: 3
 --rotate-master-key | Alter instance rotate innodb master key | --rotate-master-key=50 | default#: 1
+--rotate-encryption-key | Alter instance rotate innodb system key X | | default#: 1
+--alter-redo-log | Alter instance enable/disable redo log | | default#: 0
 --rotate-redo-log-key | Rotate redo log key | --rotate-redo-log-key=50 | default#: 1
 --alt-tbs-enc | Alter tablespace set Encryption | --alt-tbs-enc=50 | default#: 1
 --alt-tbs-rename | Alter tablespace rename | --alt-tbs-rename=50 | default#: 1
+--alt-discard-tbs | ALTER TABLE table_name DISCARD TABLESPACE | --alt-discard-tbs=50 | default#: 1
 --alt-db-enc | Alter Database Encryption mode to Y/N | | default#: 1
 --no-select | do not execute any type select on tables | | default: 0
 --no-insert | do not execute insert into tables | --alt-db-enc=30 | default: 0
@@ -106,6 +116,7 @@ Option | Function | Example | Default
 --drop-column | alter table drop some random column | --drop-column=10 | default#: 1
 --add-column | alter table add some random column | --add-column=10 | default#: 1
 --rename-column | alter table rename column | --rename-column=10 | default#: 1
+--check | check table, for partition table randomly check either partition or full table | | default#: 5
 --optimize | optimize table | --optimize=10 | default#: 3
 --analyze | analyze table | --analyze=10 | default#: 1
 --truncate | truncate table | --truncate=5 | default#: 1
@@ -142,6 +153,8 @@ Option | Function | Example | Default
 --metadata-path | path of metadata file | | default: 
 --special-sql | special sql | | default#: 10
 --sql-file | file to be used  for special sql T1_INT_1, T1_INT_2 will be replaced with int columns of some table in database T1_VARCHAR_1, T1_VARCHAR_2 will be replaced with varchar columns of some table in database | | default: grammer.sql
+--exact-initial-records | When passed with --records (N) option inserts exact number of  N records in tables | | default: 0
+--prepare | create new random tables and insert initial records |  | default: 0
 --verbose | verbose | | default: 1
 
 # How to do a sample pstress run
@@ -150,8 +163,18 @@ pstress must be run from the directory where the executable binaries are located
 cd pstress/src
 
 ```bash
-./pstress-ps --tables 30 --logdir=$PWD/log --records 200 --threads 10 --seconds 100 --socket $SOCKET -k --insert-row 100 ---update-with-cond 50 --no-delete
+./pstress-ps --tables 30 --logdir=$PWD/log --records 200 --threads 10 --seconds 100 --socket $SOCKET -k --insert-row 100 ---update-with-cond 50 --no-delete --log-failed-queries --log-all-queries --no-encryption
 ```
+
+# How to do a sample pstress run through Driver Script
+
+It can be run with the driver shell script(pstress-run.sh) and a configuration file(pstress-run.conf) located in pstress directory.
+cd pstress/pstress
+```bash
+nohup ./pstress-run.sh pstress-run.conf 2>&1 &
+```
+Grep logs through tail -f nohup.out
+
 
 # Contributors
 * Alexey Bychko - C++ code, cmake extensions
