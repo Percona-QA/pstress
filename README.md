@@ -2,9 +2,10 @@
 
 pstress is a probability-based open-source database testing tool designed to run in concurrency and to test if the database can recover when something goes wrong. It generates random transactions based on options provided by the user. With the right set of options, users can test features, regression, and crash recovery. It can create concurrent load on a cluster or on a single server.
 
-pstress is extended using the existing framework of pquery-2.0 and integrated with the same driver script that executes pquery. Pstress consists of: 
-- Driver script (written in BASH as a shell script - pquery-run.sh)
-- Workload ( multi-threaded program written in C++ that generates load and performs query execution) 
+pstress is extended using the existing framework of pquery and uses a driver script to perform concurrency and crash recovery. pstress primarily has 2 modules:
+
+Workload ( multi-threaded program written in C++ that generates random metadata load and SQLs to execute )
+Driver script (written in BASH which integrates the workload to perform concurrency and crash recovery testing )
 
 The tool is currently in beta and is available on GitHub here: https://github.com/Percona-QA/pstress
 
