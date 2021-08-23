@@ -198,6 +198,7 @@ struct Table {
   void AddColumn(Thd1 *thd);
   void DropIndex(Thd1 *thd);
   void AddIndex(Thd1 *thd);
+  void alter_discard_tablespace(Thd1 *thd);
   void DeleteRandomRow(Thd1 *thd);
   void UpdateRandomROW(Thd1 *thd);
   void SelectRandomRow(Thd1 *thd);

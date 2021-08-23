@@ -51,11 +51,27 @@ static std::string get_result(std::string sql, Thd1 *thd) {
   return result;
 }
 
-/* return the db branch */
-static std::string db_branch() {
-  std::string branch = mysql_get_client_info();
-  branch = branch.substr(0, 3); // 8.0 or 5.7
-  return branch;
+/* return server version in number format
+ Example 8.0.26 -> 80026
+ Example 5.7.35 -> 50735
+*/
+static unsigned long server_version() {
+  std::string ps_base = mysql_get_client_info();
+  unsigned long major = 0, minor = 0, version = 0;
+  std::size_t major_p = ps_base.find(".");
+  if(major_p != std::string::npos) major = stoi(ps_base.substr(0, major_p));
+
+  std::size_t minor_p = ps_base.find(".", major_p + 1);
+  if (minor_p != std::string::npos)
+    minor = stoi(ps_base.substr(major_p + 1, minor_p - major_p));
+
+  std::size_t version_p = ps_base.find(".", minor_p + 1);
+  if (version_p != std::string::npos)
+    version = stoi(ps_base.substr(minor_p + 1, version_p - minor_p));
+  else
+    version = stoi(ps_base.substr(minor_p + 1));
+
+  return major * 10000 + minor * 100 + version;
 }
 
 /* return probabality of all options and disable some feature based on user
@@ -89,11 +105,16 @@ int sum_of_all_options(Thd1 *thd) {
     ;
 
   /* for 5.7 disable some features */
-  if (db_branch().compare("5.7") == 0) {
+  if (server_version() < 80000) {
     opt_int_set(ALTER_TABLESPACE_RENAME, 0);
     opt_int_set(RENAME_COLUMN, 0);
     opt_int_set(UNDO_SQL, 0);
     opt_int_set(ALTER_REDO_LOGGING, 0);
+  }
+
+  /* Disabling until Bug: https://jira.percona.com/browse/PS-7865 is fixed by upstream */
+  if (server_version() >= 80000 && server_version() <= 80026) {
+    opt_int_set(ALTER_DISCARD_TABLESPACE, 0);
   }
 
   auto enc_type = options->at(Option::ENCRYPTION_TYPE)->getString();
@@ -118,8 +139,8 @@ int sum_of_all_options(Thd1 *thd) {
     options->at(Option::ALTER_ENCRYPTION_KEY)->setInt(0);
   }
 
-  if (db_branch().compare("8.0") == 0) {
-    /* for 8.0 default columns set default colums */
+  if (server_version() >= 80000) {
+    /* for 8.0 default columns set default columns */
     if (!options->at(Option::COLUMNS)->cl)
       options->at(Option::COLUMNS)->setInt(7);
   }
@@ -1435,10 +1456,9 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   table->type = type;
 
   static auto no_encryption = opt_bool(NO_ENCRYPTION);
-  static auto branch = db_branch();
 
   /* temporary table on 8.0 can't have key block size */
-  if (!(branch.compare("8.0") == 0 && type == TEMPORARY)) {
+  if (!(server_version() >= 80000 && type == TEMPORARY)) {
     if (g_key_block_size.size() > 0)
       table->key_block_size =
           g_key_block_size[rand_int(g_key_block_size.size() - 1)];
@@ -1481,7 +1501,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   static auto temp_table_encrypt =
       get_result("select @@innodb_temp_tablespace_encrypt", thd);
 
-  if (strcmp(FORK, "Percona-Server") == 0 && db_branch().compare("5.7") == 0 &&
+  if (strcmp(FORK, "Percona-Server") == 0 && server_version() < 80000 &&
       temp_table_encrypt.compare("ON") == 0 && table->type == TEMPORARY)
     table->encryption = 'Y';
 
@@ -2509,7 +2529,7 @@ void set_mysqld_variable(Thd1 *thd) {
 void alter_tablespace_encryption(Thd1 *thd) {
   std::string tablespace;
 
-  if ((rand_int(10) < 2 && db_branch().compare("5.7") != 0) ||
+  if ((rand_int(10) < 2 && server_version() >= 80000) ||
       g_tablespace.size() == 0) {
     tablespace = "mysql";
   } else if (g_tablespace.size() > 0) {
@@ -2521,6 +2541,14 @@ void alter_tablespace_encryption(Thd1 *thd) {
     sql += (rand_int(1) == 0 ? "'Y'" : "'N'");
     execute_sql(sql, thd);
   }
+}
+
+/* alter table discard tablespace */
+void Table::alter_discard_tablespace(Thd1 *thd) {
+  std::string sql = "ALTER TABLE " + name_ + " DISCARD TABLESPACE";
+  execute_sql(sql, thd);
+/* Discarding the tablespace makes the table unusable, hence recreate the table */
+  DropCreate(thd);
 }
 
 /* alter instance enable disable redo logging */
@@ -2790,7 +2818,7 @@ void create_in_memory_data() {
 
   /* set some of tablespace encrypt */
   if (!options->at(Option::NO_ENCRYPTION)->getBool() &&
-      !(strcmp(FORK, "MySQL") == 0 && db_branch().compare("5.7") == 0)) {
+      !(strcmp(FORK, "MySQL") == 0 && server_version() < 80000)) {
     int i = 0;
     for (auto &tablespace : g_tablespace) {
       if (i++ % 2 == 0 &&
@@ -2989,12 +3017,12 @@ void create_database_tablespace(Thd1 *thd) {
     if (!options->at(Option::NO_ENCRYPTION)->getBool()) {
       if (tab.substr(tab.size() - 2, 2).compare("_e") == 0)
         sql += " ENCRYPTION='Y'";
-      else if (db_branch().compare("5.7") != 0)
+      else if (server_version() >= 80000)
         sql += " ENCRYPTION='N'";
     }
 
-    /* firest try to rename tablespace back */
-    if (db_branch().compare("5.7") != 0)
+    /* first try to rename tablespace back */
+    if (server_version() >= 80000)
       execute_sql("ALTER TABLESPACE " + tab + "_rename rename to " + tab, thd);
 
     execute_sql("DROP TABLESPACE " + tab, thd);
@@ -3003,7 +3031,7 @@ void create_database_tablespace(Thd1 *thd) {
       throw std::runtime_error("error in " + sql);
   }
 
-  if (db_branch().compare("5.7") != 0) {
+  if (server_version() >= 80000) {
     for (auto &name : g_undo_tablespace) {
       std::string sql =
           "CREATE UNDO TABLESPACE " + name + " ADD DATAFILE '" + name + ".ibu'";
@@ -3211,6 +3239,9 @@ void Thd1::run_some_query() {
       break;
     case Option::ALTER_TABLESPACE_ENCRYPTION:
       alter_tablespace_encryption(this);
+      break;
+    case Option::ALTER_DISCARD_TABLESPACE:
+      table->alter_discard_tablespace(this);
       break;
     case Option::ALTER_TABLESPACE_RENAME:
       alter_tablespace_rename(this);
