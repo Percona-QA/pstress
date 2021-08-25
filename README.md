@@ -59,7 +59,7 @@ Option | Function | Example | Default
 --alter-table-encrypt | Alter table set Encryption | --alter-table-encrypt=50 | default#: 10
 --alt-tbs-enc | Alter tablespace set Encryption | --alt-tbs-enc=50 | default#: 1
 --alt-tbs-rename | Alter tablespace rename | --alt-tbs-rename=50 | default#: 1
---analyze: analyze table, for partition table randomly analyze either partition or full table | --analyze=10 | default#: 1
+--analyze |  Analyze table, for partition table randomly analyze either partition or full table | --analyze=10 | default#: 1
 --check | check table, for partition table randomly check either partition or full table | | default#: 5
 --columns | maximum columns in a table, default depends on page-size, branch. for 8.0 it is 7 for 5.7 it 10 | --columns=10 | default#: 10
 --commit-rollback-ratio |  ratio of commit to rollback. e.g. if 5, then 5 transactions will be committed and 1 will be rollback. if 0 then all transactions will be rollback | | default#: 5
