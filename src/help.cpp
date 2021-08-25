@@ -367,6 +367,14 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /*Discard tablespace */
+  opt = newOption(Option::INT, Option::ALTER_DISCARD_TABLESPACE,
+		  "alt-discard-tbs");
+  opt->help = "Alter table to discard file-per-tablespace";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /*Database Encryption */
   opt = newOption(Option::INT, Option::ALTER_DATABASE_ENCRYPTION, "alt-db-enc");
   opt->help = "Alter Database Encryption mode to Y/N";
