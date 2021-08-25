@@ -52,13 +52,13 @@ Option | Function | Example | Default
 --address | IP address to connect to | | default: 
 --alt-db-enc | Alter Database Encryption mode to Y/N | | default#: 1
 --alt-discard-tbs | ALTER TABLE table_name DISCARD TABLESPACE | --alt-discard-tbs=50 | default#: 1
---alt-tbs-enc | Alter tablespace set Encryption | --alt-tbs-enc=50 | default#: 1
---alt-tbs-rename | Alter tablespace rename | --alt-tbs-rename=50 | default#: 1
 --alter-algorith | algorithm used in alter table. INPLACE/COPY/DEFAULT/ALL | --alter-algorith=INPLACE | default: all
 --alter-lock | lock mechanism used in alter table. | --alter-lock=NONE | default: all
 --alter-redo-log | Alter instance enable/disable redo log | | default#: 0
 --alter-table-compress | Alter table compression | --alter-table-compress=50 | default#: 10
 --alter-table-encrypt | Alter table set Encryption | --alter-table-encrypt=50 | default#: 10
+--alt-tbs-enc | Alter tablespace set Encryption | --alt-tbs-enc=50 | default#: 1
+--alt-tbs-rename | Alter tablespace rename | --alt-tbs-rename=50 | default#: 1
 --analyze: analyze table, for partition table randomly analyze either partition or full table | --analyze=10 | default#: 1
 --check | check table, for partition table randomly check either partition or full table | | default#: 5
 --columns | maximum columns in a table, default depends on page-size, branch. for 8.0 it is 7 for 5.7 it 10 | --columns=10 | default#: 10
@@ -80,12 +80,12 @@ Option | Function | Example | Default
 --jlddl | load DDL and exit | --jlddl | default: 0
 --log-all-queries | Log all queries (succeeded and failed) | | default: 1
 --log-client-output | Log query output to separate file | | default: 0
+--logdir | Log directory | | default: /tmp
 --log-failed-queries | Log all failed queries | | default: 0
 --log-query-duration | Log query duration in milliseconds | | default: 0
 --log-query-numbers | write query # to logs | | default: 0
 --log-query-statistics | extended output of query result | | default: 0
 --log-succeeded-queries | Log succeeded queries | | default: 0
---logdir | Log directory | | default: /tmp
 --max-partitions | maximum number of partitions in table | choose between 1 and 8192 | default#: 25
 --metadata-path | path of metadata file | | default: 
 --modify-column | Alter table column modify | | default#: 10
