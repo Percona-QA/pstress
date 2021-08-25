@@ -46,7 +46,7 @@ First, take a quick look at ``` ./pstress-ps --help, ./pstress-ps --help --verbo
 
 Option | Function | Example | Default
 --- | --- | --- | ---
---add-column | alter table add some random column | --add-column=10 | default#:1 
+--add-column | alter table add some random column | --add-column=10 | default#: 1 
 --add-drop-partition | randomly add drop new partition | | default#: 3
 --add-index | alter table add random index | | default#: 1
 --address | IP address to connect to | | default: 
