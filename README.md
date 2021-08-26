@@ -21,9 +21,9 @@ Driver script (written in BASH which integrates the workload to perform concurre
 1. Install cmake >= 2.6 and C++ compiler >= 4.7 (gcc-c++ for RedHat-based, g++ for Debian-based), the development files for your MySQL version/fork, and potentially OpenSSL and AIO development files and/or other deps if needed.
 2. Change dir to pstress
 3. Run cmake with the required options, which are:
-   -DPERCONASERVER=ON - build pstress with Percona Server
-   -DMYSQL=ON - build pstress with MySQL Server
-   -DPERCONACLUSTER=ON - build pstress with Percona XtraDB Cluster
+   *  *-DPERCONASERVER*=**ON** - build pstress with Percona Server
+   *  *-DMYSQL*=**ON** - build pstress with MySQL Server
+   *  *-DPERCONACLUSTER*=**ON** - build pstress with Percona XtraDB Cluster
 4. If you have MySQL | Percona Server | Percona XtraDB Cluster installed to some custom location you may consider setting the additional flags to cmake: *MYSQL_INCLUDE_DIR* and *MYSQL_LIBRARY*. OR, you can set *BASEDIR* variable if you have binary tarball extracted to some custom place for fully automatic library detection (recommended).
 5. The resulting binary will automatically receive an appropriate flavor suffix:
   * *pstress-ms* for MySQL
@@ -46,7 +46,7 @@ First, take a quick look at ``` ./pstress-ps --help, ./pstress-ps --help --verbo
 
 Option | Function | Example | Default
 --- | --- | --- | ---
---add-column | alter table add some random column | --add-column=10 | default#: 1
+--add-column | alter table add some random column | --add-column=10 | default#: 1 
 --add-drop-partition | randomly add drop new partition | | default#: 3
 --add-index | alter table add random index | | default#: 1
 --address | IP address to connect to | | default: 
@@ -59,7 +59,7 @@ Option | Function | Example | Default
 --alter-table-encrypt | Alter table set Encryption | --alter-table-encrypt=50 | default#: 10
 --alt-tbs-enc | Alter tablespace set Encryption | --alt-tbs-enc=50 | default#: 1
 --alt-tbs-rename | Alter tablespace rename | --alt-tbs-rename=50 | default#: 1
---analyze: analyze table, for partition table randomly analyze either partition or full table | --analyze=10 | default#: 1
+--analyze | Analyze table, for partition table randomly analyze either partition or full table | --analyze=10 | default#: 1
 --check | check table, for partition table randomly check either partition or full table | | default#: 5
 --columns | maximum columns in a table, default depends on page-size, branch. for 8.0 it is 7 for 5.7 it 10 | --columns=10 | default#: 10
 --commit-rollback-ratio |  ratio of commit to rollback. e.g. if 5, then 5 transactions will be committed and 1 will be rollback. if 0 then all transactions will be rollback | | default#: 5
