@@ -167,6 +167,14 @@ while read line; do
     echo "$OPTION=30" >> $OUTPUT_FILE
     echo "$OPTION=63" >> $OUTPUT_FILE
     echo "$OPTION=64" >> $OUTPUT_FILE
+  elif [[ "$OPTION" == "--loose-rocksdb_compaction_sequential_deletes" ]]; then
+    echoit " > Adding possible values 0, 1, 100, 5000, 1999999, 2000000 for option '${OPTION}' to the final list..."
+    echo "$OPTION=0" >> $OUTPUT_FILE
+    echo "$OPTION=1" >> $OUTPUT_FILE
+    echo "$OPTION=100" >> $OUTPUT_FILE
+    echo "$OPTION=5000" >> $OUTPUT_FILE
+    echo "$OPTION=1999999" >> $OUTPUT_FILE
+    echo "$OPTION=2000000" >> $OUTPUT_FILE
   elif [ "$VALUE" == "ON" -o "$VALUE" == "OFF" ]; then
     echoit " > Adding possible values ON, OFF for option '${OPTION}' to the final list..."
     echo "$OPTION=ON" >> $OUTPUT_FILE
@@ -184,8 +192,8 @@ while read line; do
     echo "$OPTION=1023" >> $OUTPUT_FILE
     echo "$OPTION=2047" >> $OUTPUT_FILE
     echo "$OPTION=2147483647" >> $OUTPUT_FILE
-    echo "$OPTION=18446744073709551615" >> $OUTPUT_FILE
-    echo "$OPTION=1125899906842624" >> $OUTPUT_FILE
+    echo "$OPTION=1844674407" >> $OUTPUT_FILE
+    echo "$OPTION=1125899906" >> $OUTPUT_FILE
   elif [ "${VALUE}" == "" ]; then
     echoit "  > Assert: Option '${OPTION}' is blank by default and not programmed into the script yet, please cover this in the script..."
     exit 1

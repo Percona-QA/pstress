@@ -752,6 +752,9 @@ EOF
       fi
     fi
     MYEXTRA_SAVE_IT=${MYEXTRA}
+    if [ "${ADD_RANDOM_OPTIONS}" == "" ]; then  # Backwards compatibility for .conf files without this option
+       ADD_RANDOM_OPTIONS=0
+    fi
     if [ ${ADD_RANDOM_OPTIONS} -eq 1 ]; then  # Add random mysqld --options to MYEXTRA
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
