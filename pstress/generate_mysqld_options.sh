@@ -429,9 +429,8 @@ while read line; do
     echo "${OPTION}=compact" >> ${OUTPUT_FILE}
     echo "${OPTION}=redundant" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--internal-tmp-disk-storage-engine" ]; then
-    echoit "  > Adding possible values INNODB, MYISAM for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values INNODB for option '${OPTION}' to the final list..."
     echo "${OPTION}=INNODB" >> ${OUTPUT_FILE}
-    echo "${OPTION}=MYISAM" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--log-output" ]; then
     echoit "  > Adding possible values FILE, TABLE, NONE for option '${OPTION}' to the final list..."
     echo "${OPTION}=FILE" >> ${OUTPUT_FILE}
