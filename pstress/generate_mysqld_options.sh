@@ -414,24 +414,11 @@ while read line; do
     echo "${OPTION}=InnoDB" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--" ]; then
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
   elif [ "${VALUE}" == "TRUE" -o "${VALUE}" == "FALSE" -o "${VALUE}" == "ON" -o "${VALUE}" == "OFF" -o "${VALUE}" == "YES" -o "${VALUE}" == "NO" ]; then
     echoit "  > Adding possible values TRUE/ON/YES/1 and FALSE/OFF/NO/0 (as a universal 1 and 0) for option '${OPTION}' to the final list..."
     echo "${OPTION}=1" >> ${OUTPUT_FILE}
     echo "${OPTION}=0" >> ${OUTPUT_FILE}
   elif [[ "$(echo ${VALUE} | tr -d ' ')" =~ ^-?[0-9]+$ ]]; then
-  #elif [[ "$(echo ${VALUE} | tr -d ' ' | tr -d '-')" =~ ^[0-9]+$ ]]; then
-  #elif [[ ${VALUE} =~ ^-?[0-9]+$ ]]; then
-  #elif [ "$(echo ${VALUE} | sed 's|[0-9]||g')" == "" -a "$(echo ${VALUE} | sed 's|[^0-9]||g')" != "" ]; then  # Fully numerical
     if [ "${VALUE}" != "0" ]; then 
       echoit "  > Adding int values (${VALUE}, -1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option '${OPTION}' to the final list..."
       echo "${OPTION}=${VALUE}" >> ${OUTPUT_FILE}
