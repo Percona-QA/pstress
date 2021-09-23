@@ -37,7 +37,7 @@ echoit(){
 
 # mysqld options excluded from list
 # RV/HM 18.07.2017 Temporarily added to EXCLUDED_LIST: --binlog-group-commit-sync-delay due to hang issues seen in 5.7 with startup like --no-defaults --plugin-load=tokudb=ha_tokudb.so --tokudb-check-jemalloc=0 --init-file=/home/hrvoje/percona-qa/plugins_57.sql --binlog-group-commit-sync-delay=2047
-EXCLUDED_LIST=( --admin-address --admin-ssl-ca --admin-ssl-capath --admin-ssl-cert --admin-ssl-cipher --admin-ssl-crl --admin-ssl-crlpath --admin-ssl-key --admin-tls-ciphersuites --log-slow-verbosity --basedir --datadir --plugin-dir --lc-messages-dir --tmpdir --slave-load-tmpdir --bind-address --binlog-checksum --character-sets-dir --init-file --init-replica --init-slave --innodb-doublewrite-dir --innodb-redo-log-archive-dirs --persist-only-admin-x509-subject --replica-skip-errors --replica-type-conversions --tls-ciphersuites --utility-user-dynamic-privileges --general-log-file --log-error --innodb-data-home-dir --event-scheduler --chroot --init-slave --init-connect --debug --default-time-zone --des-key-file --ft-stopword-file --innodb-page-size --innodb-undo-tablespaces --innodb-data-file-path --innodb-ft-aux-table --innodb-ft-server-stopword-table --innodb-ft-user-stopword-table --innodb-log-arch-dir --innodb-log-group-home-dir --log-bin-index --relay-log-index --report-host --report-password --report-user --secure-file-priv --slave-skip-errors --ssl-ca --ssl-capath --ssl-cert --ssl-cipher --ssl-crl --ssl-crlpath --ssl-key --utility-user --utility-user-password --socket --socket-umask --innodb-trx-rseg-n-slots-debug --innodb-fil-make-page-dirty-debug --initialize --initialize-insecure --port --binlog-group-commit-sync-delay --innodb-directories --keyring-migration-destination --keyring-migration-host --keyring-migration-password --keyring-migration-port --keyring-migration-socket --keyring-migration-source --keyring-migration-user --mysqlx-socket --mysqlx-ssl-ca --mysqlx-bind-address --mysqlx-ssl-capath --mysqlx-ssl-cert --mysqlx-ssl-cipher --mysqlx-ssl-crl --mysqlx-ssl-crlpath --mysqlx-ssl-key --innodb-temp-tablespaces-dir --coredumper --slow-query-log-always-write-time --log-error-suppression-list)
+EXCLUDED_LIST=( --admin-port --slow-query-log-timestamp-precision --slow-query-log-use-global-control  --log-slow-filter  --disabled-storage-engines --innodb-temp-data-file-path --innodb-undo-directory --admin-address --admin-ssl-ca --admin-ssl-capath --admin-ssl-cert --admin-ssl-cipher --admin-ssl-crl --admin-ssl-crlpath --admin-ssl-key --admin-tls-ciphersuites --log-slow-verbosity --basedir --datadir --plugin-dir --lc-messages-dir --tmpdir --slave-load-tmpdir --bind-address --binlog-checksum --character-sets-dir --init-file --init-replica --init-slave --innodb-doublewrite-dir --innodb-redo-log-archive-dirs --persist-only-admin-x509-subject --replica-skip-errors --replica-type-conversions --tls-ciphersuites --utility-user-dynamic-privileges --general-log-file --log-error --innodb-data-home-dir --event-scheduler --chroot --init-slave --init-connect --debug --default-time-zone --des-key-file --ft-stopword-file --innodb-page-size --innodb-undo-tablespaces --innodb-data-file-path --innodb-ft-aux-table --innodb-ft-server-stopword-table --innodb-ft-user-stopword-table --innodb-log-arch-dir --innodb-log-group-home-dir --log-bin-index --relay-log-index --report-host --report-password --report-user --secure-file-priv --slave-skip-errors --ssl-ca --ssl-capath --ssl-cert --ssl-cipher --ssl-crl --ssl-crlpath --ssl-key --utility-user --utility-user-password --socket --socket-umask --innodb-trx-rseg-n-slots-debug --innodb-fil-make-page-dirty-debug --initialize --initialize-insecure --port --binlog-group-commit-sync-delay --innodb-directories --keyring-migration-destination --keyring-migration-host --keyring-migration-password --keyring-migration-port --keyring-migration-socket --keyring-migration-source --keyring-migration-user --mysqlx-socket --mysqlx-ssl-ca --mysqlx-bind-address --mysqlx-ssl-capath --mysqlx-ssl-cert --mysqlx-ssl-cipher --mysqlx-ssl-crl --mysqlx-ssl-crlpath --mysqlx-ssl-key --innodb-temp-tablespaces-dir --coredumper --slow-query-log-always-write-time --log-error-suppression-list)
 # Create a file (${OUTPUT_FILE}) with all options/values intelligently handled and included
 rm -Rf ${OUTPUT_FILE}
 touch ${OUTPUT_FILE}
@@ -153,25 +153,6 @@ while read line; do
   elif [ "${OPTION}" == "--csv-mode" ]; then
     echoit "  > Adding possible values IETF_QUOTES for option '${OPTION}' to the final list..."
     echo "${OPTION}=IETF_QUOTES" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--log-slow-filter" ]; then
-    echoit "  > Adding possible values qc_miss, full_scan for option '${OPTION}' to the final list..."
-    echo "${OPTION}=qc_miss" >> ${OUTPUT_FILE}
-    echo "${OPTION}=full_scan" >> ${OUTPUT_FILE}
-    echo "${OPTION}=full_join" >> ${OUTPUT_FILE}
-    echo "${OPTION}=tmp_table" >> ${OUTPUT_FILE}
-    echo "${OPTION}=tmp_table_on_disk" >> ${OUTPUT_FILE}
-    echo "${OPTION}=filesort" >> ${OUTPUT_FILE}
-    echo "${OPTION}=filesort_on_disk" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--log-slow-verbosity" ]; then
-    echoit "  > Adding possible values microtime, query_plan for option '${OPTION}' to the final list..."
-    echo "${OPTION}=microtime" >> ${OUTPUT_FILE}
-    echo "${OPTION}=query_plan" >> ${OUTPUT_FILE}
-    echo "${OPTION}=innodb" >> ${OUTPUT_FILE}
-    echo "${OPTION}=minimal" >> ${OUTPUT_FILE}
-    echo "${OPTION}=standard" >> ${OUTPUT_FILE}
-    echo "${OPTION}=full" >> ${OUTPUT_FILE}
-    echo "${OPTION}=profiling" >> ${OUTPUT_FILE}
-    echo "${OPTION}=profiling_use_getrusageg" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-log-files-in-group" ]; then
     echoit "  > Adding possible values 0,1,2,5,10 for option '${OPTION}' to the final list..."
     echo "${OPTION}=0" >> ${OUTPUT_FILE}
@@ -263,7 +244,7 @@ while read line; do
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
     echo "${OPTION}" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--log-slow-rate-type" ]; then
-    echoit "  > Adding possible values session, query for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values session, query for option '${OPTION}' to the final list..."  
     echo "${OPTION}=session" >> ${OUTPUT_FILE}
     echo "${OPTION}=query" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--performance-schema-accounts-size" ]; then
@@ -313,19 +294,6 @@ while read line; do
   elif [ "${OPTION}" == "--relay-log" ]; then
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
     echo "${OPTION}" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--slow-query-log-timestamp-precision" ]; then
-    echoit "  > Adding possible values second, microsecond for option '${OPTION}' to the final list..."
-    echo "${OPTION}=second" >> ${OUTPUT_FILE}
-    echo "${OPTION}=microsecond" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--slow-query-log-use-global-control" ]; then
-    echoit "  > Adding possible values none, log_slow_filter, log_slow_rate_limit for option '${OPTION}' to the final list..."
-    echo "${OPTION}=none" >> ${OUTPUT_FILE}
-    echo "${OPTION}=log_slow_filter" >> ${OUTPUT_FILE}
-    echo "${OPTION}=log_slow_rate_limit" >> ${OUTPUT_FILE}
-    echo "${OPTION}=log_slow_verbosity" >> ${OUTPUT_FILE}
-    echo "${OPTION}=long_query_time" >> ${OUTPUT_FILE}
-    echo "${OPTION}=min_examined_row_limit" >> ${OUTPUT_FILE}
-    echo "${OPTION}=all" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--sql-mode" ]; then
     echoit "  > Adding possible values ALLOW_INVALID_DATES, ANSI_QUOTES for option '${OPTION}' to the final list..."
     echo "${OPTION}=ALLOW_INVALID_DATES" >> ${OUTPUT_FILE}
@@ -372,12 +340,6 @@ while read line; do
   elif [ "${OPTION}" == "--utility-user-privileges" ]; then
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
   elif [ "${OPTION}" == "--proxy-protocol-networks" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--disabled-storage-engines" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--innodb-temp-data-file-path" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--innodb-undo-directory" ]; then
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
   elif [ "${OPTION}" == "--log-syslog-tag" ]; then
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
