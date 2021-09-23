@@ -4,7 +4,7 @@
 # This script quickly and intelligently generates all available mysqld --option combinations (i.e. including values)
 
 # User variables
-OUTPUT_FILE=/tmp/mysqld_options.txt
+OUTPUT_FILE=/tmp/mysqld_options_ms_80.txt
 
 # Internal variables, do not change
 TEMP_FILE=/tmp/mysqld_options.tmp
@@ -411,10 +411,6 @@ while read line; do
     echo "${OPTION}=aes-256-ecb" >> ${OUTPUT_FILE}
     echo "${OPTION}=aes-256-cbc" >> ${OUTPUT_FILE}
     echo "${OPTION}=aes-256-cfb128" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--tokudb_cache_size" ]; then
-    echoit "  > Adding possible values 52428800, 1125899906842624 for option '${OPTION}' to the final list..."
-    echo "${OPTION}=52428800" >> ${OUTPUT_FILE}
-    echo "${OPTION}==1125899906842624" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--default-authentication-plugin" ]; then
     echoit "  > Adding possible values mysql_native_password, sha256_password for option '${OPTION}' to the final list..."
     echo "${OPTION}=mysql_native_password" >> ${OUTPUT_FILE}
