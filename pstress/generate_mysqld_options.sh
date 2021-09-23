@@ -396,18 +396,6 @@ while read line; do
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
   elif [ "${OPTION}" == "--innodb-tmpdir" ]; then                                          ## fb-mysql
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--rocksdb-compact-cf" ]; then                                     ## fb-mysql
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--rocksdb-default-cf-options" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--rocksdb-override-cf-options" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--rocksdb-snapshot-dir" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--rocksdb-strict-collation-exceptions" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
-  elif [ "${OPTION}" == "--rocksdb-wal-dir" ]; then
-    echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
   elif [ "${OPTION}" == "--optimizer-trace" ]; then
     echoit "  > Adding possible values ... for option '${OPTION}' to the final list..."
   elif [ "${OPTION}" == "--performance-schema-instrument" ]; then
