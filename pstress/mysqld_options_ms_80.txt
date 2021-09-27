@@ -130,6 +130,8 @@
 --binlog-row-image=full
 --binlog-row-image=minimal
 --binlog-row-image=noblob
+--binlog-row-metadata=full
+--binlog-row-metadata=minimal
 --binlog-row-value-options=''
 --binlog-row-value-options=PARTIAL_JSON
 --binlog-rows-query-log-events=1
@@ -181,6 +183,9 @@
 --binlog-transaction-dependency-history-size=2047
 --binlog-transaction-dependency-history-size=-1125899906842624
 --binlog-transaction-dependency-history-size=1125899906842624
+--binlog-transaction-dependency-tracking=COMMIT_ORDER
+--binlog-transaction-dependency-tracking=WRITESET
+--binlog-transaction-dependency-tracking=WRITESET_SESSION
 --blackhole=1
 --blackhole=0
 --block-encryption-mode=aes-128-ecb
@@ -216,6 +221,8 @@
 --caching-sha2-password-digest-rounds=2047
 --caching-sha2-password-digest-rounds=-1125899906842624
 --caching-sha2-password-digest-rounds=1125899906842624
+--caching-sha2-password-private-key-path=private_key.pem
+--caching-sha2-password-public-key-path=public_key.pem
 --character-set-client-handshake=1
 --character-set-client-handshake=0
 --character-set-filesystem=binary
@@ -300,6 +307,7 @@
 --character-set-server=eucjpms
 --check-proxy-users=1
 --check-proxy-users=0
+--collation-server=utf8mb4_0900_ai_ci
 --completion-type=0
 --completion-type=1
 --completion-type=2
@@ -359,6 +367,7 @@
 --default-storage-engine=InnoDB
 --default-table-encryption=1
 --default-table-encryption=0
+--default-tmp-storage-engine=InnoDB
 --default-week-format=0
 --default-week-format=1
 --default-week-format=2
@@ -476,6 +485,7 @@
 --flush-time=2047
 --flush-time=-1125899906842624
 --flush-time=1125899906842624
+--ft-boolean-syntax=+ -><()~*:&|
 --ft-max-word-len=84
 --ft-max-word-len=0
 --ft-max-word-len=1
@@ -537,6 +547,11 @@
 --group-concat-max-len=2047
 --group-concat-max-len=-1125899906842624
 --group-concat-max-len=1125899906842624
+--group-replication-consistency=BEFORE
+--group-replication-consistency=EVENTUAL
+--group-replication-consistency=BEFORE_ON_PRIMARY_FAILOVER
+--group-replication-consistency=AFTER
+--group-replication-consistency=BEFORE_AND_AFTER
 --gtid-executed-compression-period=0
 --gtid-executed-compression-period=1
 --gtid-executed-compression-period=2
@@ -732,6 +747,7 @@
 --innodb-buffer-pool-dump-pct=-1125899906842624
 --innodb-buffer-pool-dump-pct=1125899906842624
 --innodb-buffer-pool-evict=uncompressed
+--innodb-buffer-pool-filename=ib_buffer_pool
 --innodb-buffer-pool-in-core-file=1
 --innodb-buffer-pool-in-core-file=0
 --innodb-buffer-pool-instances=0
@@ -829,6 +845,10 @@
 --innodb-commit-concurrency=2047
 --innodb-commit-concurrency=-1125899906842624
 --innodb-commit-concurrency=1125899906842624
+--innodb-compress-debug=none
+--innodb-compress-debug=zlib
+--innodb-compress-debug=lz4
+--innodb-compress-debug=lz4hc
 --innodb-compressed-columns-threshold=96
 --innodb-compressed-columns-threshold=0
 --innodb-compressed-columns-threshold=1
@@ -935,16 +955,10 @@
 --innodb-doublewrite-batch-size=2047
 --innodb-doublewrite-batch-size=-1125899906842624
 --innodb-doublewrite-batch-size=1125899906842624
---innodb-doublewrite-files=0
---innodb-doublewrite-files=1
 --innodb-doublewrite-files=2
---innodb-doublewrite-files=12
---innodb-doublewrite-files=24
---innodb-doublewrite-files=254
---innodb-doublewrite-files=1023
---innodb-doublewrite-files=2047
---innodb-doublewrite-files=-1125899906842624
---innodb-doublewrite-files=1125899906842624
+--innodb-doublewrite-files=16
+--innodb-doublewrite-files=126
+--innodb-doublewrite-files=256
 --innodb-doublewrite-pages=0
 --innodb-doublewrite-pages=1
 --innodb-doublewrite-pages=2
@@ -1695,6 +1709,11 @@
 --innodb-scrub-log-speed=2047
 --innodb-scrub-log-speed=-1125899906842624
 --innodb-scrub-log-speed=1125899906842624
+--innodb-segment-reserve-factor=0.03
+--innodb-segment-reserve-factor=12.5
+--innodb-segment-reserve-factor=20
+--innodb-segment-reserve-factor=30
+--innodb-segment-reserve-factor=40
 --innodb-semaphore-wait-timeout-debug=600
 --innodb-semaphore-wait-timeout-debug=0
 --innodb-semaphore-wait-timeout-debug=1
@@ -1842,6 +1861,8 @@
 --innodb-thread-sleep-delay=2047
 --innodb-thread-sleep-delay=-1125899906842624
 --innodb-thread-sleep-delay=1125899906842624
+--innodb-tmpdir=null
+--innodb-tmpdir=tmp
 --innodb-track-changed-pages=1
 --innodb-track-changed-pages=0
 --innodb-track-redo-log-now=1
@@ -1953,6 +1974,8 @@
 --kill-idle-transaction=1125899906842624
 --large-pages=1
 --large-pages=0
+--lc-messages=en_US
+--lc-time-names=en_US
 --local-infile=1
 --local-infile=0
 --lock-wait-timeout=31536000
@@ -1966,11 +1989,12 @@
 --lock-wait-timeout=2047
 --lock-wait-timeout=-1125899906842624
 --lock-wait-timeout=1125899906842624
---log-bin
+--log-bin=binlog
 --log-bin-trust-function-creators=1
 --log-bin-trust-function-creators=0
 --log-bin-use-v1-row-events=1
 --log-bin-use-v1-row-events=0
+--log-error-services=log_filter_internal; log_sink_internal
 --log-error-verbosity=1
 --log-error-verbosity=0
 --log-error-verbosity=1
@@ -2070,6 +2094,7 @@
 --mandatory-roles='role1@%,role2,role3,role4@localhost'
 --mandatory-roles='@%'
 --mandatory-roles='user1@localhost,testuser@%'
+--master-info-file=master.info
 --master-info-repository=FILE
 --master-info-repository=TABLE
 --master-retry-count=86400
@@ -2410,6 +2435,9 @@
 --mysqlx=0
 --mysqlx-cache-cleaner=1
 --mysqlx-cache-cleaner=0
+--mysqlx-compression-algorithms=DEFLATE_STREAM
+--mysqlx-compression-algorithms=LZ4_MESSAGE
+--mysqlx-compression-algorithms=ZSTD_STREAM
 --mysqlx-connect-timeout=30
 --mysqlx-connect-timeout=0
 --mysqlx-connect-timeout=1
@@ -2720,6 +2748,10 @@
 --optimizer-search-depth=2047
 --optimizer-search-depth=-1125899906842624
 --optimizer-search-depth=1125899906842624
+--optimizer-switch=index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off
+--optimizer-trace=enabled
+--optimizer-trace=one_line
+--optimizer-trace-features=greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on
 --optimizer-trace-limit=1
 --optimizer-trace-limit=0
 --optimizer-trace-limit=1
@@ -2948,6 +2980,9 @@
 --performance-schema-hosts-size=1023
 --performance-schema-hosts-size=2047
 --performance-schema-hosts-size=1048576
+--performance-schema-instrument='wait/synch/cond/%=COUNTED'
+--performance-schema-instrument='wait/synch/cond/%=0'
+--performance-schema-instrument='wait/synch/cond/%=1'
 --performance-schema-max-cond-classes=100
 --performance-schema-max-cond-classes=0
 --performance-schema-max-cond-classes=1
@@ -3323,6 +3358,9 @@
 --profiling-history-size=2047
 --profiling-history-size=-1125899906842624
 --profiling-history-size=1125899906842624
+--protocol-compression-algorithms=zlib
+--protocol-compression-algorithms=zstd
+--protocol-compression-algorithms=uncompressed
 --query-alloc-block-size=8192
 --query-alloc-block-size=0
 --query-alloc-block-size=1
@@ -3413,7 +3451,8 @@
 --regexp-time-limit=2047
 --regexp-time-limit=-1125899906842624
 --regexp-time-limit=1125899906842624
---relay-log
+--relay-log=relay-bin 
+--relay-log-info-file=relay-log.info
 --relay-log-info-repository=FILE
 --relay-log-info-repository=TABLE
 --relay-log-purge=1
@@ -3456,6 +3495,9 @@
 --replica-checkpoint-period=1125899906842624
 --replica-compressed-protocol=1
 --replica-compressed-protocol=0
+--replica-exec-mode=STRICT
+--replica-exec-mode=IDEMPOTENT
+--replica-load-tmpdir=tmp
 --replica-max-allowed-packet=1073741824
 --replica-max-allowed-packet=0
 --replica-max-allowed-packet=1
@@ -3478,6 +3520,8 @@
 --replica-net-timeout=2047
 --replica-net-timeout=-1125899906842624
 --replica-net-timeout=1125899906842624
+--replica-parallel-type=DATABASE
+--replica-parallel-type=LOGICAL_CLOCK
 --replica-parallel-workers=0
 --replica-parallel-workers=1
 --replica-parallel-workers=2
@@ -3640,12 +3684,19 @@
 --session-track-schema=0
 --session-track-state-change=1
 --session-track-state-change=0
+--session-track-system-variables=time_zone
+--session-track-system-variables=autocommit
+--session-track-system-variables=character_set_client
+--session-track-system-variables=character_set_results
+--session-track-system-variables=character_set_connection
 --session-track-transaction-info=1
 --session-track-transaction-info=0
 --sha256-password-auto-generate-rsa-keys=1
 --sha256-password-auto-generate-rsa-keys=0
+--sha256-password-private-key-path=private_key.pem
 --sha256-password-proxy-users=1
 --sha256-password-proxy-users=0
+--sha256-password-public-key-path=public_key.pem
 --show-create-table-verbosity=1
 --show-create-table-verbosity=0
 --show-old-temporals=1
@@ -3692,6 +3743,8 @@
 --slave-checkpoint-period=1125899906842624
 --slave-compressed-protocol=1
 --slave-compressed-protocol=0
+--slave-exec-mode=STRICT
+--slave-exec-mode=IDEMPOTENT
 --slave-max-allowed-packet=1073741824
 --slave-max-allowed-packet=0
 --slave-max-allowed-packet=1
@@ -3714,6 +3767,8 @@
 --slave-net-timeout=2047
 --slave-net-timeout=-1125899906842624
 --slave-net-timeout=1125899906842624
+--slave-parallel-type=DATABASE
+--slave-parallel-type=LOGICAL_CLOCK
 --slave-parallel-workers=0
 --slave-parallel-workers=1
 --slave-parallel-workers=2
@@ -3737,6 +3792,10 @@
 --slave-pending-jobs-size-max=1125899906842624
 --slave-preserve-commit-order=1
 --slave-preserve-commit-order=0
+--slave-rows-search-algorithms=TABLE_SCAN,INDEX_SCAN
+--slave-rows-search-algorithms=INDEX_SCAN,HASH_SCAN
+--slave-rows-search-algorithms=TABLE_SCAN,HASH_SCAN
+--slave-rows-search-algorithms=TABLE_SCAN,INDEX_SCAN,HASH_SCAN
 --slave-sql-verify-checksum=1
 --slave-sql-verify-checksum=0
 --slave-transaction-retries=10
@@ -4075,6 +4134,10 @@
 --thread-stack=1125899906842624
 --thread-statistics=1
 --thread-statistics=0
+--tls-version=TLSv1
+--tls-version=TLSv1.1
+--tls-version=TLSv1.2
+--tls-version=TLSv1.3
 --tmp-table-size=16777216
 --tmp-table-size=0
 --tmp-table-size=1
@@ -4116,6 +4179,10 @@
 --transaction-read-only=0
 --updatable-views-with-limit=1
 --updatable-views-with-limit=0
+--upgrade=NONE
+--upgrade=MINIMAL
+--upgrade=AUTO
+--upgrade=FORCE
 --userstat=1
 --userstat=0
 --validate-config=1
