@@ -221,7 +221,6 @@
 --caching-sha2-password-digest-rounds=2047
 --caching-sha2-password-digest-rounds=-1125899906842624
 --caching-sha2-password-digest-rounds=1125899906842624
---caching-sha2-password-private-key-path=private_key.pem
 --caching-sha2-password-public-key-path=public_key.pem
 --character-set-client-handshake=1
 --character-set-client-handshake=0
@@ -354,6 +353,7 @@
 --debug-sync-timeout=1125899906842624
 --default-authentication-plugin=mysql_native_password
 --default-authentication-plugin=sha256_password
+--default-authentication-plugin=caching_sha2_password
 --default-password-lifetime=0
 --default-password-lifetime=1
 --default-password-lifetime=2
@@ -1869,8 +1869,6 @@
 --innodb-thread-sleep-delay=2047
 --innodb-thread-sleep-delay=-1125899906842624
 --innodb-thread-sleep-delay=1125899906842624
---innodb-tmpdir=null
---innodb-tmpdir=tmp
 --innodb-track-changed-pages=1
 --innodb-track-changed-pages=0
 --innodb-track-redo-log-now=1
@@ -2071,8 +2069,6 @@
 --log-throttle-queries-not-using-indexes=2047
 --log-throttle-queries-not-using-indexes=-1125899906842624
 --log-throttle-queries-not-using-indexes=1125899906842624
---log-timestamps=UTC
---log-timestamps=SYSTEM
 --long-query-time=10
 --long-query-time=0
 --long-query-time=1
@@ -2684,7 +2680,7 @@
 --optimizer-search-depth=2047
 --optimizer-search-depth=-1125899906842624
 --optimizer-search-depth=1125899906842624
---optimizer-switch=index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off
+--optimizer-switch=index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_p    ushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=    on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on    ,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,pre    fer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off
 --optimizer-trace=enabled
 --optimizer-trace=one_line
 --optimizer-trace-features=greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on
@@ -3496,6 +3492,10 @@
 --replica-transaction-retries=1125899906842624
 --replicate-same-server-id=1
 --replicate-same-server-id=0
+--replication-optimize-for-static-plugin-config=1
+--replication-optimize-for-static-plugin-config=0
+--replication-sender-observe-commit-only=1
+--replication-sender-observe-commit-only=0
 --report-port=0
 --report-port=1
 --report-port=2
