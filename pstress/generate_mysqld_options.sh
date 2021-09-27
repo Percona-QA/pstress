@@ -30,14 +30,11 @@ echoit(){
 }
 
 # Extract all options, their default values, and do some initial cleaning
-./bin/mysqld --no-defaults --help --verbose 2>/dev/null | \
- sed '0,/Value (after reading options)/d' | \
- egrep -v "To see what values.*is using|mysqladmin.*instead of|^[ \t]*$|\-\-\-" \
- > ${TEMP_FILE}
+./bin/mysqld --no-defaults --help --verbose 2>/dev/null | grep -v "slave" 2>/dev/null | sed '0,/Value (after reading options)/d' |  egrep -v "To see what values.*is using|mysqladmin.*instead of|^[ \t]*$|\-\-\-" > ${TEMP_FILE}
 
 # mysqld options excluded from list
 # RV/HM 18.07.2017 Temporarily added to EXCLUDED_LIST: --binlog-group-commit-sync-delay due to hang issues seen in 5.7 with startup like --no-defaults --plugin-load=tokudb=ha_tokudb.so --tokudb-check-jemalloc=0 --init-file=/home/hrvoje/percona-qa/plugins_57.sql --binlog-group-commit-sync-delay=2047
-EXCLUDED_LIST=( --admin-address --admin-port --admin-ssl-ca --admin-ssl-capath --admin-ssl-cert --admin-ssl-cipher --admin-ssl-crl --admin-ssl-crlpath --admin-ssl-key --admin-tls-ciphersuites --admin-tls-version --basedir --bind-address --binlog-checksum --binlog-group-commit-sync-delay --caching-sha2-password-private-key-path --character-sets-dir --chroot --coredumper --datadir --debug --default-time-zone --disabled-storage-engines --event-scheduler --ft-stopword-file --general-log-file --init-connect --init-file --initialize --initialize-insecure --init-replica --init-slave --innodb-data-file-path --innodb-data-home-dir --innodb-directories --innodb-doublewrite-dir --innodb-ft-aux-table --innodb-ft-server-stopword-table --innodb-ft-user-stopword-table --innodb-interpreter --innodb-interpreter-output --innodb-log-group-home-dir --innodb-page-size --innodb-parallel-doublewrite-path --innodb-tmpdir --innodb-redo-log-archive-dirs --innodb-temp-data-file-path --innodb-temp-tablespaces-dir --innodb-undo-directory --innodb-undo-tablespaces --internal-tmp-mem-storage-engine --keyring-migration-destination --keyring-migration-host --keyring-migration-password --keyring-migration-port --keyring-migration-socket --keyring-migration-source --keyring-migration-user --language --lc-messages-dir --log-bin-index --log-error --log-error-services --log-error-suppression-list --log-error-verbosity --log-isam --log-slow-filter  --log-slow-verbosity --log-tc --log-timestamps --myisam-block-size --myisam-data-pointer-size --myisam-max-sort-file-size --myisam-mmap-size --myisam-recover-options --myisam-repair-threads --myisam-sort-buffer-size --myisam-stats-method --myisam-use-mmap --mysqlx-bind-address --mysqlx-socket --mysqlx-ssl-ca --mysqlx-ssl-capath --mysqlx-ssl-cert --mysqlx-ssl-cipher --mysqlx-ssl-crl --mysqlx-ssl-crlpath --mysqlx-ssl-key --persist-only-admin-x509-subject --pid-file --plugin-dir --plugin-load --port --proxy-protocol-networks --relay-log-index --replica-skip-errors --replica-type-conversions --report-host --report-password --report-user --secure-file-priv --slave-load-tmpdir --slave-skip-errors --slow-query-log-always-write-time --slow-query-log-file --slow-query-log-use-global-control  --socket --ssl-ca --ssl-capath --ssl-cert --ssl-cipher --ssl-crl --ssl-crlpath --ssl-key --terminology-use-previous --tls-ciphersuites --tmpdir --transaction-write-set-extraction --utility-user --utility-user-dynamic-privileges --utility-user-password --utility-user-privileges --utility-user-schema-access --version-suffix)
+EXCLUDED_LIST=( --admin-address --admin-port --admin-ssl-ca --admin-ssl-capath --admin-ssl-cert --admin-ssl-cipher --admin-ssl-crl --admin-ssl-crlpath --admin-ssl-key --admin-tls-ciphersuites --admin-tls-version --basedir --bind-address --binlog-checksum --binlog-group-commit-sync-delay --caching-sha2-password-private-key-path --character-sets-dir --chroot --coredumper --datadir --debug --default-time-zone --disabled-storage-engines --event-scheduler --ft-stopword-file --general-log-file --init-connect --init-file --initialize --initialize-insecure --init-replica --innodb-data-file-path --innodb-data-home-dir --innodb-directories --innodb-doublewrite-dir --innodb-ft-aux-table --innodb-ft-server-stopword-table --innodb-ft-user-stopword-table --innodb-interpreter --innodb-interpreter-output --innodb-log-group-home-dir --innodb-page-size --innodb-parallel-doublewrite-path --innodb-tmpdir --innodb-redo-log-archive-dirs --innodb-temp-data-file-path --innodb-temp-tablespaces-dir --innodb-undo-directory --innodb-undo-tablespaces --internal-tmp-mem-storage-engine --keyring-migration-destination --keyring-migration-host --keyring-migration-password --keyring-migration-port --keyring-migration-socket --keyring-migration-source --keyring-migration-user --language --lc-messages-dir --log-bin-index --log-error --log-error-services --log-error-suppression-list --log-error-verbosity --log-isam --log-slow-filter  --log-slow-verbosity --log-tc --log-timestamps --myisam-block-size --myisam-data-pointer-size --myisam-max-sort-file-size --myisam-mmap-size --myisam-recover-options --myisam-repair-threads --myisam-sort-buffer-size --myisam-stats-method --myisam-use-mmap --mysqlx-bind-address --mysqlx-socket --mysqlx-ssl-ca --mysqlx-ssl-capath --mysqlx-ssl-cert --mysqlx-ssl-cipher --mysqlx-ssl-crl --mysqlx-ssl-crlpath --mysqlx-ssl-key --persist-only-admin-x509-subject --pid-file --plugin-dir --plugin-load --port --proxy-protocol-networks --relay-log-index --replica-skip-errors --replica-type-conversions --report-host --report-password --report-port --report-user --secure-file-priv --slow-query-log-always-write-time --slow-query-log-file --slow-query-log-use-global-control  --socket --ssl-ca --ssl-capath --ssl-cert --ssl-cipher --ssl-crl --ssl-crlpath --ssl-key --terminology-use-previous --tls-ciphersuites --tmpdir --transaction-write-set-extraction --utility-user --utility-user-dynamic-privileges --utility-user-password --utility-user-privileges --utility-user-schema-access --version-suffix)
 # Create a file (${OUTPUT_FILE}) with all options/values intelligently handled and included
 rm -Rf ${OUTPUT_FILE}
 touch ${OUTPUT_FILE}
@@ -147,12 +144,6 @@ while read line; do
     echo "${OPTION}=2" >> ${OUTPUT_FILE}
     echo "${OPTION}=5" >> ${OUTPUT_FILE}
     echo "${OPTION}=10" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--slave-type-conversions" ]; then
-    echoit "  > Adding possible values ALL_LOSSY, ALL_NON_LOSSY for option '${OPTION}' to the final list..."
-    echo "${OPTION}=ALL_LOSSY" >> ${OUTPUT_FILE}
-    echo "${OPTION}=ALL_NON_LOSSY" >> ${OUTPUT_FILE}
-    echo "${OPTION}=ALL_SIGNED" >> ${OUTPUT_FILE}
-    echo "${OPTION}=ALL_UNSIGNED" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-checksum-algorithm" ]; then
     echoit "  > Adding possible values innodb, crc32 for option '${OPTION}' to the final list..."
     echo "${OPTION}=innodb" >> ${OUTPUT_FILE}
@@ -474,20 +465,6 @@ while read line; do
   elif [ "${OPTION}" == "--sha256-password-public-key-path" ]; then
     echoit "  > Adding possible value public_key.pem for option '${OPTION}' to the final list..."
     echo "${OPTION}=public_key.pem" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--slave-exec-mode" ]; then
-    echoit "  > Adding possible value STRICT and IDEMPOTENT for option '${OPTION}' to the final list..."
-    echo "${OPTION}=STRICT" >> ${OUTPUT_FILE}
-    echo "${OPTION}=IDEMPOTENT" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--slave-parallel-type" ]; then
-    echoit "  > Adding possible value DATABASE and LOGICAL_CLOCK for option '${OPTION}' to the final list..."
-    echo "${OPTION}=DATABASE" >> ${OUTPUT_FILE}
-    echo "${OPTION}=LOGICAL_CLOCK" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--slave-rows-search-algorithms" ]; then
-    echoit "  > Adding possible value TABLE_SCAN,INDEX_SCAN for option '${OPTION}' to the final list..."
-    echo "${OPTION}=TABLE_SCAN,INDEX_SCAN" >> ${OUTPUT_FILE}
-    echo "${OPTION}=INDEX_SCAN,HASH_SCAN" >> ${OUTPUT_FILE}
-    echo "${OPTION}=TABLE_SCAN,HASH_SCAN" >> ${OUTPUT_FILE}
-    echo "${OPTION}=TABLE_SCAN,INDEX_SCAN,HASH_SCAN" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--tls-version" ]; then
     echoit "  > Adding possible value TLSv1,TLSv1.1,TLSv1.2,TLSv1.3 for option '${OPTION}' to the final list..."
     echo "${OPTION}=TLSv1" >> ${OUTPUT_FILE}
