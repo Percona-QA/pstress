@@ -60,6 +60,8 @@
 --binlog-cache-size=2047
 --binlog-cache-size=-1125899906842624
 --binlog-cache-size=1125899906842624
+--binlog-checksum=NONE
+--binlog-checksum=CRC32
 --binlog-direct-non-transactional-updates=1
 --binlog-direct-non-transactional-updates=0
 --binlog-encryption=1
@@ -211,7 +213,6 @@
 --caching-sha2-password-digest-rounds=2047
 --caching-sha2-password-digest-rounds=-1125899906842624
 --caching-sha2-password-digest-rounds=1125899906842624
---caching-sha2-password-public-key-path=public_key.pem
 --character-set-client-handshake=1
 --character-set-client-handshake=0
 --character-set-filesystem=binary
@@ -435,6 +436,9 @@
 --eq-range-index-dive-limit=2047
 --eq-range-index-dive-limit=-1125899906842624
 --eq-range-index-dive-limit=1125899906842624
+--event-scheduler=ON
+--event-scheduler=OFF
+--event-scheduler=DISABLED
 --expand-fast-index-creation=1
 --expand-fast-index-creation=0
 --expire-logs-days=0
@@ -465,7 +469,11 @@
 --flush-time=2047
 --flush-time=-1125899906842624
 --flush-time=1125899906842624
---ft-boolean-syntax=+ -><()~*:&|
+--ft-boolean-syntax='+ -><()~*:&|'
+--ft-boolean-syntax='+ -><(~*:)&|'
+--ft-boolean-syntax=' +-><(~*:)&|'
+--ft-boolean-syntax=' +-><(:~*)&|'
+--ft-boolean-syntax='| -><(:~*)&+'
 --ft-max-word-len=84
 --ft-max-word-len=0
 --ft-max-word-len=1
@@ -503,8 +511,6 @@
 --ft-query-extra-word-chars=0
 --gdb=1
 --gdb=0
---general-log=1
---general-log=0
 --generated-random-password-length=20
 --generated-random-password-length=0
 --generated-random-password-length=1
@@ -542,8 +548,10 @@
 --gtid-executed-compression-period=2047
 --gtid-executed-compression-period=-1125899906842624
 --gtid-executed-compression-period=1125899906842624
---gtid-mode=1
---gtid-mode=0
+--gtid-mode=ON --enforce-gtid-consistency=ON 
+--gtid-mode=OFF
+--gtid-mode=OFF_PERMISSIVE
+--gtid-mode=ON_PERMISSIVE
 --help=1
 --help=0
 --histogram-generation-max-mem-size=20000000
@@ -724,7 +732,6 @@
 --innodb-buffer-pool-dump-pct=-1125899906842624
 --innodb-buffer-pool-dump-pct=1125899906842624
 --innodb-buffer-pool-evict=uncompressed
---innodb-buffer-pool-filename=ib_buffer_pool
 --innodb-buffer-pool-in-core-file=1
 --innodb-buffer-pool-in-core-file=0
 --innodb-buffer-pool-instances=0
@@ -1701,6 +1708,7 @@
 --innodb-segment-reserve-factor=12.5
 --innodb-segment-reserve-factor=20
 --innodb-segment-reserve-factor=30
+--innodb-segment-reserve-factor=39
 --innodb-segment-reserve-factor=40
 --innodb-semaphore-wait-timeout-debug=600
 --innodb-semaphore-wait-timeout-debug=0
@@ -2072,7 +2080,6 @@
 --mandatory-roles='role1@%,role2,role3,role4@localhost'
 --mandatory-roles='@%'
 --mandatory-roles='user1@localhost,testuser@%'
---master-info-file=master.info
 --master-info-repository=FILE
 --master-info-repository=TABLE
 --master-retry-count=86400
@@ -2656,7 +2663,7 @@
 --optimizer-search-depth=2047
 --optimizer-search-depth=-1125899906842624
 --optimizer-search-depth=1125899906842624
---optimizer-switch=index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_p    ushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=    on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on    ,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,pre    fer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off
+--optimizer-switch=index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off
 --optimizer-trace=enabled
 --optimizer-trace=one_line
 --optimizer-trace-features=greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on
@@ -3360,7 +3367,6 @@
 --regexp-time-limit=-1125899906842624
 --regexp-time-limit=1125899906842624
 --relay-log=relay-bin 
---relay-log-info-file=relay-log.info
 --relay-log-info-repository=FILE
 --relay-log-info-repository=TABLE
 --relay-log-purge=1
@@ -3405,7 +3411,6 @@
 --replica-compressed-protocol=0
 --replica-exec-mode=STRICT
 --replica-exec-mode=IDEMPOTENT
---replica-load-tmpdir=tmp
 --replica-max-allowed-packet=1073741824
 --replica-max-allowed-packet=0
 --replica-max-allowed-packet=1
@@ -3466,6 +3471,10 @@
 --replica-transaction-retries=2047
 --replica-transaction-retries=-1125899906842624
 --replica-transaction-retries=1125899906842624
+--replica-type-conversions=ALL_LOSSY
+--replica-type-conversions=ALL_NON_LOSSY
+--replica-type-conversions=ALL_SIGNED
+--replica-type-conversions=ALL_UNSIGNED
 --replicate-same-server-id=1
 --replicate-same-server-id=0
 --replication-optimize-for-static-plugin-config=1
@@ -3580,10 +3589,8 @@
 --session-track-transaction-info=0
 --sha256-password-auto-generate-rsa-keys=1
 --sha256-password-auto-generate-rsa-keys=0
---sha256-password-private-key-path=private_key.pem
 --sha256-password-proxy-users=1
 --sha256-password-proxy-users=0
---sha256-password-public-key-path=public_key.pem
 --show-create-table-verbosity=1
 --show-create-table-verbosity=0
 --show-old-temporals=1

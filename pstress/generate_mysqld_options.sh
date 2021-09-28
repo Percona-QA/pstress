@@ -30,11 +30,12 @@ echoit(){
 }
 
 # Extract all options, their default values, and do some initial cleaning
-./bin/mysqld --no-defaults --help --verbose 2>/dev/null | grep -v "slave" 2>/dev/null | sed '0,/Value (after reading options)/d' |  egrep -v "To see what values.*is using|mysqladmin.*instead of|^[ \t]*$|\-\-\-" > ${TEMP_FILE}
+./bin/mysqld --no-defaults --help --verbose | grep -v "slave" 2>/dev/null | sed '0,/Value (after reading options)/d' | egrep -v "To see what values.*is using|mysqladmin.*instead of|^[ \t]*$|\-\-\-" > ${TEMP_FILE}
 
 # mysqld options excluded from list
 # RV/HM 18.07.2017 Temporarily added to EXCLUDED_LIST: --binlog-group-commit-sync-delay due to hang issues seen in 5.7 with startup like --no-defaults --plugin-load=tokudb=ha_tokudb.so --tokudb-check-jemalloc=0 --init-file=/home/hrvoje/percona-qa/plugins_57.sql --binlog-group-commit-sync-delay=2047
-EXCLUDED_LIST=( --admin-address --admin-port --admin-ssl-ca --admin-ssl-capath --admin-ssl-cert --admin-ssl-cipher --admin-ssl-crl --admin-ssl-crlpath --admin-ssl-key --admin-tls-ciphersuites --admin-tls-version --basedir --bind-address --binlog-checksum --binlog-group-commit-sync-delay --caching-sha2-password-private-key-path --character-sets-dir --chroot --coredumper --datadir --debug --default-time-zone --disabled-storage-engines --event-scheduler --ft-stopword-file --general-log-file --init-connect --init-file --initialize --initialize-insecure --init-replica --innodb-data-file-path --innodb-data-home-dir --innodb-directories --innodb-doublewrite-dir --innodb-ft-aux-table --innodb-ft-server-stopword-table --innodb-ft-user-stopword-table --innodb-interpreter --innodb-interpreter-output --innodb-log-group-home-dir --innodb-page-size --innodb-parallel-doublewrite-path --innodb-tmpdir --innodb-redo-log-archive-dirs --innodb-temp-data-file-path --innodb-temp-tablespaces-dir --innodb-undo-directory --innodb-undo-tablespaces --internal-tmp-mem-storage-engine --keyring-migration-destination --keyring-migration-host --keyring-migration-password --keyring-migration-port --keyring-migration-socket --keyring-migration-source --keyring-migration-user --language --lc-messages-dir --log-bin-index --log-error --log-error-services --log-error-suppression-list --log-error-verbosity --log-isam --log-slow-filter  --log-slow-verbosity --log-tc --log-timestamps --myisam-block-size --myisam-data-pointer-size --myisam-max-sort-file-size --myisam-mmap-size --myisam-recover-options --myisam-repair-threads --myisam-sort-buffer-size --myisam-stats-method --myisam-use-mmap --mysqlx-bind-address --mysqlx-socket --mysqlx-ssl-ca --mysqlx-ssl-capath --mysqlx-ssl-cert --mysqlx-ssl-cipher --mysqlx-ssl-crl --mysqlx-ssl-crlpath --mysqlx-ssl-key --persist-only-admin-x509-subject --pid-file --plugin-dir --plugin-load --port --proxy-protocol-networks --relay-log-index --replica-skip-errors --replica-type-conversions --report-host --report-password --report-port --report-user --secure-file-priv --slow-query-log-always-write-time --slow-query-log-file --slow-query-log-use-global-control  --socket --ssl-ca --ssl-capath --ssl-cert --ssl-cipher --ssl-crl --ssl-crlpath --ssl-key --terminology-use-previous --tls-ciphersuites --tmpdir --transaction-write-set-extraction --utility-user --utility-user-dynamic-privileges --utility-user-password --utility-user-privileges --utility-user-schema-access --version-suffix)
+# --transaction-write-set-extraction is deprecated so it needs to be removed in next release
+EXCLUDED_LIST=( --admin-address --admin-port --admin-ssl-ca --admin-ssl-capath --admin-ssl-cert --admin-ssl-cipher --admin-ssl-crl --admin-ssl-crlpath --admin-ssl-key --admin-tls-ciphersuites --admin-tls-version --basedir --bind-address --binlog-group-commit-sync-delay --caching-sha2-password-private-key-path --caching-sha2-password-public-key-path --character-sets-dir --chroot --coredumper --datadir --debug --default-time-zone --disabled-storage-engines --ft-stopword-file --general-log --general-log-file --init-connect --init-file --initialize --initialize-insecure --init-replica --innodb-buffer-pool-filename --innodb-data-file-path --innodb-data-home-dir --innodb-directories --innodb-doublewrite-dir --innodb-ft-aux-table --innodb-ft-server-stopword-table --innodb-ft-user-stopword-table --innodb-interpreter --innodb-interpreter-output --innodb-log-group-home-dir --innodb-page-size --innodb-parallel-doublewrite-path --innodb-tmpdir --innodb-redo-log-archive-dirs --innodb-temp-data-file-path --innodb-temp-tablespaces-dir --innodb-undo-directory --innodb-undo-tablespaces --internal-tmp-mem-storage-engine --keyring-migration-destination --keyring-migration-host --keyring-migration-password --keyring-migration-port --keyring-migration-socket --keyring-migration-source --keyring-migration-user --language --lc-messages-dir --log-bin-index --log-error --log-error-services --log-error-suppression-list --log-error-verbosity --log-isam --log-slow-filter  --log-slow-verbosity --log-tc --log-timestamps --master-info-file --myisam-block-size --myisam-data-pointer-size --myisam-max-sort-file-size --myisam-mmap-size --myisam-recover-options --myisam-repair-threads --myisam-sort-buffer-size --myisam-stats-method --myisam-use-mmap --mysqlx-bind-address --mysqlx-socket --mysqlx-ssl-ca --mysqlx-ssl-capath --mysqlx-ssl-cert --mysqlx-ssl-cipher --mysqlx-ssl-crl --mysqlx-ssl-crlpath --mysqlx-ssl-key --persist-only-admin-x509-subject --pid-file --plugin-dir --plugin-load --port --proxy-protocol-networks --relay-log-index --relay-log-info-file --replica-load-tmpdir --replica-skip-errors --report-host --report-password --report-port --report-user --secure-file-priv --sha256-password-private-key-path --sha256-password-public-key-path --slow-query-log-always-write-time --slow-query-log-file --slow-query-log-use-global-control  --socket --ssl-ca --ssl-capath --ssl-cert --ssl-cipher --ssl-crl --ssl-crlpath --ssl-key --terminology-use-previous --tls-ciphersuites --tmpdir --transaction-write-set-extraction --utility-user --utility-user-dynamic-privileges --utility-user-password --utility-user-privileges --utility-user-schema-access --version-suffix)
 # Create a file (${OUTPUT_FILE}) with all options/values intelligently handled and included
 rm -Rf ${OUTPUT_FILE}
 touch ${OUTPUT_FILE}
@@ -63,7 +64,7 @@ while read line; do
     echo "${OPTION}=ON" >> ${OUTPUT_FILE}
     echo "${OPTION}=WARN" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--mandatory-roles" ]; then
-    echoit "  > Adding possible values '','role1@%,role2,role3,role4@localhost','@%','user1@localhost,testuser@%' for option        '${OPTION}' to the final list..."
+    echoit "  > Adding possible values '','role1@%,role2,role3,role4@localhost','@%','user1@localhost,testuser@%' for option '${OPTION}' to the final list..."
     echo "${OPTION}=''" >> ${OUTPUT_FILE}
     echo "${OPTION}='role1@%,role2,role3,role4@localhost'" >> ${OUTPUT_FILE}
     echo "${OPTION}='@%'" >> ${OUTPUT_FILE}
@@ -83,7 +84,7 @@ while read line; do
     echo "${OPTION}=''" >> ${OUTPUT_FILE}
     echo "${OPTION}=PARTIAL_JSON" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--character-set-filesystem" -o "${OPTION}" == "--character-set-server" ]; then
-    echoit "  > Adding possible values binary, utf8 for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values for option '${OPTION}' to the final list..."
     echo "${OPTION}=binary" >> ${OUTPUT_FILE}
     echo "${OPTION}=utf8" >> ${OUTPUT_FILE}
     echo "${OPTION}=big5" >> ${OUTPUT_FILE}
@@ -154,7 +155,7 @@ while read line; do
     echo "${OPTION}=legacy" >> ${OUTPUT_FILE}
     echo "${OPTION}=high_checkpoint" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-corrupt-table-action" ]; then
-    echoit "  > Adding possible values assert, warn for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values assert, warn, salvage for option '${OPTION}' to the final list..."
     echo "${OPTION}=assert" >> ${OUTPUT_FILE}
     echo "${OPTION}=warn" >> ${OUTPUT_FILE}
     echo "${OPTION}=salvage" >> ${OUTPUT_FILE}
@@ -163,7 +164,7 @@ while read line; do
     echo "${OPTION}=legacy" >> ${OUTPUT_FILE}
     echo "${OPTION}=backoff" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-buffer-pool-evict" ]; then
-    echoit "  > Adding possible values uncompressed for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible value uncompressed for option '${OPTION}' to the final list..."
     echo "${OPTION}=uncompressed" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-flush-method" ]; then
     echoit "  > Adding possible values fsync, O_DSYNC for option '${OPTION}' to the final list..."
@@ -174,36 +175,36 @@ while read line; do
     echo "${OPTION}=littlesync" >> ${OUTPUT_FILE}
     echo "${OPTION}=nosync" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-checksum-algorithm" ]; then
-    echoit "  > Adding possible values innodb, crc32 for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values none, innodb, crc32 for option '${OPTION}' to the final list..."
     echo "${OPTION}=innodb" >> ${OUTPUT_FILE}
     echo "${OPTION}=crc32" >> ${OUTPUT_FILE}
     echo "${OPTION}=none" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-monitor-disable" ]; then
-    echoit "  > Adding possible values counter, module for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
     echo "${OPTION}=counter" >> ${OUTPUT_FILE}
     echo "${OPTION}=module" >> ${OUTPUT_FILE}
     echo "${OPTION}=pattern" >> ${OUTPUT_FILE}
     echo "${OPTION}=all" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-monitor-enable" ]; then
-    echoit "  > Adding possible values counter, module for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
     echo "${OPTION}=counter" >> ${OUTPUT_FILE}
     echo "${OPTION}=module" >> ${OUTPUT_FILE}
     echo "${OPTION}=pattern" >> ${OUTPUT_FILE}
     echo "${OPTION}=all" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-monitor-reset" ]; then
-    echoit "  > Adding possible values counter, module for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
     echo "${OPTION}=counter" >> ${OUTPUT_FILE}
     echo "${OPTION}=module" >> ${OUTPUT_FILE}
     echo "${OPTION}=pattern" >> ${OUTPUT_FILE}
     echo "${OPTION}=all" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-monitor-reset-all" ]; then
-    echoit "  > Adding possible values counter, module for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
     echo "${OPTION}=counter" >> ${OUTPUT_FILE}
     echo "${OPTION}=module" >> ${OUTPUT_FILE}
     echo "${OPTION}=pattern" >> ${OUTPUT_FILE}
     echo "${OPTION}=all" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-stats-method" ]; then
-    echoit "  > Adding possible values nulls_equal, nulls_unequal for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values nulls_equal, nulls_unequal, nulls_ignored for option '${OPTION}' to the final list..."
     echo "${OPTION}=nulls_equal" >> ${OUTPUT_FILE}
     echo "${OPTION}=nulls_unequal" >> ${OUTPUT_FILE}
     echo "${OPTION}=nulls_ignored" >> ${OUTPUT_FILE}
@@ -215,7 +216,7 @@ while read line; do
     echo "${OPTION}=session" >> ${OUTPUT_FILE}
     echo "${OPTION}=query" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--replica-type-conversions" ]; then
-    echoit "  > Adding possible values ALL_LOSSY , ALL_NON_LOSSY , ALL_SIGNED , ALL_UNSIGNED  for option '${OPTION}' to the fina    l list..."
+    echoit "  > Adding possible values ALL_LOSSY, ALL_NON_LOSSY, ALL_SIGNED, ALL_UNSIGNED for option '${OPTION}' to the final list..."
     echo "${OPTION}=ALL_LOSSY" >> ${OUTPUT_FILE}
     echo "${OPTION}=ALL_NON_LOSSY" >> ${OUTPUT_FILE}
     echo "${OPTION}=ALL_SIGNED" >> ${OUTPUT_FILE}
@@ -268,7 +269,7 @@ while read line; do
     echoit "  > Adding possible values relay-bin for option '${OPTION}' to the final list..."
     echo "${OPTION}=relay-bin " >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--sql-mode" ]; then
-    echoit "  > Adding possible values ALLOW_INVALID_DATES, ANSI_QUOTES for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values for option '${OPTION}' to the final list..."
     echo "${OPTION}=ALLOW_INVALID_DATES" >> ${OUTPUT_FILE}
     echo "${OPTION}=ANSI_QUOTES" >> ${OUTPUT_FILE}
     echo "${OPTION}=ERROR_FOR_DIVISION_BY_ZERO" >> ${OUTPUT_FILE}
@@ -292,24 +293,24 @@ while read line; do
     echo "${OPTION}=STRICT_ALL_TABLES" >> ${OUTPUT_FILE}
     echo "${OPTION}=STRICT_TRANS_TABLES" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--thread-handling" ]; then
-    echoit "  > Adding possible values no-threads, one-thread-per-connection for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values no-threads, one-thread-per-connection, dynamically-loaded, pool-of-threads for option '${OPTION}' to the final list..."
     echo "${OPTION}=no-threads" >> ${OUTPUT_FILE}
     echo "${OPTION}=one-thread-per-connection" >> ${OUTPUT_FILE}
     echo "${OPTION}=dynamically-loaded" >> ${OUTPUT_FILE}
     echo "${OPTION}=pool-of-threads" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--thread-pool-high-prio-mode" ]; then
-    echoit "  > Adding possible values transactions, statements for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values transactions, statements, none for option '${OPTION}' to the final list..."
     echo "${OPTION}=transactions" >> ${OUTPUT_FILE}
     echo "${OPTION}=statements" >> ${OUTPUT_FILE}
     echo "${OPTION}=none" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--transaction-isolation" ]; then
-    echoit "  > Adding possible values READ-UNCOMMITTED, READ-COMMITTED for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values READ-UNCOMMITTED, READ-COMMITTED, REPEATABLE-READ, SERIALIZABLE for option '${OPTION}' to the final list..."
     echo "${OPTION}=READ-UNCOMMITTED" >> ${OUTPUT_FILE}
     echo "${OPTION}=READ-COMMITTED" >> ${OUTPUT_FILE}
     echo "${OPTION}=REPEATABLE-READ" >> ${OUTPUT_FILE}
     echo "${OPTION}=SERIALIZABLE" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-doublewrite-files" ]; then
-    echoit "  > Adding possible values 2 , 16 , 126 , 256 for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values 2, 16, 126, 256 for option '${OPTION}' to the final list..."
     echo "${OPTION}=2" >> ${OUTPUT_FILE}
     echo "${OPTION}=16" >> ${OUTPUT_FILE}
     echo "${OPTION}=126" >> ${OUTPUT_FILE}
@@ -319,12 +320,12 @@ while read line; do
     echo "${OPTION}=enabled" >> ${OUTPUT_FILE}
     echo "${OPTION}=one_line" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--performance-schema-instrument" ]; then
-    echoit "  > Adding possible values wait/synch/cond/% for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values for option '${OPTION}' to the final list..."
     echo "${OPTION}='wait/synch/cond/%=COUNTED'" >> ${OUTPUT_FILE}
     echo "${OPTION}='wait/synch/cond/%=0'" >> ${OUTPUT_FILE}
     echo "${OPTION}='wait/synch/cond/%=1'" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--block-encryption-mode" ]; then
-    echoit "  > Adding possible values aes-128-ecb, aes-128-cbc, aes-128-cfb1, aes-192-ecb, aes-192-cbc, aes-192-ofb, aes-256-ec    b, aes-256-cbc, aes-256-cfb128 for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values aes-128-ecb, aes-128-cbc, aes-128-cfb1, aes-192-ecb, aes-192-cbc, aes-192-ofb, aes-256-ecb, aes-256-cbc, aes-256-cfb128 for option '${OPTION}' to the final list..."
     echo "${OPTION}=aes-128-ecb" >> ${OUTPUT_FILE}
     echo "${OPTION}=aes-128-cbc" >> ${OUTPUT_FILE}
     echo "${OPTION}=aes-128-cfb1" >> ${OUTPUT_FILE}
@@ -335,7 +336,7 @@ while read line; do
     echo "${OPTION}=aes-256-cbc" >> ${OUTPUT_FILE}
     echo "${OPTION}=aes-256-cfb128" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--default-authentication-plugin" ]; then
-    echoit "  > Adding possible values mysql_native_password, sha256_password , caching_sha2_password for option '${OPTION}' to     the final list..."
+    echoit "  > Adding possible values mysql_native_password, sha256_password, caching_sha2_password for option '${OPTION}' to the final list..."
     echo "${OPTION}=mysql_native_password" >> ${OUTPUT_FILE}
     echo "${OPTION}=sha256_password" >> ${OUTPUT_FILE}
     echo "${OPTION}=caching_sha2_password" >> ${OUTPUT_FILE}
@@ -381,37 +382,36 @@ while read line; do
     echo "${OPTION}=COMMIT_ORDER" >> ${OUTPUT_FILE}
     echo "${OPTION}=WRITESET" >> ${OUTPUT_FILE}
     echo "${OPTION}=WRITESET_SESSION" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--caching-sha2-password-public-key-path" ]; then
-    echoit "  > Adding possible value public_key.pem for option '${OPTION}' to the final list..."
-    echo "${OPTION}=public_key.pem" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--default-tmp-storage-engine" ]; then
     echoit "  > Adding possible value InnoDB  for option '${OPTION}' to the final list..."
     echo "${OPTION}=InnoDB" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--ft-boolean-syntax" ]; then
-    echoit "  > Adding possible values + - > < ( ) ~ * : " " & | for option '${OPTION}' to the final list..."
-    echo "${OPTION}=+ -><()~*:""&|" >> ${OUTPUT_FILE}
+    echoit "  > Adding possible values for option '${OPTION}' to the final list..."
+    echo "${OPTION}='+ -><()~*:""&|'" >> ${OUTPUT_FILE}
+    echo "${OPTION}='+ -><(~*:)""&|'" >> ${OUTPUT_FILE}
+    echo "${OPTION}=' +-><(~*:)""&|'" >> ${OUTPUT_FILE}
+    echo "${OPTION}=' +-><(:~*)""&|'" >> ${OUTPUT_FILE}
+    echo "${OPTION}='| -><(:~*)""&+'" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--group-replication-consistency" ]; then
-    echoit "  > Adding possible value EVENTUAL , BEFORE for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values for option '${OPTION}' to the final list..."
     echo "${OPTION}=BEFORE" >> ${OUTPUT_FILE}
     echo "${OPTION}=EVENTUAL" >> ${OUTPUT_FILE}
     echo "${OPTION}=BEFORE_ON_PRIMARY_FAILOVER" >> ${OUTPUT_FILE}
     echo "${OPTION}=AFTER" >> ${OUTPUT_FILE}
     echo "${OPTION}=BEFORE_AND_AFTER" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--innodb-buffer-pool-filename" ]; then
-    echoit "  > Adding possible value ib_buffer_pool for option '${OPTION}' to the final list..."
-    echo "${OPTION}=ib_buffer_pool" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-compress-debug" ]; then
-    echoit "  > Adding possible values none , zlib , lz4 , lz4hc for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values none, zlib, lz4, lz4hc for option '${OPTION}' to the final list..."
     echo "${OPTION}=none" >> ${OUTPUT_FILE}
     echo "${OPTION}=zlib" >> ${OUTPUT_FILE}
     echo "${OPTION}=lz4" >> ${OUTPUT_FILE}
     echo "${OPTION}=lz4hc" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-segment-reserve-factor" ]; then
-    echoit "  > Adding possible values 0.03 , 12.5 , 20 , 30 and 40 for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values 0.03, 12.5, 20, 30, 39, 40 for option '${OPTION}' to the final list..."
     echo "${OPTION}=0.03" >> ${OUTPUT_FILE}
     echo "${OPTION}=12.5" >> ${OUTPUT_FILE}
     echo "${OPTION}=20" >> ${OUTPUT_FILE}
     echo "${OPTION}=30" >> ${OUTPUT_FILE}
+    echo "${OPTION}=39" >> ${OUTPUT_FILE}
     echo "${OPTION}=40" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--lc-messages" ]; then
     echoit "  > Adding possible values en_US for option '${OPTION}' to the final list..."
@@ -419,74 +419,74 @@ while read line; do
   elif [ "${OPTION}" == "--lc-time-names" ]; then
     echoit "  > Adding possible values en_US for option '${OPTION}' to the final list..."
     echo "${OPTION}=en_US" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--master-info-file" ]; then
-    echoit "  > Adding possible values master.info for option '${OPTION}' to the final list..."
-    echo "${OPTION}=master.info" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--mysqlx-compression-algorithms" ]; then
     echoit "  > Adding possible values DEFLATE_STREAM, LZ4_MESSAGE, ZSTD_STREAM for option '${OPTION}' to the final list..."
     echo "${OPTION}=DEFLATE_STREAM" >> ${OUTPUT_FILE}
     echo "${OPTION}=LZ4_MESSAGE" >> ${OUTPUT_FILE}
     echo "${OPTION}=ZSTD_STREAM" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--optimizer-switch" ]; then
-    echoit "  > Adding possible values batched_key_access, block_nested_loop, condition_fanout_filter for option '${OPTION}' to     the final list..."
-    echo "${OPTION}=index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_p    ushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=    on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on    ,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,pre    fer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off" >> ${OUTPUT_FILE}
+    echoit "  > Adding possible values for option '${OPTION}' to the final list..."
+    echo "${OPTION}=index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on,hypergraph_optimizer=off,derived_condition_pushdown=on,favor_range_scan=off" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--optimizer-trace-features" ]; then
-    echoit "  > Adding possible values greedy_search , range_optimizer , dynamic_range , epeated_subselect for option '${OPTION}    ' to the final list..."
+    echoit "  > Adding possible values greedy_search, range_optimizer, dynamic_range, repeated_subselect for option '${OPTION}' to the final list..."
     echo "${OPTION}=greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--protocol-compression-algorithms" ]; then
     echoit "  > Adding possible values zlib, zstd, uncompressed for option '${OPTION}' to the final list..."
     echo "${OPTION}=zlib" >> ${OUTPUT_FILE}
     echo "${OPTION}=zstd" >> ${OUTPUT_FILE}
     echo "${OPTION}=uncompressed" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--relay-log-info-file" ]; then
-    echoit "  > Adding possible value relay-log.info for option '${OPTION}' to the final list..."
-    echo "${OPTION}=relay-log.info" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--replica-exec-mode" ]; then
     echoit "  > Adding possible value STRICT and IDEMPOTENT for option '${OPTION}' to the final list..."
     echo "${OPTION}=STRICT" >> ${OUTPUT_FILE}
     echo "${OPTION}=IDEMPOTENT" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--replica-load-tmpdir" ]; then
-    echoit "  > Adding possible value tmp for option '${OPTION}' to the final list..."
-    echo "${OPTION}=tmp" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--replica-parallel-type" ]; then
     echoit "  > Adding possible value DATABASE and LOGICAL_CLOCK for option '${OPTION}' to the final list..."
     echo "${OPTION}=DATABASE" >> ${OUTPUT_FILE}
     echo "${OPTION}=LOGICAL_CLOCK" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--session-track-system-variables" ]; then
-    echoit "  > Adding possible values time_zone, autocommit, character_set_client, character_set_results, character_set_connect    ion for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values time_zone, autocommit, character_set_client, character_set_results, character_set_connection for option '${OPTION}' to the final list..."
     echo "${OPTION}=time_zone" >> ${OUTPUT_FILE}
     echo "${OPTION}=autocommit" >> ${OUTPUT_FILE}
     echo "${OPTION}=character_set_client" >> ${OUTPUT_FILE}
     echo "${OPTION}=character_set_results" >> ${OUTPUT_FILE}
     echo "${OPTION}=character_set_connection" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--sha256-password-private-key-path" ]; then
-    echoit "  > Adding possible value private_key.pem for option '${OPTION}' to the final list..."
-    echo "${OPTION}=private_key.pem" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--sha256-password-public-key-path" ]; then
-    echoit "  > Adding possible value public_key.pem for option '${OPTION}' to the final list..."
-    echo "${OPTION}=public_key.pem" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--tls-version" ]; then
-    echoit "  > Adding possible value TLSv1,TLSv1.1,TLSv1.2,TLSv1.3 for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible value TLSv1, TLSv1.1, TLSv1.2, TLSv1.3 for option '${OPTION}' to the final list..."
     echo "${OPTION}=TLSv1" >> ${OUTPUT_FILE}
     echo "${OPTION}=TLSv1.1" >> ${OUTPUT_FILE}
     echo "${OPTION}=TLSv1.2" >> ${OUTPUT_FILE}
     echo "${OPTION}=TLSv1.3" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--upgrade" ]; then
-    echoit "  > Adding possible value NONE , MINIMAL, AUTO , FORCE for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible value NONE, MINIMAL, AUTO, FORCE for option '${OPTION}' to the final list..."
     echo "${OPTION}=NONE" >> ${OUTPUT_FILE}
     echo "${OPTION}=MINIMAL" >> ${OUTPUT_FILE}
     echo "${OPTION}=AUTO" >> ${OUTPUT_FILE}
     echo "${OPTION}=FORCE" >> ${OUTPUT_FILE}
-  elif [ "${VALUE}" == "TRUE" -o "${VALUE}" == "FALSE" -o "${VALUE}" == "ON" -o "${VALUE}" == "OFF" -o "${VALUE}" == "YES" -o "$    {VALUE}" == "NO" ]; then
-    echoit "  > Adding possible values TRUE/ON/YES/1 and FALSE/OFF/NO/0 (as a universal 1 and 0) for option '${OPTION}' to the f    inal list..."
+  elif [ "${OPTION}" == "--binlog-checksum" ]; then
+    echoit "  > Adding possible value NONE, CRC32 for option '${OPTION}' to the final list..."
+    echo "${OPTION}=NONE" >> ${OUTPUT_FILE}
+    echo "${OPTION}=CRC32" >> ${OUTPUT_FILE}
+  elif [ "${OPTION}" == "--event-scheduler" ]; then
+    echoit "  > Adding possible value ON, OFF, DISABLED for option '${OPTION}' to the final list..."
+    echo "${OPTION}=ON" >> ${OUTPUT_FILE}
+    echo "${OPTION}=OFF" >> ${OUTPUT_FILE}
+    echo "${OPTION}=DISABLED" >> ${OUTPUT_FILE}
+  elif [ "${OPTION}" == "--gtid-mode" ]; then
+    echoit "  > Adding possible value ON, OFF, OFF_PERMISSIVE, ON_PERMISSIVE for option '${OPTION}' to the final list..."
+    echo "${OPTION}=ON --enforce-gtid-consistency=ON " >> ${OUTPUT_FILE}
+    echo "${OPTION}=OFF" >> ${OUTPUT_FILE}
+    echo "${OPTION}=OFF_PERMISSIVE" >> ${OUTPUT_FILE}
+    echo "${OPTION}=ON_PERMISSIVE" >> ${OUTPUT_FILE}  
+  elif [ "${VALUE}" == "TRUE" -o "${VALUE}" == "FALSE" -o "${VALUE}" == "ON" -o "${VALUE}" == "OFF" -o "${VALUE}" == "YES" -o "${VALUE}" == "NO" ]; then
+    echoit "  > Adding possible values TRUE/ON/YES/1 and FALSE/OFF/NO/0 (as a universal 1 and 0) for option '${OPTION}' to the final list..."
     echo "${OPTION}=1" >> ${OUTPUT_FILE}
     echo "${OPTION}=0" >> ${OUTPUT_FILE}
   elif [[ "$(echo ${VALUE} | tr -d ' ')" =~ ^-?[0-9]+$ ]]; then
     if [ "${VALUE}" != "0" ]; then 
-    echoit "  > Adding int values (${VALUE}, -1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for op      tion '${OPTION}' to the final list..."
+    echoit "  > Adding int values (${VALUE}, -1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option '${OPTION}' to the final list..."
     echo "${OPTION}=${VALUE}" >> ${OUTPUT_FILE}
   else
-    echoit "  > Adding int values (-1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option            '${OPTION}' to the final list..."
+    echoit "  > Adding int values (-1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option '${OPTION}' to the final list..."
     fi
     echo "${OPTION}=0" >> ${OUTPUT_FILE}
     echo "${OPTION}=1" >> ${OUTPUT_FILE}
@@ -499,7 +499,7 @@ while read line; do
     echo "${OPTION}=-1125899906842624" >> ${OUTPUT_FILE}
     echo "${OPTION}=1125899906842624" >> ${OUTPUT_FILE}
   elif [ "${VALUE}" == "" -o "${VALUE}" == "(No" ]; then
-    echoit "  > Assert: Option '${OPTION}' is blank by default and not programmed into the script yet, please cover this in the     script..."
+    echoit "  > Assert: Option '${OPTION}' is blank by default and not programmed into the script yet, please cover this in the script..."
     exit 1
   else
     echoit "  > ${OPTION} IS NOT COVERED YET, PLEASE ADD!!!"
