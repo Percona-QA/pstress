@@ -167,7 +167,7 @@ while read line; do
     echoit "  > Adding possible value uncompressed for option '${OPTION}' to the final list..."
     echo "${OPTION}=uncompressed" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--innodb-flush-method" ]; then
-    echoit "  > Adding possible values fsync, O_DSYNC for option '${OPTION}' to the final list..."
+    echoit "  > Adding possible values fsync, O_DSYNC, O_DIRECT, O_DIRECT_NO_FSYNC, littlesync, nosync for option '${OPTION}' to the final list..."
     echo "${OPTION}=fsync" >> ${OUTPUT_FILE}
     echo "${OPTION}=O_DSYNC" >> ${OUTPUT_FILE}
     echo "${OPTION}=O_DIRECT" >> ${OUTPUT_FILE}
@@ -179,25 +179,7 @@ while read line; do
     echo "${OPTION}=innodb" >> ${OUTPUT_FILE}
     echo "${OPTION}=crc32" >> ${OUTPUT_FILE}
     echo "${OPTION}=none" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--innodb-monitor-disable" ]; then
-    echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
-    echo "${OPTION}=counter" >> ${OUTPUT_FILE}
-    echo "${OPTION}=module" >> ${OUTPUT_FILE}
-    echo "${OPTION}=pattern" >> ${OUTPUT_FILE}
-    echo "${OPTION}=all" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--innodb-monitor-enable" ]; then
-    echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
-    echo "${OPTION}=counter" >> ${OUTPUT_FILE}
-    echo "${OPTION}=module" >> ${OUTPUT_FILE}
-    echo "${OPTION}=pattern" >> ${OUTPUT_FILE}
-    echo "${OPTION}=all" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--innodb-monitor-reset" ]; then
-    echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
-    echo "${OPTION}=counter" >> ${OUTPUT_FILE}
-    echo "${OPTION}=module" >> ${OUTPUT_FILE}
-    echo "${OPTION}=pattern" >> ${OUTPUT_FILE}
-    echo "${OPTION}=all" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--innodb-monitor-reset-all" ]; then
+  elif [ "${OPTION}" == "--innodb-monitor-disable" -o "${OPTION}" == "--innodb-monitor-enable" -o "${OPTION}" == "--innodb-monitor-reset" -o "${OPTION}" == "--innodb-monitor-reset-all" ]; then
     echoit "  > Adding possible values counter, module, pattern and all for option '${OPTION}' to the final list..."
     echo "${OPTION}=counter" >> ${OUTPUT_FILE}
     echo "${OPTION}=module" >> ${OUTPUT_FILE}
@@ -221,7 +203,7 @@ while read line; do
     echo "${OPTION}=ALL_NON_LOSSY" >> ${OUTPUT_FILE}
     echo "${OPTION}=ALL_SIGNED" >> ${OUTPUT_FILE}
     echo "${OPTION}=ALL_UNSIGNED" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--performance-schema-accounts-size" ]; then
+  elif [ "${OPTION}" == "--performance-schema-accounts-size" -o "${OPTION}" == "--performance-schema-hosts-size" -o "${OPTION}" == "--performance-schema-max-thread-instances" -o "${OPTION}" == "--performance-schema-users-size" ]; then  
     echoit "  > Adding possible values 0, 1, 2, 12, 24, 254, 1023, 2047, 1048576 for option '${OPTION}' to the final list..."
     echo "${OPTION}=0" >> ${OUTPUT_FILE}
     echo "${OPTION}=1" >> ${OUTPUT_FILE}
@@ -232,42 +214,8 @@ while read line; do
     echo "${OPTION}=1023" >> ${OUTPUT_FILE}
     echo "${OPTION}=2047" >> ${OUTPUT_FILE}
     echo "${OPTION}=1048576" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--performance-schema-hosts-size" ]; then
-    echoit "  > Adding possible values 0, 1, 2, 12, 24, 254, 1023, 2047, 1048576 for option '${OPTION}' to the final list..."
-    echo "${OPTION}=0" >> ${OUTPUT_FILE}
-    echo "${OPTION}=1" >> ${OUTPUT_FILE}
-    echo "${OPTION}=2" >> ${OUTPUT_FILE}
-    echo "${OPTION}=12" >> ${OUTPUT_FILE}
-    echo "${OPTION}=24" >> ${OUTPUT_FILE}
-    echo "${OPTION}=254" >> ${OUTPUT_FILE}
-    echo "${OPTION}=1023" >> ${OUTPUT_FILE}
-    echo "${OPTION}=2047" >> ${OUTPUT_FILE}
-    echo "${OPTION}=1048576" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--performance-schema-max-thread-instances" ]; then
-    echoit "  > Adding possible values 0, 1, 2, 12, 24, 254, 1023, 2047, 104857 for option '${OPTION}' to the final list..."
-    echo "${OPTION}=0" >> ${OUTPUT_FILE}
-    echo "${OPTION}=1" >> ${OUTPUT_FILE}
-    echo "${OPTION}=2" >> ${OUTPUT_FILE}
-    echo "${OPTION}=12" >> ${OUTPUT_FILE}
-    echo "${OPTION}=24" >> ${OUTPUT_FILE}
-    echo "${OPTION}=254" >> ${OUTPUT_FILE}
-    echo "${OPTION}=1023" >> ${OUTPUT_FILE}
-    echo "${OPTION}=2047" >> ${OUTPUT_FILE}
-    echo "${OPTION}=104857" >> ${OUTPUT_FILE}
-  elif [ "${OPTION}" == "--performance-schema-users-size" ]; then
-    echoit "  > Adding possible values 0, 1, 2, 12, 24, 254, 1023, 2047, 104857 for option '${OPTION}' to the final list..."
-    echo "${OPTION}=0" >> ${OUTPUT_FILE}
-    echo "${OPTION}=1" >> ${OUTPUT_FILE}
-    echo "${OPTION}=2" >> ${OUTPUT_FILE}
-    echo "${OPTION}=12" >> ${OUTPUT_FILE}
-    echo "${OPTION}=24" >> ${OUTPUT_FILE}
-    echo "${OPTION}=254" >> ${OUTPUT_FILE}
-    echo "${OPTION}=1023" >> ${OUTPUT_FILE}
-    echo "${OPTION}=2047" >> ${OUTPUT_FILE}
-    echo "${OPTION}=104857" >> ${OUTPUT_FILE} 
-  elif [ "${OPTION}" == "--relay-log" ]; then
     echoit "  > Adding possible values relay-bin for option '${OPTION}' to the final list..."
-    echo "${OPTION}=relay-bin " >> ${OUTPUT_FILE}
+    echo "${OPTION}=relay-bin" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--sql-mode" ]; then
     echoit "  > Adding possible values for option '${OPTION}' to the final list..."
     echo "${OPTION}=ALLOW_INVALID_DATES" >> ${OUTPUT_FILE}
@@ -483,10 +431,10 @@ while read line; do
     echo "${OPTION}=0" >> ${OUTPUT_FILE}
   elif [[ "$(echo ${VALUE} | tr -d ' ')" =~ ^-?[0-9]+$ ]]; then
     if [ "${VALUE}" != "0" ]; then 
-    echoit "  > Adding int values (${VALUE}, -1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option '${OPTION}' to the final list..."
-    echo "${OPTION}=${VALUE}" >> ${OUTPUT_FILE}
-  else
-    echoit "  > Adding int values (-1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option '${OPTION}' to the final list..."
+      echoit "  > Adding int values (${VALUE}, -1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option '${OPTION}' to the final list..."
+      echo "${OPTION}=${VALUE}" >> ${OUTPUT_FILE}
+    else
+      echoit "  > Adding int values (-1, 0, 1, 2, 12, 24, 254, 1023, 2047, -1125899906842624, 1125899906842624) for option '${OPTION}' to the final list..."
     fi
     echo "${OPTION}=0" >> ${OUTPUT_FILE}
     echo "${OPTION}=1" >> ${OUTPUT_FILE}
@@ -504,8 +452,8 @@ while read line; do
   else
     echoit "  > ${OPTION} IS NOT COVERED YET, PLEASE ADD!!!"
     exit 1
-    fi
-    done < ${TEMP_FILE}
-    rm -Rf ${TEMP_FILE}
+  fi
+done < ${TEMP_FILE}
+rm -Rf ${TEMP_FILE}
 
-    echo "Done! Output file: ${OUTPUT_FILE}"
+echo "Done! Output file: ${OUTPUT_FILE}"
