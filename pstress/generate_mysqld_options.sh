@@ -454,6 +454,6 @@ while read line; do
     exit 1
   fi
 done < ${TEMP_FILE}
-rm -Rf ${TEMP_FILE}
 
+rm -Rf ${TEMP_FILE}
 echo "Done! Output file: ${OUTPUT_FILE}"
