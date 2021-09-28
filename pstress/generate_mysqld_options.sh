@@ -214,6 +214,7 @@ while read line; do
     echo "${OPTION}=1023" >> ${OUTPUT_FILE}
     echo "${OPTION}=2047" >> ${OUTPUT_FILE}
     echo "${OPTION}=1048576" >> ${OUTPUT_FILE}
+  elif [ "${OPTION}" == "--relay-log" ]; then  
     echoit "  > Adding possible values relay-bin for option '${OPTION}' to the final list..."
     echo "${OPTION}=relay-bin" >> ${OUTPUT_FILE}
   elif [ "${OPTION}" == "--sql-mode" ]; then
