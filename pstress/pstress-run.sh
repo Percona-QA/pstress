@@ -39,7 +39,6 @@ fi
 # Disable TokuDB in case RocksDB is enabled
 # Disable encryption in case RocksDB is enabled
 if [ "${ENGINE}" == "RocksDB" ]; then
-  ADD_RANDOM_TOKUDB_OPTIONS=0
   KEYRING_PLUGIN=""
   KEYRING_COMPONENT=0
 fi
@@ -766,6 +765,9 @@ EOF
       done
       echoit "ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's MYEXTRA..."
       MYEXTRA="${MYEXTRA} ${OPTIONS_TO_ADD}"
+    fi
+    if [ "${ADD_RANDOM_TOKUDB_OPTIONS}" == "" ]; then # Backwards compatibility for .conf files without this option
+      ADD_RANDOM_TOKUDB_OPTIONS=0
     fi
     if [ ${ADD_RANDOM_TOKUDB_OPTIONS} -eq 1 ]; then  # Add random tokudb --options to MYEXTRA
       OPTIONS_TO_ADD=
