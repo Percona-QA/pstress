@@ -36,7 +36,6 @@ if [[ ${SIGNAL} -ne 15 && ${SIGNAL} -ne 4 && ${SIGNAL} -ne 9 ]]; then
   exit
 fi
 
-# Disable TokuDB in case RocksDB is enabled
 # Disable encryption in case RocksDB is enabled
 if [ "${ENGINE}" == "RocksDB" ]; then
   KEYRING_PLUGIN=""
@@ -1077,8 +1076,8 @@ EOF
       timeout -k5 -s9 5s wait ${MPID} >/dev/null 2>&1
       sleep 2; sync
       SERVER_FAIL_TO_START_COUNT=$[ $SERVER_FAIL_TO_START_COUNT + 1 ]
-      if [ $SERVER_FAIL_TO_START_COUNT -gt 1 ]; then
-        echoit "Server failed to start twice. Reinitializing the data directory"
+      if [ $SERVER_FAIL_TO_START_COUNT -gt 0 ]; then
+        echoit "Server failed to start. Reinitializing the data directory"
         REINIT_DATADIR=1
       fi
     elif [[ ${PXC} -eq 1 ]]; then

@@ -29,6 +29,15 @@
 # PS-6847
 .*Assertion failure.*btr0btr.ic:.*level.*
 
+# PS-7148
+.*buf0buf.cc.*buf_pool.*init_flush.*
+
+# PS-7663
+.*fil0fil.cc.*err.*DB_SUCCESS.*
+
+# PS-7837
+.*!m_thd->transaction_rollback_request.*
+
 # Table storage engine 'InnoDB' does not support the create option 'COMPRESSION'' on query.
 .*Error_code.*MY-001478.*
 
