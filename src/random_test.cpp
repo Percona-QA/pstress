@@ -3041,7 +3041,9 @@ void Thd1::run_some_query() {
     ddl_query = true;
     Table *table = Table::table_id(Table::TEMPORARY, i, this);
     if (!execute_sql(table->definition(), this))
-      throw std::runtime_error("Create table failed " + table->name_);
+      thread_log << thread_id << " Error create table failed " << table->name_
+                 << std::endl;
+
     all_session_tables->push_back(table);
 
     /* load default data in temporary table */
