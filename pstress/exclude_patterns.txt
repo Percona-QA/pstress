@@ -49,3 +49,24 @@
 
 # Request to create 'unencrypted' table while using an 'encrypted' tablespace.
 .*Error_code.*MY-003825.*
+
+.*MY-010584.*
+.*Error_code: 1529.*
+.*Error_code: 11001.*
+.*Error_code: 1478.*
+.*Error_code: 1846.*
+.*Error_code: 1845.*
+.*Error_code: 1495.*
+.*Error_code: 1265.*
+.*Error_code: 11002.*
+.*Error_code: 1050.*
+.*Error_code: 1051.*
+.*Error_code: 1507.*
+.*Error_code: 1054.*
+.*Error_code: 3108.*
+.*Error_code: 1146.*
+.*Error_code: 1075.*
+.*Error_code: 1091.*
+.*Error_code: 1062.*
+.*Error_code: 1488.*
+.*Error_code: 1176.*
