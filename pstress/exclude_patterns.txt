@@ -49,3 +49,5 @@
 
 # Request to create 'unencrypted' table while using an 'encrypted' tablespace.
 .*Error_code.*MY-003825.*
+
+.*MY-010584.*

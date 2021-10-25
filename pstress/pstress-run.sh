@@ -17,7 +17,7 @@ CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf
 # Internal variables: DO NOT CHANGE!
 RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/')
 SCRIPT_AND_PATH=$(readlink -f $0); SCRIPT=$(echo ${SCRIPT_AND_PATH} | sed 's|.*/||'); SCRIPT_PWD=$(cd `dirname $0` && pwd)
-WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
+WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; PXC_START_TIMEOUT=300; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
 SERVER_FAIL_TO_START_COUNT=0;ENGINE=InnoDB;
 
 # Set ASAN coredump options
@@ -163,8 +163,7 @@ if [[ ${PXB_CRASH_RUN} -eq 1 ]]; then
   fi
 fi
 
-# Automatic variable adjustments
-if [ "$1" == "pxc" -o "$2" == "pxc" -o "$1" == "PXC" -o "$2" == "PXC" ]; then PXC=1; fi  # Check if this is a a PXC run as indicated by first or second option to this script
+if [ "${CONFIGURATION_FILE}" == "pstress-run-PXC80.conf" -o "${CONFIGURATION_FILE}" == "pstress-run-PXC57.conf" ]; then PXC=1; fi
 if [ "$(whoami)" == "root" ]; then MYEXTRA="--user=root ${MYEXTRA}"; fi
 if [ "${PXC_CLUSTER_RUN}" == "1" ]; then
   echoit "As PXC_CLUSTER_RUN=1, this script is auto-assuming this is a PXC run and will set PXC=1"
@@ -327,7 +326,7 @@ if [[ $PXC -eq 1 ]];then
   echo "[mysqld]" > ${BASEDIR}/my.cnf
   echo "basedir=${BASEDIR}" >> ${BASEDIR}/my.cnf
   echo "wsrep-debug=1" >> ${BASEDIR}/my.cnf
-  echo "pxc_strict_mode=disabled" >> ${BASEDIR}/my.cnf
+  echo "pxc_strict_mode=ENFORCED" >> ${BASEDIR}/my.cnf
   echo "innodb_file_per_table" >> ${BASEDIR}/my.cnf
   echo "innodb_autoinc_lock_mode=2" >> ${BASEDIR}/my.cnf
   if ! check_for_version $MYSQL_VERSION "8.0.0" ; then
@@ -445,9 +444,9 @@ pxc_startup(){
     sed -i "2i datadir=$node" ${DATADIR}/n${i}.cnf
     if [[ "$ENCRYPTION_RUN" != 1 ]];then
       sed -i "2i wsrep_provider_options=\"gmcast.listen_addr=tcp://$LADDR1;$WSREP_PROVIDER_OPT\"" ${DATADIR}/n${i}.cnf
-	else
+    else
       sed -i "2i wsrep_provider_options=\"gmcast.listen_addr=tcp://$LADDR1;$WSREP_PROVIDER_OPT;socket.ssl_key=${WORKDIR}/cert/server-key.pem;socket.ssl_cert=${WORKDIR}/cert/server-cert.pem;socket.ssl_ca=${WORKDIR}/cert/ca.pem\"" ${DATADIR}/n${i}.cnf
-	fi
+    fi
     sed -i "2i socket=$node/node${i}_socket.sock" ${DATADIR}/n${i}.cnf
     sed -i "2i tmpdir=$DATADIR/tmp${i}" ${DATADIR}/n${i}.cnf
     echo "ssl-ca = ${WORKDIR}/cert/ca.pem" >> ${DATADIR}/n${i}.cnf
@@ -491,7 +490,7 @@ pxc_startup(){
   fi
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n1.cnf
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n2.cnf
-  sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[3]},${PXC_LADDRS[3]}" ${DATADIR}/n3.cnf
+  sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n3.cnf
   get_error_socket_file 1
   $VALGRIND_CMD ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA  --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   pxc_startup_status 1
