@@ -892,7 +892,7 @@ EOF
       fi
     fi
   elif [[ "${PXC}" == "1" ]]; then
-    if [ ${TRIAL} -gt 1 ]; then
+    if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       mkdir -p ${RUNDIR}/${TRIAL}/
       echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
       rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
@@ -903,6 +903,7 @@ EOF
       sed -i 's|safe_to_bootstrap:.*$|safe_to_bootstrap: 1|' ${RUNDIR}/${TRIAL}/node1/grastate.dat
     else
       mkdir -p ${RUNDIR}/${TRIAL}/
+      echoit "Copying datadir from template..."
       cp -R ${WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
       cp -R ${WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
       cp -R ${WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
@@ -1083,6 +1084,11 @@ EOF
       echoit "3 Node PXC Cluster failed to start after ${PXC_START_TIMEOUT} seconds. Will issue an extra cleanup to ensure nothing remains..."
       (ps -ef | grep 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -9 >/dev/null 2>&1 || true)
       sleep 2; sync
+      SERVER_FAIL_TO_START_COUNT=$[ $SERVER_FAIL_TO_START_COUNT + 1 ]
+      if [ $SERVER_FAIL_TO_START_COUNT -gt 0 ]; then
+        echoit "Server failed to start. Reinitializing the data directory"
+        REINIT_DATADIR=1
+      fi
     elif [[ ${GRP_RPL} -eq 1 ]]; then
       echoit "3 Node Group Replication Cluster failed to start after ${GRP_RPL_START_TIMEOUT} seconds. Will issue an extra cleanup to ensure nothing remains..."
       (ps -ef | grep 'node[0-9]_socket' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -9 >/dev/null 2>&1 || true)
