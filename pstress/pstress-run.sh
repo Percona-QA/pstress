@@ -8,7 +8,7 @@
 CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf file should be in the same path as pstress-run.sh
 
 # ========================================= Improvement ideas ====================================================================
-# * SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY=0 (These likely include some of the 'SIGKILL' issues - no core but terminated)
+# * SAVE_TRIALS_WITH_CORE=0 (These likely include some of the 'SIGKILL' issues - no core but terminated)
 # * SQL hashing s/t2/t1/, hex values "0x"
 # * Full MTR grammar on one-liners
 # * Interleave all statements with another that is likely to cause issues, for example "USE mysql"
@@ -204,34 +204,16 @@ if [ "${GRP_RPL}" == "1" ]; then
   PXC_CLUSTER_RUN=0
 fi
 
-if [ "${VALGRIND_RUN}" == "1" ]; then
-  if [ ${THREADS} -eq 1 ]; then
-    echoit "MODE: Single threaded Valgrind pstress testing"
-  else
-    echoit "MODE: Multi threaded Valgrind pstress testing"
-  fi
+if [ ${THREADS} -eq 1 ]; then
+  echoit "MODE: Single threaded pstress testing"
 else
-  if [ ${THREADS} -eq 1 ]; then
-    echoit "MODE: Single threaded pstress testing"
-  else
-    echoit "MODE: Multi threaded pstress testing"
-  fi
+  echoit "MODE: Multi threaded pstress testing"
 fi
 if [ ${THREADS} -gt 1 ]; then  # We may want to drop this to 20 seconds required?
   if [ ${PSTRESS_RUN_TIMEOUT} -lt 30 ]; then
     echoit "Note: As this is a multi-threaded run, and PSTRESS_RUN_TIMEOUT was set to only ${PSTRESS_RUN_TIMEOUT}, this script is setting the timeout to the required minimum of 60 for this run."
     PSTRESS_RUN_TIMEOUT=60
   fi
-fi
-if [ "${VALGRIND_RUN}" == "1" ]; then
-  echoit "Note: As this is a VALGRIND_RUN=1 run, this script is increasing MYSQLD_START_TIMEOUT (${MYSQLD_START_TIMEOUT}) by 240 seconds because Valgrind is very slow in starting up mysqld."
-  MYSQLD_START_TIMEOUT=$[ ${MYSQLD_START_TIMEOUT} + 240 ]
-  if [ ${MYSQLD_START_TIMEOUT} -lt 300 ]; then
-    echoit "Note: As this is a VALGRIND_RUN=1 run, and MYSQLD_START_TIMEOUT was set to only ${MYSQLD_START_TIMEOUT}), this script is setting the timeout to the required minimum of 300 for this run."
-    MYSQLD_START_TIMEOUT=300
-  fi
-  echoit "Note: As this is a VALGRIND_RUN=1 run, this script is increasing PSTRESS_RUN_TIMEOUT (${PSTRESS_RUN_TIMEOUT}) by 180 seconds because Valgrind is very slow in processing SQL."
-  PSTRESS_RUN_TIMEOUT=$[ ${PSTRESS_RUN_TIMEOUT} + 180 ]
 fi
 
 # Trap ctrl-c
@@ -483,23 +465,18 @@ pxc_startup(){
     MYEXTRA_KEYRING="--early-plugin-load=keyring_vault.so --loose-keyring_vault_config=$WORKDIR/vault/keyring_vault_pxc${i}.cnf"
   fi
 
-  if [ "${VALGRIND_RUN}" == "1" ]; then
-    VALGRIND_CMD="${VALGRIND_CMD}"
-  else
-    VALGRIND_CMD=""
-  fi
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n1.cnf
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n2.cnf
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n3.cnf
   get_error_socket_file 1
-  $VALGRIND_CMD ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA  --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA  --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   pxc_startup_status 1
   get_error_socket_file 2
-  $VALGRIND_CMD ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf \
+  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf \
     $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   pxc_startup_status 2
   get_error_socket_file 3
-  $VALGRIND_CMD ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf \
+  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf \
     $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   pxc_startup_status 3
   
@@ -519,11 +496,11 @@ pxc_startup(){
     echo "  done" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
     echo "}" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
     echo "" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery 
-    echo "$VALGRIND_CMD ${BASEDIR}/bin/mysqld --defaults-file=${WORKDIR}/${TRIAL}/n1.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA  --wsrep-new-cluster > ${RUNDIR}/${TRIAL}/node1/node1.err 2>&1 &" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
+    echo "${BASEDIR}/bin/mysqld --defaults-file=${WORKDIR}/${TRIAL}/n1.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA  --wsrep-new-cluster > ${RUNDIR}/${TRIAL}/node1/node1.err 2>&1 &" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
 	echo "startup_check ${SOCKET1}" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
-    echo "$VALGRIND_CMD ${BASEDIR}/bin/mysqld --defaults-file=${WORKDIR}/${TRIAL}/n2.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${RUNDIR}/${TRIAL}/node2/node2.err  2>&1 &" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
+    echo "${BASEDIR}/bin/mysqld --defaults-file=${WORKDIR}/${TRIAL}/n2.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${RUNDIR}/${TRIAL}/node2/node2.err  2>&1 &" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
 	echo "startup_check ${SOCKET2}" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
-    echo "$VALGRIND_CMD ${BASEDIR}/bin/mysqld --defaults-file=${WORKDIR}/${TRIAL}/n3.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${RUNDIR}/${TRIAL}/node3/node3.err  2>&1 &" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
+    echo "${BASEDIR}/bin/mysqld --defaults-file=${WORKDIR}/${TRIAL}/n3.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${RUNDIR}/${TRIAL}/node3/node3.err  2>&1 &" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
 	echo "startup_check ${SOCKET3}" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
     echo "" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery 
     echo "echo \"${BASEDIR}/bin/mysqladmin -uroot -S${WORKDIR}/${TRIAL}/node3/node3_socket.sock shutdown > /dev/null 2>&1\" > ${WORKDIR}/${TRIAL}/stop_pxc_recovery" >> ${RUNDIR}/${TRIAL}/start_pxc_recovery
@@ -798,15 +775,9 @@ EOF
     fi
     PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
     echoit "Starting mysqld. Error log is stored at ${RUNDIR}/${TRIAL}/log/master.err"
-    if [ "${VALGRIND_RUN}" == "0" ]; then
-      CMD="${BIN} ${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+    CMD="${BIN} ${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
 	--tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
-    else
-      CMD="${VALGRIND_CMD} ${BIN} ${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
-	--tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
-        --log-output=none --log-error=${RUNDIR}/${TRIAL}/log/master.err"
-    fi
     echo $CMD
     $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
     MPID="$!"
@@ -837,20 +808,13 @@ EOF
     echo "BASEDIR=$BASEDIR" > ${RUNDIR}/${TRIAL}/start_recovery
 	
     echo "${CMD//$RUNDIR/$WORKDIR} --init-file=${WORKDIR}/recovery-user.sql > ${WORKDIR}/${TRIAL}/log/master.err 2>&1 &" >> ${RUNDIR}/${TRIAL}/start_recovery ; chmod +x ${RUNDIR}/${TRIAL}/start_recovery
-    # New MYEXTRA/MYSAFE variables pass & VALGRIND run check method as of 2015-07-28 (MYSAFE & MYEXTRA stored in a text file inside the trial dir, VALGRIND file created if used)
+    # New MYEXTRA/MYSAFE variables pass (MYSAFE & MYEXTRA stored in a text file inside the trial dir)
     echo "${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN}" > ${RUNDIR}/${TRIAL}/MYEXTRA
     echo "${MYINIT}" > ${RUNDIR}/${TRIAL}/MYINIT
-    if [ "${VALGRIND_RUN}" == "1" ]; then
-      touch ${RUNDIR}/${TRIAL}/VALGRIND
-    fi
     # Restore orignal MYEXTRA for the next trial (MYEXTRA is no longer needed anywhere else. If this changes in the future, relocate this to below the changed code)
     MYEXTRA=${MYEXTRA_SAVE_IT}
     # Give up to x (start timeout) seconds for mysqld to start, but check intelligently for known startup issues like "Error while setting value" for options
-    if [ "${VALGRIND_RUN}" == "0" ]; then
-      echoit "Waiting for mysqld (pid: ${MPID}) to fully start..."
-    else
-      echoit "Waiting for mysqld (pid: ${MPID}) to fully start (note this is slow for Valgrind runs, and can easily take 35-90 seconds even on an high end server)..."
-    fi
+    echoit "Waiting for mysqld (pid: ${MPID}) to fully start..."
     BADVALUE=0
     FAILEDSTARTABORT=0
     for X in $(seq 0 ${MYSQLD_START_TIMEOUT}); do
@@ -948,10 +912,6 @@ EOF
     echo "${MYEXTRA} ${KEYRING_PLUGIN} ${PXC_MYEXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
     echo "${MYINIT}" > ${RUNDIR}/${TRIAL}/MYINIT
     echo "$WSREP_PROVIDER_OPT" > ${RUNDIR}/${TRIAL}/WSREP_PROVIDER_OPT
-    if [ "${VALGRIND_RUN}" == "1" ]; then
-      touch  ${RUNDIR}/${TRIAL}/VALGRIND
-      echoit "Waiting for all PXC nodes to fully start (note this is slow for Valgrind runs, and can easily take 90-180 seconds even on an high end server)..."
-    fi
     pxc_startup
     echoit "Checking 3 node PXC Cluster startup..."
     for X in $(seq 0 10); do
@@ -1095,150 +1055,31 @@ EOF
       sleep 2; sync
     fi
   fi
-  if [ "${VALGRIND_RUN}" == "1" ]; then
-    echoit "Cleaning up & saving results if needed. Note that this may take up to 10 minutes because this is a Valgrind run. You may also see a mysqladmin killed message..."
-  else
-    echoit "Cleaning up & saving results if needed..."
-  fi
+  echoit "Cleaning up & saving results if needed..."
   TRIAL_SAVED=0;
   sleep 2  # Delay to ensure core was written completely (if any)
   # NOTE**: Do not kill PQPID here/before shutdown. The reason is that pstress may still be writing queries it's executing to the log. The only way to halt pstress properly is by
   # actually shutting down the server which will auto-terminate pstress due to 250 consecutive queries failing. If 250 queries failed and ${PSTRESS_RUN_TIMEOUT}s timeout was reached,
-  # and if there is no core/Valgrind issue and there is no output of percona-qa/search_string.sh either (in case core dumps are not configured correctly, and thus no core file is
+  # and if there is no core and there is no output of percona-qa/search_string.sh either (in case core dumps are not configured correctly, and thus no core file is
   # generated, search_string.sh will still produce output in case the server crashed based on the information in the error log), then we do not need to save this trial (as it is a
   # standard occurence for this to happen). If however we saw 250 queries failed before the timeout was complete, then there may be another problem and the trial should be saved.
   if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
-    if [ "${VALGRIND_RUN}" == "1" ]; then  # For Valgrind, we want the full Valgrind output in the error log, hence we need a proper/clean (and slow...) shutdown
-      # Note that even if mysqladmin is killed with the 'timeout --signal=9', it will not affect the actual state of mysqld, all that was terminated was mysqladmin.
-      # Thus, mysqld would (presumably) have received a shutdown signal (even if the timeout was 2 seconds it likely would have)
-      # ==========================================================================================================================================================
-      # TODO: the timeout...mysqladmin shutdown can be improved further to catch shutdown issues. For this, a new special "CATCH_SHUTDOWN=0/1" mode should be
-      #       added (because the runs would be much slower, so you would want to run this on-demand), and a much longer timeout should be given for mysqladmin
-      #       to succeed getting the server down (3 minutes for single thread runs for example?) if the shutdown fails to complete (i.e. exit status code of
-      #       timeout is 137 as the timeout took place), then a shutdown issue is likely present. It should not take 3+ minutes to shutdown a server. There a
-      #       good number of trials that seem to run into this situation. Likely a subset of them will be related to the already seen shutdown issues in TokuDB.
-      # UPDATE: As an intial stopgap workaround, the timeout was increased to 90 seconds, and the timeout exit code is checked. Trials are saved when this
-      #         happens and a special "SHUTDOWN_TIMEOUT_ISSUE empty file is saved in the trial's directory. pquery-results has been updated to scan for this file
-      # ==========================================================================================================================================================
-      timeout --signal=9 90s ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET} shutdown > /dev/null 2>&1  # Proper/clean shutdown attempt (up to 90 sec wait), necessary to get full Valgrind output in error log + see NOTE** above
-      if [ $? -eq 137 ]; then
-        echoit "mysqld failed to shutdown within 90 seconds for this trial, saving it (pquery-results.sh will show these trials seperately)..."
-        touch ${RUNDIR}/${TRIAL}/SHUTDOWN_TIMEOUT_ISSUE
-        savetrial
-        TRIAL_SAVED=1
-      fi
-      VALGRIND_SUMMARY_FOUND=0
-      for X in $(seq 0 600); do  # Wait for full Valgrind output in error log
-        sleep 1
-        if [ ! -r ${RUNDIR}/${TRIAL}/log/master.err ]; then
-          echoit "Assert: ${RUNDIR}/${TRIAL}/log/master.err not found during a Valgrind run. Please check. Trying to continue, but something is wrong already..."
-          break
-        elif egrep -qi "==[0-9]+== ERROR SUMMARY: [0-9]+ error" ${RUNDIR}/${TRIAL}/log/master.err; then  # Summary found, Valgrind is done
-          VALGRIND_SUMMARY_FOUND=1
-          sleep 2
-          break
-        fi
-      done
-      if [ ${VALGRIND_SUMMARY_FOUND} -eq 0 ]; then
-        kill -9 ${MPID} >/dev/null 2>&1;
-        sleep 2  # <^ Make sure mysqld is gone
-        echoit "Odd mysqld hang detected (mysqld did not terminate even after 600 seconds), saving this trial... "
-        if [ ${TRIAL_SAVED} -eq 0 ]; then
-          savetrial
-          TRIAL_SAVED=1
-        fi
-      fi
-    fi
     echoit "Killing the server with Signal $SIGNAL";
     kill_server $SIGNAL $MPID
     sleep 1  # <^ Make sure all is gone
   elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-    if [ "${VALGRIND_RUN}" == "1" ]; then # For Valgrind, we want the full Valgrind output in the error log, hence we need a proper/clean (and slow...) shutdown
-      # Note that even if mysqladmin is killed with the 'timeout --signal=9', it will not affect the actual state of mysqld, all that was terminated was mysqladmin.
-      # Thus, mysqld would (presumably) have received a shutdown signal (even if the timeout was 2 seconds it likely would have)
-      # Proper/clean shutdown attempt (up to 20 sec wait), necessary to get full Valgrind output in error log
-      timeout --signal=9 90s ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET3} shutdown > /dev/null 2>&1
-      if [ $? -eq 137 ]; then
-        echoit "mysqld for node3 failed to shutdown within 90 seconds for this trial, saving it (pquery-results.sh will show these trials seperately)..."
-        touch ${RUNDIR}/${TRIAL}/SHUTDOWN_TIMEOUT_ISSUE
-        savetrial
-        TRIAL_SAVED=1
-      fi
-      timeout --signal=9 90s ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET2} shutdown > /dev/null 2>&1
-      if [ $? -eq 137 ]; then
-        echoit "mysqld for node2 failed to shutdown within 90 seconds for this trial, saving it (pquery-results.sh will show these trials seperately)..."
-        touch ${RUNDIR}/${TRIAL}/SHUTDOWN_TIMEOUT_ISSUE
-        savetrial
-        TRIAL_SAVED=1
-      fi
-      timeout --signal=9 90s ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET1} shutdown > /dev/null 2>&1
-      if [ $? -eq 137 ]; then
-        echoit "mysqld for node1 failed to shutdown within 90 seconds for this trial, saving it (pquery-results.sh will show these trials seperately)..."
-        touch ${RUNDIR}/${TRIAL}/SHUTDOWN_TIMEOUT_ISSUE
-        savetrial
-        TRIAL_SAVED=1
-      fi
-      for X in $(seq 0 600); do  # Wait for full Valgrind output in error log
-        sleep 1
-        if [[ ! -r ${RUNDIR}/${TRIAL}/node1/node1.err || ! -r ${RUNDIR}/${TRIAL}/node2/node2.err || ! -r ${RUNDIR}/${TRIAL}/node2/node2.err ]]; then
-          echoit "Assert: PXC error logs (${RUNDIR}/${TRIAL}/node[13]/node[13].err) not found during a Valgrind run. Please check. Trying to continue, but something is wrong already..."
-          break
-        elif [ `egrep  "==[0-9]+== ERROR SUMMARY: [0-9]+ error"  ${RUNDIR}/${TRIAL}/node*/node*.err | wc -l` -eq 3 ]; then # Summary found, Valgrind is done
-          VALGRIND_SUMMARY_FOUND=1
-          sleep 2
-          break
-        fi
-      done
-      if [ ${VALGRIND_SUMMARY_FOUND} -eq 0 ]; then
-        kill -9 ${PQPID} >/dev/null 2>&1;
-        (ps -ef | grep 'node[0-9]_socket' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -9 >/dev/null 2>&1 || true)
-        sleep 1  # <^ Make sure mysqld is gone
-        echoit "Odd mysqld hang detected (mysqld did not terminate even after 600 seconds), saving this trial... "
-        if [ ${TRIAL_SAVED} -eq 0 ]; then
-          savetrial
-          TRIAL_SAVED=1
-        fi
-      fi
+    MPID=( $(ps -ef | grep -e 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}') )
+    echoit "Killing the PXC servers with Signal ${SIGNAL}"
+    for i in "${MPID[@]}"
+    do
+      kill_server $SIGNAL $i
+    done
     fi
-
-  MPID=( $(ps -ef | grep -e 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}') )
-  echoit "Killing the PXC servers with Signal ${SIGNAL}"
-  for i in "${MPID[@]}"
-  do
-    kill_server $SIGNAL $i
-  done
-  fi
   if [ ${ISSTARTED} -eq 1 -a ${TRIAL_SAVED} -ne 1 ]; then  # Do not try and print pstress log for a failed mysqld start
     if [[ ${PXC} -eq 1 && ${PXC_CLUSTER_RUN} -eq 0 ]]; then
       echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/node1/*.sql ${RUNDIR}/${TRIAL}/node1/*.log | sed 's|.*:||')"
     else
       echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/*.sql ${RUNDIR}/${TRIAL}/*.log | sed 's|.*:||')"
-    fi
-  fi
-  if [ "${VALGRIND_RUN}" == "1" ]; then
-    VALGRIND_ERRORS_FOUND=0; VALGRIND_CHECK_1=
-    # What follows next are 3 different ways of checking if Valgrind issues were seen, mostly to ensure that no Valgrind issues go unseen, especially if log is not complete
-    VALGRIND_CHECK_1=$(grep "==[0-9]\+== ERROR SUMMARY: [0-9]\+ error" ${RUNDIR}/${TRIAL}/log/master.err | sed 's|.*ERROR SUMMARY: \([0-9]\+\) error.*|\1|')
-    if [ "${VALGRIND_CHECK_1}" == "" ]; then VALGRIND_CHECK_1=0; fi
-    if [ ${VALGRIND_CHECK_1} -gt 0 ]; then
-      VALGRIND_ERRORS_FOUND=1;
-    fi
-    if egrep -qi "^[ \t]*==[0-9]+[= \t]+[atby]+[ \t]*0x" ${RUNDIR}/${TRIAL}/log/master.err; then
-      VALGRIND_ERRORS_FOUND=1;
-    fi
-    if egrep -qi "==[0-9]+== ERROR SUMMARY: [1-9]" ${RUNDIR}/${TRIAL}/log/master.err; then
-      VALGRIND_ERRORS_FOUND=1;
-    fi
-    if [ ${VALGRIND_ERRORS_FOUND} -eq 1 ]; then
-      VALGRIND_TEXT=`${SCRIPT_PWD}/valgrind_string.sh ${RUNDIR}/${TRIAL}/log/master.err`
-      echoit "Valgrind error detected: ${VALGRIND_TEXT}"
-      if [ ${TRIAL_SAVED} -eq 0 ]; then
-        savetrial
-        TRIAL_SAVED=1
-      fi
-    else
-      # Report that no Valgrnid errors were found & Include ERROR SUMMARY from error log
-      echoit "No Valgrind errors detected. $(grep "==[0-9]\+== ERROR SUMMARY: [0-9]\+ error" ${RUNDIR}/${TRIAL}/log/master.err | sed 's|.*ERROR S|ERROR S|')"
     fi
   fi
   if [ ${TRIAL_SAVED} -eq 0 ]; then
@@ -1303,8 +1144,8 @@ EOF
       echoit "ASAN issue detected in the mysqld error log for this trial; saving this trial"
       savetrial
       TRIAL_SAVED=1
-    elif [ ${SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY} -eq 0 ]; then
-      echoit "Saving full trial outcome (as SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY=0 and so trials are saved irrespective of whether an issue was detected or not)"
+    elif [ ${SAVE_TRIALS_WITH_CORE} -eq 0 ]; then
+      echoit "Saving full trial outcome (as SAVE_TRIALS_WITH_CORE=0 and so trials are saved irrespective of whether an issue was detected or not)"
       savetrial
       TRIAL_SAVED=1
     elif [ ${TRIAL} -gt 1 ]; then
@@ -1326,22 +1167,7 @@ EOF
       CRASH_CHECK=0
     else
       if [ ${SAVE_SQL} -eq 1 ]; then
-        if [ "${VALGRIND_RUN}" == "1" ]; then
-          if [ ${VALGRIND_ERRORS_FOUND} -ne 1 ]; then
-            echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY=1, and no issue was seen), except the SQL trace (as SAVE_SQL=1)"
-          fi
-        else
-          echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY=1, and no issue was seen), except the SQL trace (as SAVE_SQL=1)"
-        fi
         savesql
-      else
-        if [ "${VALGRIND_RUN}" == "1" ]; then
-          if [ ${VALGRIND_ERRORS_FOUND} -ne 1 ]; then
-            echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY=1 and SAVE_SQL=0, and no issue was seen)"
-          fi
-        else
-          echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY=1 and SAVE_SQL=0, and no issue was seen)"
-        fi
       fi
     fi
   fi
@@ -1369,7 +1195,7 @@ if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
   ONGOING="Workdir: ${WORKDIR} | Rundir: ${RUNDIR} | Basedir: ${BASEDIR} "
   echoit "${ONGOING}"
 elif [[ ${PXC} -eq 1 ]]; then
-  ONGOING="Workdir: ${WORKDIR} | Rundir: ${RUNDIR} | Basedir: ${BASEDIR} | PXC Mode: TRUE"
+  ONGOING="Workdir: ${WORKDIR} | Rundir: ${RUNDIR} | Basedir: ${BASEDIR} | PXC Mode: TRUE | PXC START TIMEOUT: ${PXC_START_TIMEOUT}"
   echoit "${ONGOING}"
   if [ ${PXC_CLUSTER_RUN} -eq 1 ]; then
     echoit "PXC Cluster run: 'YES'"
@@ -1410,11 +1236,11 @@ if [[ $WITH_KEYRING_VAULT -eq 1 ]];then
   fi
 fi
 
-echoit "mysqld Start Timeout: ${MYSQLD_START_TIMEOUT} | Client Threads: ${THREADS} | Queries/Thread: ${QUERIES_PER_THREAD} | Trials: ${TRIALS} | Save coredump/valgrind issue trials only: `if [ ${SAVE_TRIALS_WITH_CORE_OR_VALGRIND_ONLY} -eq 1 ]; then echo -n 'TRUE'; if [ ${SAVE_SQL} -eq 1 ]; then echo ' + save all SQL traces'; else echo ''; fi; else echo 'FALSE'; fi`"
+echoit "mysqld Start Timeout: ${MYSQLD_START_TIMEOUT} | Client Threads: ${THREADS} | Queries/Thread: ${QUERIES_PER_THREAD} | Trials: ${TRIALS} | Save coredump issue trials only: `if [ ${SAVE_TRIALS_WITH_CORE} -eq 1 ]; then echo -n 'TRUE'; if [ ${SAVE_SQL} -eq 1 ]; then echo ' + save all SQL traces'; else echo ''; fi; else echo 'FALSE'; fi`"
 
 echoit "Storage Engine: ${ENGINE}"
 SQL_INPUT_TEXT="SQL file used: ${INFILE}"
-echoit "Valgrind run: `if [ "${VALGRIND_RUN}" == "1" ]; then echo -n 'TRUE'; else echo -n 'FALSE'; fi` | pstress timeout: ${PSTRESS_RUN_TIMEOUT}"
+echoit "pstress timeout: ${PSTRESS_RUN_TIMEOUT}"
 echoit "pstress Binary: ${PSTRESS_BIN}"
 if [ "${MYINIT}" != "" ]; then echoit "MYINIT: ${MYINIT}"; fi
 if [ "${MYSAFE}" != "" ]; then echoit "MYSAFE: ${MYSAFE}"; fi
