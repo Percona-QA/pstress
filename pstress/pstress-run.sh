@@ -776,7 +776,7 @@ EOF
     PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
     echoit "Starting mysqld. Error log is stored at ${RUNDIR}/${TRIAL}/log/master.err"
     CMD="${BIN} ${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
-	--tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+        --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     echo $CMD
     $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
@@ -1167,10 +1167,10 @@ EOF
       CRASH_CHECK=0
     else
       if [ ${SAVE_SQL} -eq 1 ]; then
-	echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1, and no issue was seen), except the SQL trace (as SAVE_SQL=1)"
+        echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1, and no issue was seen), except the SQL trace (as SAVE_SQL=1)"
         savesql
       else
-	echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1 and SAVE_SQL=0, and no issue was seen)"
+        echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1 and SAVE_SQL=0, and no issue was seen)"
       fi
     fi
   fi
