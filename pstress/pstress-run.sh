@@ -8,7 +8,7 @@
 CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf file should be in the same path as pstress-run.sh
 
 # ========================================= Improvement ideas ====================================================================
-# * SAVE_TRIALS_WITH_CORE=0 (These likely include some of the 'SIGKILL' issues - no core but terminated)
+# * SAVE_TRIALS_WITH_CORE_ONLY=0 (These likely include some of the 'SIGKILL' issues - no core but terminated)
 # * SQL hashing s/t2/t1/, hex values "0x"
 # * Full MTR grammar on one-liners
 # * Interleave all statements with another that is likely to cause issues, for example "USE mysql"
@@ -1074,7 +1074,7 @@ EOF
     do
       kill_server $SIGNAL $i
     done
-    fi
+  fi
   if [ ${ISSTARTED} -eq 1 -a ${TRIAL_SAVED} -ne 1 ]; then  # Do not try and print pstress log for a failed mysqld start
     if [[ ${PXC} -eq 1 && ${PXC_CLUSTER_RUN} -eq 0 ]]; then
       echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/node1/*.sql ${RUNDIR}/${TRIAL}/node1/*.log | sed 's|.*:||')"
@@ -1144,8 +1144,8 @@ EOF
       echoit "ASAN issue detected in the mysqld error log for this trial; saving this trial"
       savetrial
       TRIAL_SAVED=1
-    elif [ ${SAVE_TRIALS_WITH_CORE} -eq 0 ]; then
-      echoit "Saving full trial outcome (as SAVE_TRIALS_WITH_CORE=0 and so trials are saved irrespective of whether an issue was detected or not)"
+    elif [ ${SAVE_TRIALS_WITH_CORE_ONLY} -eq 0 ]; then
+      echoit "Saving full trial outcome (as SAVE_TRIALS_WITH_CORE_ONLY=0 and so trials are saved irrespective of whether an issue was detected or not)"
       savetrial
       TRIAL_SAVED=1
     elif [ ${TRIAL} -gt 1 ]; then
@@ -1167,7 +1167,10 @@ EOF
       CRASH_CHECK=0
     else
       if [ ${SAVE_SQL} -eq 1 ]; then
+	echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1, and no issue was seen), except the SQL trace (as SAVE_SQL=1)"
         savesql
+      else
+	echoit "Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1 and SAVE_SQL=0, and no issue was seen)"
       fi
     fi
   fi
@@ -1236,7 +1239,7 @@ if [[ $WITH_KEYRING_VAULT -eq 1 ]];then
   fi
 fi
 
-echoit "mysqld Start Timeout: ${MYSQLD_START_TIMEOUT} | Client Threads: ${THREADS} | Queries/Thread: ${QUERIES_PER_THREAD} | Trials: ${TRIALS} | Save coredump issue trials only: `if [ ${SAVE_TRIALS_WITH_CORE} -eq 1 ]; then echo -n 'TRUE'; if [ ${SAVE_SQL} -eq 1 ]; then echo ' + save all SQL traces'; else echo ''; fi; else echo 'FALSE'; fi`"
+echoit "mysqld Start Timeout: ${MYSQLD_START_TIMEOUT} | Client Threads: ${THREADS} | Queries/Thread: ${QUERIES_PER_THREAD} | Trials: ${TRIALS} | Save coredump issue trials only: `if [ ${SAVE_TRIALS_WITH_CORE_ONLY} -eq 1 ]; then echo -n 'TRUE'; if [ ${SAVE_SQL} -eq 1 ]; then echo ' + save all SQL traces'; else echo ''; fi; else echo 'FALSE'; fi`"
 
 echoit "Storage Engine: ${ENGINE}"
 SQL_INPUT_TEXT="SQL file used: ${INFILE}"
