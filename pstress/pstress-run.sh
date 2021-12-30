@@ -964,9 +964,10 @@ EOF
     else
       echoit "Loading metadata from ${WORKDIR}/step_$((${TRIAL}-1)).dll ..."
     fi
-    if [[ "${ENGINE}" == "RocksDB" && ${TRIAL} -eq 1 ]]; then
+    if [[ ("${ENGINE}" == "RocksDB" && ${TRIAL} -eq 1) || $REINIT_DATADIR -eq 1 ]]; then
       ${BASEDIR}/bin/ps-admin --enable-rocksdb -uroot -S${SOCKET}
     fi
+
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
       CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL} --user=root --socket=${SOCKET} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER} --engine=${ENGINE}"
     elif [ ${PXC_CLUSTER_RUN} -eq 1 ]; then
