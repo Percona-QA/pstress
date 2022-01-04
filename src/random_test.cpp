@@ -1526,6 +1526,10 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   static auto engine = options->at(Option::ENGINE)->getString();
   table->engine = engine;
 
+  /* If indexes are disabled, also disable auto_inc */
+  if (!options->at(Option::INDEXES)->getInt())
+    options->at(Option::NO_AUTO_INC)->setBool(true);
+
   table->CreateDefaultColumn();
   table->CreateDefaultIndex();
 
