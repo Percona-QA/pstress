@@ -964,8 +964,11 @@ EOF
     else
       echoit "Loading metadata from ${WORKDIR}/step_$((${TRIAL}-1)).dll ..."
     fi
-    if [[ ("${ENGINE}" == "RocksDB" && ${TRIAL} -eq 1) || $REINIT_DATADIR -eq 1 ]]; then
-      ${BASEDIR}/bin/ps-admin --enable-rocksdb -uroot -S${SOCKET}
+
+    if [ ${ENGINE} == "RocksDB" ]; then
+      if [[ ${TRIAL} -eq 1 || $REINIT_DATADIR -eq 1 ]]; then
+        ${BASEDIR}/bin/ps-admin --enable-rocksdb -uroot -S${SOCKET}
+      fi
     fi
 
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
