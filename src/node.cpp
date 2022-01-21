@@ -34,7 +34,7 @@ static bool create_log_dir() {
 
 bool Node::createGeneralLog() {
   std::string logName;
-  logName = myParams.logdir + "/" + myParams.myName + "_general" + ".log";
+  logName = myParams.logdir + "/" + myParams.myName + "_ddl_step" + std::to_string(options->at(Option::STEP)->getInt()) + ".log";
   bool is_success = create_log_dir();
   if (!is_success) {
     std::cerr << "Could not create log dir: " << strerror(errno) << std::endl;

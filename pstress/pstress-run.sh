@@ -859,11 +859,11 @@ EOF
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       mkdir -p ${RUNDIR}/${TRIAL}/
       echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
-      rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
+      rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
       echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
-      rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
+      rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
       echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
-      rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
+      rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
       sed -i 's|safe_to_bootstrap:.*$|safe_to_bootstrap: 1|' ${RUNDIR}/${TRIAL}/node1/grastate.dat
     else
       mkdir -p ${RUNDIR}/${TRIAL}/
@@ -979,7 +979,7 @@ EOF
           > ${RUNDIR}/${TRIAL}/pstress-cluster-pxc.cfg
       CMD="${PSTRESS_BIN} --database=test --config-file=${RUNDIR}/${TRIAL}/pstress-cluster-pxc.cfg --queries-per-thread=${QUERIES_PER_THREAD} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     else
-      CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL}/node1/ --user=root --socket=${SOCKET1} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
+      CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL}/ --user=root --socket=${SOCKET1} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     fi
     if [ $REINIT_DATADIR -eq 1 ]; then
       CMD="$CMD --prepare"
@@ -1080,11 +1080,7 @@ EOF
     done
   fi
   if [ ${ISSTARTED} -eq 1 -a ${TRIAL_SAVED} -ne 1 ]; then  # Do not try and print pstress log for a failed mysqld start
-    if [[ ${PXC} -eq 1 && ${PXC_CLUSTER_RUN} -eq 0 ]]; then
-      echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/node1/*.sql ${RUNDIR}/${TRIAL}/node1/*.log | sed 's|.*:||')"
-    else
-      echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/*.sql ${RUNDIR}/${TRIAL}/*.log | sed 's|.*:||')"
-    fi
+    echoit "pstress run details:$(grep -i 'SUMMARY.*queries failed' ${RUNDIR}/${TRIAL}/*.sql ${RUNDIR}/${TRIAL}/*.log | sed 's|.*:||')"
   fi
   if [ ${TRIAL_SAVED} -eq 0 ]; then
     if [[ ${SIGNAL} -ne 4 ]]; then
