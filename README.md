@@ -136,7 +136,7 @@ Option | Function | Example | Default
 --socket | Socket file to use | | default: /tmp/socket.sock
 --sof | server options file, MySQL server options file, picks some of the mysqld options, and try to set them during the load , using set global and set session | --sof=innodb_temp_tablespace_encrypt=on=off | default:
 --special-sql | special sql | | default#: 10
---sql-file | file to be used  for special sql T1_INT_1, T1_INT_2 will be replaced with int columns of some table in database T1_VARCHAR_1, T1_VARCHAR_2 will be replaced with varchar columns of some table in database | | default: grammer.sql
+--sql-file | file to be used  for special sql T1_INT_1, T1_INT_2 will be replaced with int columns of some table in database T1_VARCHAR_1, T1_VARCHAR_2 will be replaced with varchar columns of some table in database | | default: grammar.sql
 --step | current step in pstress script | | default#: 1
 --tables | Number of initial tables | --tables=10 | default#: 10
 --tbs-count | random number of different general tablespaces | --tbs-count=3 | default#: 1

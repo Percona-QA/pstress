@@ -10,6 +10,7 @@
 #include <regex>
 #include <sstream>
 #include <string>
+#include <libgen.h>
 
 #define CR_SERVER_GONE_ERROR 2006
 #define CR_SERVER_LOST 2013
@@ -2608,10 +2609,14 @@ void alter_tablespace_rename(Thd1 *thd) {
 }
 
 /* load special sql from a file */
-static std::vector<std::string> load_special_sql_from() {
+static std::vector<std::string> load_grammar_sql_from() {
   std::vector<std::string> array;
-  auto file = opt_string(SQL_FILE);
-  std::string sql;
+  auto grammar_file = opt_string(GRAMMAR_FILE);
+  std::string sql,file;
+  if (grammar_file == "grammar.sql")
+    file = std::string(binary_fullpath) + "/" +  std::string(grammar_file);
+  else
+    file = grammar_file;
 
   std::ifstream myfile(file);
   if (myfile.is_open()) {
@@ -2628,9 +2633,9 @@ static std::vector<std::string> load_special_sql_from() {
 }
 
 /* return preformatted sql */
-static void special_sql(std::vector<Table *> *all_tables, Thd1 *thd) {
+static void grammar_sql(std::vector<Table *> *all_tables, Thd1 *thd) {
 
-  static std::vector<std::string> all_sql = load_special_sql_from();
+  static std::vector<std::string> all_sql = load_grammar_sql_from();
   enum sql_col_types { INT, VARCHAR };
 
   if (all_sql.size() == 0)
@@ -3307,8 +3312,8 @@ void Thd1::run_some_query() {
     case Option::UNDO_SQL:
       create_alter_drop_undo(this);
       break;
-    case Option::SPECIAL_SQL:
-      special_sql(all_session_tables, this);
+    case Option::GRAMMAR_SQL:
+      grammar_sql(all_session_tables, this);
       break;
 
     default:
