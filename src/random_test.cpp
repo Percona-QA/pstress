@@ -27,6 +27,7 @@ static std::vector<std::string> g_encryption;
 static std::vector<std::string> g_compression = {"none", "zlib", "lz4"};
 static std::vector<std::string> g_row_format;
 static std::vector<std::string> g_tablespace;
+std::vector<std::string> locks;
 static std::vector<int> g_key_block_size;
 static int g_max_columns_length = 30;
 static int g_innodb_page_size;
@@ -110,6 +111,25 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(RENAME_COLUMN, 0);
     opt_int_set(UNDO_SQL, 0);
     opt_int_set(ALTER_REDO_LOGGING, 0);
+  }
+
+  static auto lock = opt_string(LOCK);
+  if (lock.compare("all") == 0) {
+    locks.push_back("DEFAULT");
+    locks.push_back("EXCLUSIVE");
+    locks.push_back("SHARED");
+    locks.push_back("NONE");
+  } else {
+    std::transform(lock.begin(), lock.end(), lock.begin(),
+                 ::toupper);
+    if (lock.find("EXCLUSIVE") != std::string::npos)
+      locks.push_back("EXCLUSIVE");
+    if (lock.find("SHARED") != std::string::npos)
+      locks.push_back("SHARED");
+    if (lock.find("NONE") != std::string::npos)
+      locks.push_back("NONE");
+    if (lock.find("DEFAULT") != std::string::npos)
+      locks.push_back("DEFAULT");
   }
 
   /* Disabling until Bug: https://jira.percona.com/browse/PS-7865 is fixed by upstream */
@@ -285,33 +305,45 @@ int sum_of_all_server_options() {
 
 /* pick some algorith */
 inline static std::string pick_algorithm_lock() {
-  /* pick algorith for current sql */
-  static auto lock = opt_string(LOCK);
+  /* pick algorithm for current sql */
   static auto algorithm = opt_string(ALGORITHM);
-  std::string locks[] = {"DEFAULT", "EXCLUSIVE", "SHARED", "NONE"};
-  std::string algorithms[] = {"INPLACE", "COPY", "INSTANT", "DEFAULT"};
+
+  std::vector<std::string> algorithms;
+
   std::string current_lock;
   std::string current_algo;
-  if (lock.compare("all") == 0 && algorithm.compare("all") == 0) {
-    auto lock_index = rand_int(3);
-    auto algo_index = rand_int(3);
-    /* lock=none;algo=inplace|copy not supported */
-    if (lock_index == 3 && algo_index < 2)
-      lock_index = 0;
-    current_lock = locks[lock_index];
-    current_algo = algorithms[algo_index];
-  } else if (lock.compare("all") == 0) {
-    auto lock_index = rand_int(3);
-    current_lock = locks[lock_index];
-    current_algo = algorithm;
-  } else if (algorithm.compare("all") == 0) {
-    auto algo_index = rand_int(3);
-    current_algo = algorithms[algo_index];
-    current_lock = lock;
+
+  if (algorithm.compare("all") == 0) {
+    algorithms.push_back("INPLACE");
+    algorithms.push_back("COPY");
+    algorithms.push_back("INSTANT");
+    algorithms.push_back("DEFAULT");
   } else {
-    current_lock = lock;
-    current_algo = algorithm;
+    std::transform(algorithm.begin(), algorithm.end(), algorithm.begin(),
+                 ::toupper);
+    if (algorithm.find("INPLACE") != std::string::npos)
+      algorithms.push_back("INPLACE");
+    if (algorithm.find("COPY") != std::string::npos)
+      algorithms.push_back("COPY");
+    if (algorithm.find("INSTANT") != std::string::npos)
+      algorithms.push_back("INSTANT");
+    if (algorithm.find("DEFAULT") != std::string::npos)
+      algorithms.push_back("DEFAULT");
   }
+
+  current_lock = locks[rand_int(locks.size() - 1)];
+
+/* With LOCK=NONE, ALGORITHM=INSTANT/COPY is not supported */
+  if (current_lock == "NONE") {
+    algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
+    algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "COPY"));
+  }
+/* With LOCK=EXCLUSIVE,DEFAULT,SHARED; ALGORITHM=INSTANT is not supported */
+  else if (current_lock == "EXCLUSIVE" || current_lock == "DEFAULT" || current_lock == "SHARED")
+    algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
+
+  current_algo = algorithms[rand_int(algorithms.size() - 1)];
+
   return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
 }
 
