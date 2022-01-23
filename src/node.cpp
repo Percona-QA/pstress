@@ -169,6 +169,9 @@ void Node::tryConnect() {
     server_version = mysql_get_server_info(conn);
   }
   general_log << "- Connected server version: " << server_version << std::endl;
+  if (strcmp(PLATFORM_ID,"Darwin") == 0)
+    general_log << "- Table compression is disabled as hole punching is not supported on OSX"
+                << std::endl;
   if (result != NULL) {
     mysql_free_result(result);
   }

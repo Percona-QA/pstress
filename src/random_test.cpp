@@ -202,6 +202,10 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
   }
 
+  /* If OS is Mac, disable table compression as hole punching is not supported on OSX */
+  if (strcmp(PLATFORM_ID, "Darwin") == 0)
+    options->at(Option::NO_TABLE_COMPRESSION)->setBool(true);
+
   /* If no-table-compression is set, disable all compression */
   if (options->at(Option::NO_TABLE_COMPRESSION)->getBool()) {
     opt_int_set(ALTER_TABLE_COMPRESSION, 0);
