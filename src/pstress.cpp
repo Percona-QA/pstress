@@ -56,9 +56,8 @@ void create_worker(struct workerParams *Params) {
 int main(int argc, char *argv[]) {
 
   /* Fetching the directory path where the executable is present */
-  char buffer[MAX_PATH];
-  realpath(argv[0], buffer);
-  binary_fullpath = dirname(buffer);
+  std::unique_ptr<char> ptr(realpath(argv[0], nullptr));
+  binary_fullpath = dirname(ptr.get());
 
   std::vector<std::thread> nodes;
   std::ios_base::sync_with_stdio(false);
