@@ -716,18 +716,18 @@ void add_options() {
   opt->help = "path of metadata file";
 
   /* sql format for */
-  opt = newOption(Option::INT, Option::SPECIAL_SQL, "special-sql");
-  opt->help = "special sql";
+  opt = newOption(Option::INT, Option::GRAMMAR_SQL, "grammar-sql");
+  opt->help = "grammar sql";
   opt->setInt(10);
   opt->setSQL();
 
   /* file name of special sql */
-  opt = newOption(Option::STRING, Option::SQL_FILE, "sql-file");
+  opt = newOption(Option::STRING, Option::GRAMMAR_FILE, "grammar-file");
   opt->help =
-      "file to be used  for special sql\nT1_INT_1, T1_INT_2 will be replaced "
+      "file to be used  for grammar sql\nT1_INT_1, T1_INT_2 will be replaced "
       "with int columns of some table\n in database T1_VARCHAR_1, T1_VARCHAR_2 "
       "will be replaced with varchar columns of some table in database";
-  opt->setString("grammer.sql");
+  opt->setString("grammar.sql");
 }
 
 Option::~Option() {}

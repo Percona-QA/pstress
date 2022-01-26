@@ -19,6 +19,11 @@
 #include <INIReader.hpp>
 #include <mysql.h>
 #include <thread>
+#include <string>
+#include <libgen.h> //dirname() uses this
+
+/* Global variable to hold pstress build directory path */
+const char *binary_fullpath;
 
 void read_section_settings(struct workerParams *wParams, std::string secName,
                            std::string confFile) {
@@ -49,6 +54,12 @@ void create_worker(struct workerParams *Params) {
 }
 
 int main(int argc, char *argv[]) {
+
+  /* Fetching the directory path where the executable is present */
+  char buffer[MAX_PATH];
+  realpath(argv[0], buffer);
+  binary_fullpath = dirname(buffer);
+
   std::vector<std::thread> nodes;
   std::ios_base::sync_with_stdio(false);
   add_options();
