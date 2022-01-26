@@ -118,8 +118,8 @@ struct Option {
     MAX_PARTITIONS,
     STEP,
     METADATA_PATH,
-    SPECIAL_SQL,
-    SQL_FILE,
+    GRAMMAR_SQL,
+    GRAMMAR_FILE,
     DROP_COLUMN,
     ADD_COLUMN,
     DROP_INDEX,
@@ -202,6 +202,7 @@ typedef std::vector<Option *> Opx;
 typedef std::vector<Server_Option *> Ser_Opx;
 extern Opx *options;
 extern Ser_Opx *server_options;
+extern const char *binary_fullpath;
 void add_options();
 void add_server_options(std::string str);
 void add_server_options_file(std::string file_name);
