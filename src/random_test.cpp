@@ -28,6 +28,7 @@ static std::vector<std::string> g_compression = {"none", "zlib", "lz4"};
 static std::vector<std::string> g_row_format;
 static std::vector<std::string> g_tablespace;
 std::vector<std::string> locks;
+std::vector<std::string> algorithms;
 static std::vector<int> g_key_block_size;
 static int g_max_columns_length = 30;
 static int g_innodb_page_size;
@@ -113,7 +114,7 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_REDO_LOGGING, 0);
   }
 
-  static auto lock = opt_string(LOCK);
+  auto lock = opt_string(LOCK);
   if (lock.compare("all") == 0) {
     locks.push_back("DEFAULT");
     locks.push_back("EXCLUSIVE");
@@ -130,6 +131,24 @@ int sum_of_all_options(Thd1 *thd) {
       locks.push_back("NONE");
     if (lock.find("DEFAULT") != std::string::npos)
       locks.push_back("DEFAULT");
+  }
+  auto algorithm = opt_string(ALGORITHM);
+  if (algorithm.compare("all") == 0) {
+    algorithms.push_back("INPLACE");
+    algorithms.push_back("COPY");
+    algorithms.push_back("INSTANT");
+    algorithms.push_back("DEFAULT");
+  } else {
+    std::transform(algorithm.begin(), algorithm.end(), algorithm.begin(),
+                 ::toupper);
+    if (algorithm.find("INPLACE") != std::string::npos)
+      algorithms.push_back("INPLACE");
+    if (algorithm.find("COPY") != std::string::npos)
+      algorithms.push_back("COPY");
+    if (algorithm.find("INSTANT") != std::string::npos)
+      algorithms.push_back("INSTANT");
+    if (algorithm.find("DEFAULT") != std::string::npos)
+      algorithms.push_back("DEFAULT");
   }
 
   /* Disabling until Bug: https://jira.percona.com/browse/PS-7865 is fixed by upstream */
@@ -303,44 +322,26 @@ int sum_of_all_server_options() {
   return total;
 }
 
-/* pick some algorith */
+/* pick some algorithm */
 inline static std::string pick_algorithm_lock() {
-  /* pick algorithm for current sql */
-  static auto algorithm = opt_string(ALGORITHM);
-
-  std::vector<std::string> algorithms;
 
   std::string current_lock;
   std::string current_algo;
-
-  if (algorithm.compare("all") == 0) {
-    algorithms.push_back("INPLACE");
-    algorithms.push_back("COPY");
-    algorithms.push_back("INSTANT");
-    algorithms.push_back("DEFAULT");
-  } else {
-    std::transform(algorithm.begin(), algorithm.end(), algorithm.begin(),
-                 ::toupper);
-    if (algorithm.find("INPLACE") != std::string::npos)
-      algorithms.push_back("INPLACE");
-    if (algorithm.find("COPY") != std::string::npos)
-      algorithms.push_back("COPY");
-    if (algorithm.find("INSTANT") != std::string::npos)
-      algorithms.push_back("INSTANT");
-    if (algorithm.find("DEFAULT") != std::string::npos)
-      algorithms.push_back("DEFAULT");
-  }
 
   current_lock = locks[rand_int(locks.size() - 1)];
 
 /* With LOCK=NONE, ALGORITHM=INSTANT/COPY is not supported */
   if (current_lock == "NONE") {
-    algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
-    algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "COPY"));
+    if (std::count(algorithms.begin(), algorithms.end(), "INSTANT"))
+      algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
+    if (std::count(algorithms.begin(), algorithms.end(), "COPY"))
+      algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "COPY"));
   }
 /* With LOCK=EXCLUSIVE,DEFAULT,SHARED; ALGORITHM=INSTANT is not supported */
-  else if (current_lock == "EXCLUSIVE" || current_lock == "DEFAULT" || current_lock == "SHARED")
-    algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
+  else if (current_lock == "EXCLUSIVE" || current_lock == "DEFAULT" || current_lock == "SHARED") {
+    if (std::count(algorithms.begin(), algorithms.end(), "INSTANT"))
+      algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
+  }
 
   current_algo = algorithms[rand_int(algorithms.size() - 1)];
 
