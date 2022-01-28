@@ -4,6 +4,7 @@
 #ifndef PQVERSION
 #define PQVERSION "1"
 #endif
+
 #ifdef MAXPACKET
   #ifndef MAX_PACKET_DEFAULT
   #define MAX_PACKET_DEFAULT 4194304
@@ -17,6 +18,13 @@
 #ifndef PQREVISION
 #define PQREVISION "unknown"
 #endif
+
+#ifdef __APPLE__
+#define PLATFORM_ID "Darwin"
+#else
+#define PLATFORM_ID "Linux"
+#endif
+
 #include <getopt.h>
 #include <atomic>
 #include <map>
