@@ -21,7 +21,7 @@ void Node::workerThread(int number) {
   std::ofstream client_log;
   if (options->at(Option::LOG_CLIENT_OUTPUT)->getBool()) {
     std::ostringstream cl;
-    cl << myParams.logdir << "/" << myParams.myName << "_thread-" << number
+    cl << myParams.logdir << "/" << myParams.myName << "_step_" << std::to_string(options->at(Option::STEP)->getInt())  << "_thread-" << number
        << ".out";
     client_log.open(cl.str(), std::ios::out | std::ios::trunc);
     if (!client_log.is_open()) {
@@ -36,7 +36,7 @@ void Node::workerThread(int number) {
       options->at(Option::LOG_QUERY_STATISTICS)->getBool() ||
       options->at(Option::LOG_SUCCEDED_QUERIES)->getBool()) {
     std::ostringstream os;
-    os << myParams.logdir << "/" << myParams.myName << "_thread-" << number
+    os << myParams.logdir << "/" << myParams.myName << "_step_" << std::to_string(options->at(Option::STEP)->getInt()) << "_thread-" << number
        << ".sql";
     thread_log.open(os.str(), std::ios::out | std::ios::trunc);
     if (!thread_log.is_open()) {
