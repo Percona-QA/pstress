@@ -329,22 +329,29 @@ inline static std::string pick_algorithm_lock() {
   std::string current_algo;
 
   current_lock = locks[rand_int(locks.size() - 1)];
-
-/* With LOCK=NONE, ALGORITHM=INSTANT/COPY is not supported */
-  if (current_lock == "NONE") {
-    if (std::count(algorithms.begin(), algorithms.end(), "INSTANT"))
-      algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
-    if (std::count(algorithms.begin(), algorithms.end(), "COPY"))
-      algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "COPY"));
-  }
-/* With LOCK=EXCLUSIVE,DEFAULT,SHARED; ALGORITHM=INSTANT is not supported */
-  else if (current_lock == "EXCLUSIVE" || current_lock == "DEFAULT" || current_lock == "SHARED") {
-    if (std::count(algorithms.begin(), algorithms.end(), "INSTANT"))
-      algorithms.erase(std::find(algorithms.begin(), algorithms.end(), "INSTANT"));
-  }
-
   current_algo = algorithms[rand_int(algorithms.size() - 1)];
 
+  /*
+  Support Matrix	LOCK=DEFAULT	LOCK=EXCLUSIVE	LOCK=NONE	LOCK=SHARED
+  ALGORITHM=INPLACE	Supported	Supported	Supported	Supported
+  ALGORITHM=COPY	Supported	Supported	Not Supported	Supported
+  ALGORITHM=INSTANT	Supported	Not Supported	Not Supported	Not Supported
+  ALGORITHM=DEFAULT	Supported	Supported	Supported	Supported
+*/
+
+  /* If current_algo=INPLACE|DEFAULT, do nothing, since all lock types supported */
+  if (current_algo == "INSTANT")
+    current_lock = "DEFAULT";
+  else if (current_algo == "COPY") {
+    int a = rand_int(2);
+    std::cout << "value a:" << a << std::endl;
+    if (a == 0)
+      current_lock = "DEFAULT";
+    else if (a == 1)
+      current_lock = "EXCLUSIVE";
+    else
+      current_lock = "SHARED";
+  }
   return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
 }
 
