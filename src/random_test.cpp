@@ -327,8 +327,8 @@ inline static std::string pick_algorithm_lock() {
 
   std::string current_lock;
   std::string current_algo;
+  int lock_none_removed = 0;
 
-  current_lock = locks[rand_int(locks.size() - 1)];
   current_algo = algorithms[rand_int(algorithms.size() - 1)];
 
   /*
@@ -339,19 +339,36 @@ inline static std::string pick_algorithm_lock() {
   ALGORITHM=DEFAULT	Supported	Supported	Supported	Supported
 */
 
-  /* If current_algo=INPLACE|DEFAULT, do nothing, since all lock types supported */
+   /* If current_algo=INSTANT, we can set current_lock=DEFAULT directly as it is the 
+    * only supported option */
   if (current_algo == "INSTANT")
     current_lock = "DEFAULT";
+  /* If current_algo=COPY; LOCK can be either of DEFAULT,EXCLUSIVE,SHARED */
   else if (current_algo == "COPY") {
-    int a = rand_int(2);
-    std::cout << "value a:" << a << std::endl;
-    if (a == 0)
-      current_lock = "DEFAULT";
-    else if (a == 1)
-      current_lock = "EXCLUSIVE";
-    else
-      current_lock = "SHARED";
+    /* At this point locks vector can have any possible value provided by the user.
+     We need to make sure that if NONE exists in lock vector we temporarily remove it.
+     After removing LOCK=NONE(if it exists in vector) we will be left with all supported
+     options which will be randomly picked */
+    if (std::count(locks.begin(), locks.end(), "NONE")) {
+      locks.erase(std::find(locks.begin(), locks.end(), "NONE"));
+      lock_none_removed = 1;
+    }
+    /* If user passes --alter-lock NONE --alter-algorithm COPY from command line */
+    if (locks.empty()) {
+      std::cout << "LOCK=NONE is not supported with ALGORITHM=COPY" << std::endl;
+      exit(1);
+    }
+    current_lock = locks[rand_int(locks.size() - 1)];
   }
+  /* If current_algo=INPLACE|DEFAULT, do nothing, since all lock types are supported.*/
+  else
+    current_lock = locks[rand_int(locks.size() - 1)];
+
+  /* We don't want to remove NONE permanently from locks vector, hence
+   * pushing back the removed entry back into locks vector */
+  if (lock_none_removed)
+    locks.push_back("NONE");
+
   return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
 }
 
