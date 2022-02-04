@@ -28,6 +28,8 @@ static std::vector<std::string> g_encryption;
 static std::vector<std::string> g_compression = {"none", "zlib", "lz4"};
 static std::vector<std::string> g_row_format;
 static std::vector<std::string> g_tablespace;
+static std::vector<std::string> locks;
+static std::vector<std::string> algorithms;
 static std::vector<int> g_key_block_size;
 static int g_max_columns_length = 30;
 static int g_innodb_page_size;
@@ -111,6 +113,43 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(RENAME_COLUMN, 0);
     opt_int_set(UNDO_SQL, 0);
     opt_int_set(ALTER_REDO_LOGGING, 0);
+  }
+
+  auto lock = opt_string(LOCK);
+  if (lock.compare("all") == 0) {
+    locks.push_back("DEFAULT");
+    locks.push_back("EXCLUSIVE");
+    locks.push_back("SHARED");
+    locks.push_back("NONE");
+  } else {
+    std::transform(lock.begin(), lock.end(), lock.begin(),
+                 ::toupper);
+    if (lock.find("EXCLUSIVE") != std::string::npos)
+      locks.push_back("EXCLUSIVE");
+    if (lock.find("SHARED") != std::string::npos)
+      locks.push_back("SHARED");
+    if (lock.find("NONE") != std::string::npos)
+      locks.push_back("NONE");
+    if (lock.find("DEFAULT") != std::string::npos)
+      locks.push_back("DEFAULT");
+  }
+  auto algorithm = opt_string(ALGORITHM);
+  if (algorithm.compare("all") == 0) {
+    algorithms.push_back("INPLACE");
+    algorithms.push_back("COPY");
+    algorithms.push_back("INSTANT");
+    algorithms.push_back("DEFAULT");
+  } else {
+    std::transform(algorithm.begin(), algorithm.end(), algorithm.begin(),
+                 ::toupper);
+    if (algorithm.find("INPLACE") != std::string::npos)
+      algorithms.push_back("INPLACE");
+    if (algorithm.find("COPY") != std::string::npos)
+      algorithms.push_back("COPY");
+    if (algorithm.find("INSTANT") != std::string::npos)
+      algorithms.push_back("INSTANT");
+    if (algorithm.find("DEFAULT") != std::string::npos)
+      algorithms.push_back("DEFAULT");
   }
 
   /* Disabling until Bug: https://jira.percona.com/browse/PS-7865 is fixed by upstream */
@@ -288,35 +327,39 @@ int sum_of_all_server_options() {
   return total;
 }
 
-/* pick some algorith */
+/* pick some algorithm */
 inline static std::string pick_algorithm_lock() {
-  /* pick algorith for current sql */
-  static auto lock = opt_string(LOCK);
-  static auto algorithm = opt_string(ALGORITHM);
-  std::string locks[] = {"DEFAULT", "EXCLUSIVE", "SHARED", "NONE"};
-  std::string algorithms[] = {"INPLACE", "COPY", "INSTANT", "DEFAULT"};
+
   std::string current_lock;
   std::string current_algo;
-  if (lock.compare("all") == 0 && algorithm.compare("all") == 0) {
-    auto lock_index = rand_int(3);
-    auto algo_index = rand_int(3);
-    /* lock=none;algo=inplace|copy not supported */
-    if (lock_index == 3 && algo_index < 2)
-      lock_index = 0;
-    current_lock = locks[lock_index];
-    current_algo = algorithms[algo_index];
-  } else if (lock.compare("all") == 0) {
-    auto lock_index = rand_int(3);
-    current_lock = locks[lock_index];
-    current_algo = algorithm;
-  } else if (algorithm.compare("all") == 0) {
-    auto algo_index = rand_int(3);
-    current_algo = algorithms[algo_index];
-    current_lock = lock;
-  } else {
-    current_lock = lock;
-    current_algo = algorithm;
-  }
+
+  current_algo = algorithms[rand_int(algorithms.size() - 1)];
+
+  /*
+  Support Matrix	LOCK=DEFAULT	LOCK=EXCLUSIVE	LOCK=NONE	LOCK=SHARED
+  ALGORITHM=INPLACE	Supported	Supported	Supported	Supported
+  ALGORITHM=COPY	Supported	Supported	Not Supported	Supported
+  ALGORITHM=INSTANT	Supported	Not Supported	Not Supported	Not Supported
+  ALGORITHM=DEFAULT	Supported	Supported	Supported	Supported
+*/
+
+  /* If current_algo=INSTANT, we can set current_lock=DEFAULT directly as it is the
+   * only supported option */
+  if (current_algo == "INSTANT")
+    current_lock = "DEFAULT";
+  /* If current_algo=COPY; MySQL supported LOCK values are DEFAULT,EXCLUSIVE,SHARED
+   * At this point, it may pick LOCK=NONE as well, but we will handle it later in the code.
+   * If current_algo=INPLACE|DEFAULT; randomly pick any value, since all lock types are supported.*/
+  else
+    current_lock = locks[rand_int(locks.size() - 1)];
+
+  /* Handling the incompatible combination at the end.
+   * A user may see a deviation if he has opted for --alter-lock to NOT
+   * run with DEFAULT. But this is an exceptional case.
+   */
+  if (current_algo == "COPY" && current_lock == "NONE")
+    current_lock = "DEFAULT";
+
   return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
 }
 

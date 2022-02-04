@@ -177,16 +177,19 @@ void add_options() {
   opt->setInt(7);
 
   /* algorithm for alter */
-  opt = newOption(Option::STRING, Option::ALGORITHM, "alter-algorith");
-  opt->help = "algorithm used in alter table. INPLACE|COPY|DEFAULT\n all "
-              "means randomly one of them will be picked";
+  opt = newOption(Option::STRING, Option::ALGORITHM, "alter-algorithm");
+  opt->help = "algorithm used in alter table.\n"
+              "--alter-algorithm INPLACE,COPY,DEFAULT\n --alter-algorithm all "
+              "means randomly one of them will be picked. Pass options comma "
+              "seperated without space";
   opt->setString("all");
 
   /* lock for alter */
   opt = newOption(Option::STRING, Option::LOCK, "alter-lock");
   opt->help = "lock mechanism used in alter table.\n "
-              "DEFAULT|NONE|SHARED|EXCLUSIVE.\n all means randomly one of them "
-              "will be picked";
+              "--alter-lock DEFAULT,NONE,SHARED,EXCLUSIVE\n --alter-lock all "
+              "means randomly one of them will be picked. Pass options comma "
+              "seperated without space";
   opt->setString("all");
 
   /* Number of columns in a table */
