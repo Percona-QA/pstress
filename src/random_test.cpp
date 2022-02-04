@@ -27,8 +27,8 @@ static std::vector<std::string> g_encryption;
 static std::vector<std::string> g_compression = {"none", "zlib", "lz4"};
 static std::vector<std::string> g_row_format;
 static std::vector<std::string> g_tablespace;
-std::vector<std::string> locks;
-std::vector<std::string> algorithms;
+static std::vector<std::string> locks;
+static std::vector<std::string> algorithms;
 static std::vector<int> g_key_block_size;
 static int g_max_columns_length = 30;
 static int g_innodb_page_size;
@@ -327,7 +327,6 @@ inline static std::string pick_algorithm_lock() {
 
   std::string current_lock;
   std::string current_algo;
-  int lock_none_removed = 0;
 
   current_algo = algorithms[rand_int(algorithms.size() - 1)];
 
@@ -339,35 +338,22 @@ inline static std::string pick_algorithm_lock() {
   ALGORITHM=DEFAULT	Supported	Supported	Supported	Supported
 */
 
-   /* If current_algo=INSTANT, we can set current_lock=DEFAULT directly as it is the 
-    * only supported option */
+  /* If current_algo=INSTANT, we can set current_lock=DEFAULT directly as it is the
+   * only supported option */
   if (current_algo == "INSTANT")
     current_lock = "DEFAULT";
-  /* If current_algo=COPY; LOCK can be either of DEFAULT,EXCLUSIVE,SHARED */
-  else if (current_algo == "COPY") {
-    /* At this point locks vector can have any possible value provided by the user.
-     We need to make sure that if NONE exists in lock vector we temporarily remove it.
-     After removing LOCK=NONE(if it exists in vector) we will be left with all supported
-     options which will be randomly picked */
-    if (std::count(locks.begin(), locks.end(), "NONE")) {
-      locks.erase(std::find(locks.begin(), locks.end(), "NONE"));
-      lock_none_removed = 1;
-    }
-    /* If user passes --alter-lock NONE --alter-algorithm COPY from command line */
-    if (locks.empty()) {
-      std::cout << "LOCK=NONE is not supported with ALGORITHM=COPY" << std::endl;
-      exit(1);
-    }
-    current_lock = locks[rand_int(locks.size() - 1)];
-  }
-  /* If current_algo=INPLACE|DEFAULT, do nothing, since all lock types are supported.*/
+  /* If current_algo=COPY; MySQL supported LOCK values are DEFAULT,EXCLUSIVE,SHARED
+   * At this point, it may pick LOCK=NONE as well, but we will handle it later in the code.
+   * If current_algo=INPLACE|DEFAULT; randomly pick any value, since all lock types are supported.*/
   else
     current_lock = locks[rand_int(locks.size() - 1)];
 
-  /* We don't want to remove NONE permanently from locks vector, hence
-   * pushing back the removed entry back into locks vector */
-  if (lock_none_removed)
-    locks.push_back("NONE");
+  /* Handling the incompatible combination at the end.
+   * A user may see a deviation if he has opted for --alter-lock to NOT
+   * run with DEFAULT. But this is an exceptional case.
+   */
+  if (current_algo == "COPY" && current_lock == "NONE")
+    current_lock = "DEFAULT";
 
   return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
 }
