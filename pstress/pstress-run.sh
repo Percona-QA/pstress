@@ -103,6 +103,66 @@ kill_server(){
   { kill -$SIG ${MPID} && wait ${MPID}; } 2>/dev/null
 }
 
+capture_tables_and_rows(){
+  if [ "$1" == "before_crash" ]; then
+    # Find the total no. of tables
+    no_of_tables_before_crash=$(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -se "SELECT count(*) FROM information_schema.tables WHERE table_name LIKE 'tt_%'")
+    echoit "No. of tables just before server crash: $no_of_tables_before_crash"
+
+    # Store table names in an array
+    table_names_before_crash=($(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -se "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'tt_%'"))
+
+    # Uncomment for debugging
+    #${BASEDIR}/bin/mysql -uroot -S${SOCKET} -se "use test; show tables"
+
+    # Declare an array to hold table counts
+    declare -a tables_row_count_before_crash;
+    for i in $(seq 0 $(($no_of_tables_before_crash - 1)))
+    do
+      # Store no. of rows in each of the tables and store it in the array
+      tables_row_count_before_crash[$i]=$(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -sNe "SELECT count(*) FROM test.${table_names_before_crash[$i]}")
+    done
+  elif [ "$1" == "after_recovery" ]; then
+    # Find the total no. of tables
+    no_of_tables_after_recovery=$(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -se "SELECT count(*) FROM information_schema.tables WHERE table_name LIKE 'tt_%'")
+    echoit "No. of tables after recovery: $no_of_tables_after_recovery"
+
+    # Store table names in an array
+    table_names_after_recovery=($(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -se "SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'tt_%'"))
+
+    #Uncomment to debug
+    #${BASEDIR}/bin/mysql -uroot -S${SOCKET} -se "use test; show tables"
+
+    # Declare an array to hold table counts
+    declare -a tables_row_count_after_recovery;
+    for i in $(seq 0 $(($no_of_tables_after_recovery - 1)))
+    do
+    # Store no. of rows in each of the tables and store it in the array
+      tables_row_count_after_recovery[$i]=$(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -sNe "SELECT count(*) FROM test.${table_names_after_recovery[$i]}")
+    done
+  else
+    echo "Invalid option:$1 ! Exiting...";
+    exit 1
+  fi
+}
+
+validate_data_after_crash(){
+  if [ "$no_of_tables_before_crash" != "$no_of_tables_after_recovery" ]; then
+    # Below check is required in case the server crashes before the table & row stats are captured. In that case, it will return empty
+    if [ "$no_of_tables_before_crash" != "" ]; then
+    echoit "Mismatch found in count of tables. Before crash: $no_of_tables_before_crash, After recovery: $no_of_tables_after_recovery"
+    fi
+  fi
+  echoit "Validating the number of rows in each table..."
+  for i in $(seq 0 $(($no_of_tables_before_crash - 1)))
+  do
+    if [ "${tables_row_count_before_crash[$i]}" != "${tables_row_count_after_recovery[$i]}" ]; then
+      echoit "Mismatch found in ${table_names[$i]}; Before crash: ${tables_row_count_before_crash[$i]}, After recovery: ${tables_row_count_after_recovery[$i]}";
+    fi
+  done
+  echoit "No Mismatch found. All tables OK!"
+}
+
 # PXC Bug found display function
 pxc_bug_found(){
   NODE=$1
@@ -777,7 +837,7 @@ EOF
     echoit "Starting mysqld. Error log is stored at ${RUNDIR}/${TRIAL}/log/master.err"
     CMD="${BIN} ${MYSAFE} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
         --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
-        --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
+        --general-log=1 --log_output=FILE --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err --general_log_file=${RUNDIR}/${TRIAL}/log/mysqld.log"
     echo $CMD
     $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
     MPID="$!"
@@ -853,6 +913,10 @@ EOF
         ${BASEDIR}/bin/mysql --defaults-file=/dev/stdin  -e "GRANT SUPER, PROCESS, REPLICATION SLAVE, RELOAD ON *.* TO 'orc_client_user'@'%' IDENTIFIED BY 'orc_client_password'" 2>/dev/null
         echoit "Starting pmm client for this server..."
         sudo pmm-admin add mysql pq${RANDOMD}-${TRIAL} --socket=${SOCKET} --user=root --query-source=perfschema
+      fi
+      if [ ${TRIAL} -gt 1 ]; then
+        capture_tables_and_rows after_recovery
+        validate_data_after_crash
       fi
     fi
   elif [[ "${PXC}" == "1" ]]; then
@@ -1068,6 +1132,8 @@ EOF
   # generated, search_string.sh will still produce output in case the server crashed based on the information in the error log), then we do not need to save this trial (as it is a
   # standard occurence for this to happen). If however we saw 250 queries failed before the timeout was complete, then there may be another problem and the trial should be saved.
   if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
+    # Capturing the data before server kill
+    capture_tables_and_rows before_crash
     echoit "Killing the server with Signal $SIGNAL";
     kill_server $SIGNAL $MPID
     sleep 1  # <^ Make sure all is gone
