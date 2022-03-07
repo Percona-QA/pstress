@@ -329,8 +329,10 @@ if [[ $PXC -eq 1 ]];then
     echo "enforce_gtid_consistency=ON" >> ${BASEDIR}/my.cnf
     echo "master_verify_checksum=on" >> ${BASEDIR}/my.cnf
     echo "binlog_checksum=CRC32" >> ${BASEDIR}/my.cnf
-    echo "binlog_encryption=ON" >> ${BASEDIR}/my.cnf
     echo "pxc_encrypt_cluster_traffic=ON" >> ${BASEDIR}/my.cnf
+    if check_for_version $MYSQL_VERSION "8.0.0" ; then
+      echo "binlog_encryption=ON" >> ${BASEDIR}/my.cnf
+    fi
     if [[ $WITH_KEYRING_VAULT -ne 1 ]];then
       echo "early-plugin-load=keyring_file.so" >> ${BASEDIR}/my.cnf
       echo "keyring_file_data=keyring" >> ${BASEDIR}/my.cnf
