@@ -10,10 +10,16 @@
 # ./pstress_log_to_sql_converter.sh default.node.tld_step_1_thread-0.sql                      #
 #                                                                                             #
 # Update the BASEDIR and SOCKET information of the running server before executing the script #
-#                                                                                             #
+# eg. BASEDIR=$HOME/mysql-8.0/bld_8.0.28/install                                              #
+#     SOCKET=/tmp/mysql_22000.sock                                                            #
 ###############################################################################################
 
 logFileName=$1
+
+if [ ! -s $logFileName ]; then
+  echo "Input File $logFileName is empty or does not exist. Exiting..."
+  exit 1
+fi
 
 SCRIPT=$(readlink -f $0)
 SCRIPT_PATH=`dirname $SCRIPT`
@@ -46,11 +52,11 @@ echo "Converted SQL file can be found here: $outputFileName"
 # NOTE:                                                                                                         #
 # 1. Make sure to start a fresh MySQL instance before running this script. Executing the SQL file on an already #
 #    running server may have existing database objects (eg. general tablespaces, tables, etc) causing failures. #
-# 2. Comment SQL execution section(below) in case pstress logs are generated in multi-threaded mode. Reason     #
-#    being that, some database objects might be created in another thread causing SQLs to fail.                 #
 #################################################################################################################
-# Executing SQLs against a running server (Optional)
-BASEDIR=$HOME/mysql-8.0/bld_8.0.28/install
-SOCKET=/tmp/mysql_22000.sock
-$BASEDIR/bin/mysql -uroot -S$SOCKET -e "source $outputFileName"
+# To Execute SQLs against a running server set the BASEDIR and SOCKET path (Optional).
+BASEDIR=
+SOCKET=
+if [[ $BASEDIR != "" && $SOCKET != "" ]]; then
+  $BASEDIR/bin/mysql -uroot -S$SOCKET -e "source $outputFileName"
+fi
 
