@@ -9,8 +9,8 @@
 # Usage   :                                                                                   #
 # ./pstress_log_to_sql_converter.sh default.node.tld_step_1_thread-0.sql                      #
 #                                                                                             #
-# Update the BASEDIR and SOCKET information of the running server before executing the script #
-# eg. BASEDIR=$HOME/mysql-8.0/bld_8.0.28/install                                              #
+# Update the BUILD_DIR & SOCKET information of the running server before executing the script #
+# eg. BUILD_DIR=$HOME/mysql-8.0/bld_8.0.28/                                                   #
 #     SOCKET=/tmp/mysql_22000.sock                                                            #
 ###############################################################################################
 
@@ -53,10 +53,18 @@ echo "Converted SQL file can be found here: $outputFileName"
 # 1. Make sure to start a fresh MySQL instance before running this script. Executing the SQL file on an already #
 #    running server may have existing database objects (eg. general tablespaces, tables, etc) causing failures. #
 #################################################################################################################
-# To Execute SQLs against a running server set the BASEDIR and SOCKET path (Optional).
-BASEDIR=
+# To Execute SQLs against a running server set the BUILD_DIR and SOCKET path (Optional).
+BUILD_DIR=
 SOCKET=
-if [[ $BASEDIR != "" && $SOCKET != "" ]]; then
-  $BASEDIR/bin/mysql -uroot -S$SOCKET -e "source $outputFileName"
-fi
+if [[ $BUILD_DIR != "" && $SOCKET != "" ]]; then
+  $BUILD_DIR/runtime_output_directory/mysql -uroot -S$SOCKET -e "source $outputFileName"
 
+  if [ $? -eq 0 ]; then
+    echo "Query execution successful. Check server logs for details"
+  else
+    echo "There is a failure while executing SQLs. Please check, if
+  1. Server is running.
+  2. You are using a stale server. In that case, please remove old datadir, and start a new server.
+  3. The server has crashed while executing the SQLs. This is mostly a bug, please check server logs for details."
+  fi
+fi
