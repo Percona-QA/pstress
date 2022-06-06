@@ -70,3 +70,6 @@
 .*Error_code: 1062.*
 .*Error_code: 1488.*
 .*Error_code: 1176.*
+
+# PS-7865 Dropping a table with discarded tablespace crashes the server.
+.*Assertion failure.*btr0sea.cc:.*page.id.space.*
