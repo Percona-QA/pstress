@@ -7,46 +7,106 @@
 #            SQLs from it                                                                     #
 #                                                                                             #
 # Usage   :                                                                                   #
-# ./pstress_log_to_sql_converter.sh default.node.tld_step_1_thread-0.sql                      #
+# ./pstress_log_to_sql_converter.sh --logdir <val>                                            #
+# ./pstress_log_to_sql_converter.sh --logdir <val> --build-dir <val> --socket <val>           #
 #                                                                                             #
-# Update the BUILD_DIR & SOCKET information of the running server before executing the script #
-# eg. BUILD_DIR=$HOME/mysql-8.0/bld_8.0.28/                                                   #
-#     SOCKET=/tmp/mysql_22000.sock                                                            #
+# For more info:                                                                              #
+# ./pstress_run_log_to_sql_converter.sh --help                                                #
 ###############################################################################################
 
-logFileName=$1
+# Helper Function
+Help() {
+  echo "usage:  $BASH_SOURCE --logfile <val> --build-dir <val> --socket <val>"
+  echo "--logfile: Full path to the pstress log file"
+  echo "--build-dir: Path to MySQL build/installation directory"
+  echo "--socket: Path to socket file to connect to running server"
+}
 
-if [ ! -s $logFileName ]; then
-  echo "Input File $logFileName is empty or does not exist. Exiting..."
+if [ "$#" -eq 0 ]; then
+  Help
+  exit
+fi
+
+ARGUMENT_LIST=(
+    "logfile"
+    "build-dir"
+    "socket"
+    "help"
+)
+
+# Read arguments
+opts=$(getopt \
+    --longoptions "$(printf "%s:," "${ARGUMENT_LIST[@]}" | sed 's/.\{2\}$//')" \
+    --name "$(basename "$0")" \
+    --options "" \
+    -- "$@"
+)
+
+eval set --$opts
+
+while true; do
+    case "$1" in
+    --help)
+        Help
+        exit
+        ;;
+    --build-dir)
+	shift
+	BUILD_DIR=$1
+	break
+	;;
+    --socket)
+	shift
+	SOCKET=$1
+	break
+	;;
+    --logfile)
+        shift
+	LOG_FILENAME=$1
+	break
+	;;
+    --)
+	shift
+	Help
+	exit
+	;;
+    esac
+    shift
+done
+
+
+if [ ! -s $LOG_FILENAME ]; then
+  echo "Input File $LOG_FILENAME is empty or does not exist. Exiting..."
   exit 1
 fi
 
 SCRIPT=$(readlink -f $0)
-SCRIPT_PATH=`dirname $SCRIPT`
-outputFileName=$SCRIPT_PATH/reduced.sql
+SCRIPT_PATH=$(dirname $SCRIPT)
+LOGFILE=$(basename $LOG_FILENAME)
+OUTPUT_FILENAME=$SCRIPT_PATH/reduced_"$LOGFILE"
 
-echo "Reading the pstress logfile: $logFileName"
+echo "Reading the pstress logfile: $LOG_FILENAME"
 
 # Filtering out all the successfully executed SQLs from the pstress log
-sed -n 's/.* S //p' $logFileName > $outputFileName
+sed -n 's/.* S //p' $LOG_FILENAME > $OUTPUT_FILENAME
 
 # Trimming off un-necessary information at the beginning of each SQL
-sed -i 's/^ S //g' $outputFileName
+sed -i 's/^ S //g' $OUTPUT_FILENAME
 
 # Trimming off un-necessary information at the end of each SQL
-sed -i 's/rows:[0-9]*//g' $outputFileName
+sed -i 's/rows:[0-9]*//g' $OUTPUT_FILENAME
 
 # Find the crashing query
-crashQuery=$(awk '/Error Lost connection to MySQL server during query/{print prev} {prev=$0}' $logFileName | head -n1 | sed 's/.* F //')
+crashQuery=$(awk '/Error Lost connection to MySQL server during query/{print prev} {prev=$0}' $LOG_FILENAME | head -n1 | sed 's/.* F //')
 
 # Append the crashing query at the end of output file
-echo $crashQuery >> $outputFileName
+echo $crashQuery >> $OUTPUT_FILENAME
 
 # Adding semi-colon at the end of each SQL statement. In case, semi-colon
 # already exists, then do not add twice
-sed -i '/[^;] *$/s/$/;/' $outputFileName
+sed -i '/[^;] *$/s/$/;/' $OUTPUT_FILENAME
 
-echo "Converted SQL file can be found here: $outputFileName"
+echo "Converted SQL file can be found here: $OUTPUT_FILENAME"
 
 #################################################################################################################
 # NOTE:                                                                                                         #
@@ -54,10 +114,9 @@ echo "Converted SQL file can be found here: $outputFileName"
 #    running server may have existing database objects (eg. general tablespaces, tables, etc) causing failures. #
 #################################################################################################################
 # To Execute SQLs against a running server set the BUILD_DIR and SOCKET path (Optional).
-BUILD_DIR=
-SOCKET=
 if [[ $BUILD_DIR != "" && $SOCKET != "" ]]; then
-  $BUILD_DIR/runtime_output_directory/mysql -uroot -S$SOCKET -e "source $outputFileName"
+  MYSQL=$(find $BUILD_DIR -type f -name mysql | head -n1)
+  $MYSQL -uroot -S$SOCKET -e "source $OUTPUT_FILENAME"
 
   if [ $? -eq 0 ]; then
     echo "Query execution successful. Check server logs for details"
