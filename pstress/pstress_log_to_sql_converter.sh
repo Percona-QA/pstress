@@ -25,6 +25,7 @@ Help() {
   echo "--logfile: Full path to the pstress log file"
   echo "--mysql-client: Path to MySQL client"
   echo "--socket: Path to socket file to connect to running server"
+  echo "--user: Database username. If not provided, it defaults to root user"
 }
 
 if [ "$#" -eq 0 ]; then
