@@ -3055,7 +3055,7 @@ void clean_up_at_end() {
 void create_database_tablespace(Thd1 *thd) {
 
   /* drop database test*/
-  execute_sql("DROP DATABASE test", thd);
+  execute_sql("DROP DATABASE IF EXISTS test", thd);
   execute_sql("CREATE DATABASE test", thd); // todo encrypt database/schema
 
   for (auto &tab : g_tablespace) {
