@@ -7,8 +7,12 @@
 #            SQLs from it                                                                     #
 #                                                                                             #
 # Usage   :                                                                                   #
+# 1. The user can pass the path of pstress log file as shown below to convert it in SQL file  #
 # ./pstress_log_to_sql_converter.sh --logdir <val>                                            #
-# ./pstress_log_to_sql_converter.sh --logdir <val> --build-dir <val> --socket <val>           #
+#                                                                                             #
+# 2. The user can use this script to also execute the converted SQL file against a running    #
+# server by setting the path --mysql-client and --socket                                      #
+# ./pstress_log_to_sql_converter.sh --logdir <val> --mysql-client <val> --socket <val>        #
 #                                                                                             #
 # For more info:                                                                              #
 # ./pstress_run_log_to_sql_converter.sh --help                                                #
@@ -16,9 +20,10 @@
 
 # Helper Function
 Help() {
-  echo "usage:  $BASH_SOURCE --logfile <val> --build-dir <val> --socket <val>"
+  echo "usage: $BASH_SOURCE --logfile <val>"
+  echo "usage: $BASH_SOURCE --logfile <val> --mysql-client <val> --socket <val>"
   echo "--logfile: Full path to the pstress log file"
-  echo "--build-dir: Path to MySQL build/installation directory"
+  echo "--mysql-client: Path to MySQL client"
   echo "--socket: Path to socket file to connect to running server"
 }
 
@@ -29,7 +34,7 @@ fi
 
 ARGUMENT_LIST=(
     "logfile"
-    "build-dir"
+    "mysql-client"
     "socket"
     "help"
 )
@@ -50,9 +55,9 @@ while true; do
         Help
         exit
         ;;
-    --build-dir)
+    --mysql-client)
 	shift
-	BUILD_DIR=$1
+	MYSQL=$1
 	break
 	;;
     --socket)
@@ -113,9 +118,8 @@ echo "Converted SQL file can be found here: $OUTPUT_FILENAME"
 # 1. Make sure to start a fresh MySQL instance before running this script. Executing the SQL file on an already #
 #    running server may have existing database objects (eg. general tablespaces, tables, etc) causing failures. #
 #################################################################################################################
-# To Execute SQLs against a running server set the BUILD_DIR and SOCKET path (Optional).
-if [[ $BUILD_DIR != "" && $SOCKET != "" ]]; then
-  MYSQL=$(find $BUILD_DIR -type f -name mysql | head -n1)
+# To Execute SQLs against a running server set the MYSQL and SOCKET path (Optional).
+if [[ $MYSQL != "" && $SOCKET != "" ]]; then
   $MYSQL -uroot -S$SOCKET -e "source $OUTPUT_FILENAME"
 
   if [ $? -eq 0 ]; then
