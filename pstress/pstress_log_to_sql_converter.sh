@@ -36,6 +36,7 @@ ARGUMENT_LIST=(
     "logfile"
     "mysql-client"
     "socket"
+    "user"
     "help"
 )
 
@@ -46,6 +47,11 @@ opts=$(getopt \
     --options "" \
     -- "$@"
 )
+
+if [ $? -ne 0 ]; then
+  echo "Invalid option. Exiting..."
+  exit 1
+fi
 
 eval set --$opts
 
@@ -58,27 +64,25 @@ while true; do
     --mysql-client)
 	shift
 	MYSQL=$1
-	break
 	;;
     --socket)
 	shift
 	SOCKET=$1
-	break
 	;;
     --logfile)
         shift
 	LOG_FILENAME=$1
-	break
+	;;
+    --user)
+	shift
+	USER_NAME=$1
 	;;
     --)
-	shift
-	Help
-	exit
+	break
 	;;
     esac
     shift
 done
-
 
 if [ ! -s $LOG_FILENAME ]; then
   echo "Input File $LOG_FILENAME is empty or does not exist. Exiting..."
@@ -120,7 +124,8 @@ echo "Converted SQL file can be found here: $OUTPUT_FILENAME"
 #################################################################################################################
 # To Execute SQLs against a running server set the MYSQL and SOCKET path (Optional).
 if [[ $MYSQL != "" && $SOCKET != "" ]]; then
-  $MYSQL -uroot -S$SOCKET -e "source $OUTPUT_FILENAME"
+  if [ "$USER_NAME" == "" ]; then USER_NAME=root; fi
+  $MYSQL -u$USER_NAME -p -S$SOCKET -e "source $OUTPUT_FILENAME"
 
   if [ $? -eq 0 ]; then
     echo "Query execution successful. Check server logs for details"
