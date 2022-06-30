@@ -58,11 +58,12 @@ static std::string get_result(std::string sql, Thd1 *thd) {
  Example 8.0.26 -> 80026
  Example 5.7.35 -> 50735
 */
-static unsigned long server_version() {
+static int get_server_version() {
   std::string ps_base = mysql_get_client_info();
   unsigned long major = 0, minor = 0, version = 0;
   std::size_t major_p = ps_base.find(".");
-  if(major_p != std::string::npos) major = stoi(ps_base.substr(0, major_p));
+  if (major_p != std::string::npos)
+    major = stoi(ps_base.substr(0, major_p));
 
   std::size_t minor_p = ps_base.find(".", major_p + 1);
   if (minor_p != std::string::npos)
@@ -73,8 +74,17 @@ static unsigned long server_version() {
     version = stoi(ps_base.substr(minor_p + 1, version_p - minor_p));
   else
     version = stoi(ps_base.substr(minor_p + 1));
+  auto server_version = major * 10000 + minor * 100 + version;
+  return server_version;
+}
 
-  return major * 10000 + minor * 100 + version;
+/* return server version in number format
+ Example 8.0.26 -> 80026
+ Example 5.7.35 -> 50735
+*/
+int server_version() {
+  static int sv = get_server_version();
+  return sv;
 }
 
 /* return probabality of all options and disable some feature based on user
@@ -327,8 +337,10 @@ int sum_of_all_server_options() {
   return total;
 }
 
-/* pick some algorithm */
-inline static std::string pick_algorithm_lock() {
+/* pick some algorithm. and if caller pass value of algo & lock set it */
+inline static std::string
+pick_algorithm_lock(std::string *const algo = nullptr,
+                    std::string *const lock = nullptr) {
 
   std::string current_lock;
   std::string current_algo;
@@ -359,6 +371,11 @@ inline static std::string pick_algorithm_lock() {
    */
   if (current_algo == "COPY" && current_lock == "NONE")
     current_lock = "DEFAULT";
+
+  if (algo != nullptr)
+    *algo = current_algo;
+  if (lock != nullptr)
+    *lock = current_lock;
 
   return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
 }
@@ -2048,8 +2065,32 @@ void Table::AddColumn(Thd1 *thd) {
   else
     tc = new Column(name, this, col_type);
 
-  sql += tc->definition() + ",";
-  sql += pick_algorithm_lock();
+  sql += tc->definition();
+
+  std::string algo;
+  std::string algorithm_lock = pick_algorithm_lock(&algo);
+
+  bool has_virtual_column = false;
+  /* if a table has virtual column, We can not add AFTER */
+  for (auto col : *columns_) {
+    if (col->type_ == Column::GENERATED) {
+      has_virtual_column = true;
+      break;
+    }
+  }
+  if (col_type == Column::GENERATED)
+    has_virtual_column = true;
+
+  if ((((algo == "INSTANT" || algo == "INPLACE") &&
+        has_virtual_column == false && key_block_size == 1) ||
+       (algo != "INSTANT" && algo != "INPLACE")) &&
+      rand_int(10, 1) <= 7) {
+    sql += " AFTER " + columns_->at(rand_int(columns_->size() - 1))->name_;
+  }
+
+  sql += ",";
+
+  sql += algorithm_lock;
 
   table_mutex.unlock();
 
