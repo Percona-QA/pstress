@@ -82,7 +82,7 @@ static int get_server_version() {
  Example 8.0.26 -> 80026
  Example 5.7.35 -> 50735
 */
-int server_version() {
+static int server_version() {
   static int sv = get_server_version();
   return sv;
 }
