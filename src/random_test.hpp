@@ -99,7 +99,7 @@ public:
 struct Blob_Column : public Column {
   Blob_Column(std::string name, Table *table);
   Blob_Column(std::string name, Table *table, std::string sub_type_);
-  std::string sub_type; // sub_type can be tiny, medium, large blob
+  std::string sub_type;
   std::string clause() { return sub_type; };
   std::string rand_value() { return "\'" + rand_string(1000) + "\'"; }
   template <typename Writer> void Serialize(Writer &writer) const;
@@ -108,11 +108,11 @@ struct Blob_Column : public Column {
 struct Generated_Column : public Column {
 
   /* constructor for new random generated column */
-  Generated_Column(std::string name, Table *table);
+  Generated_Column(const std::string &name, Table *table);
 
   /* constructor used to prepare metadata */
-  Generated_Column(std::string name, Table *table, std::string clause,
-                   std::string sub_type);
+  Generated_Column(const std::string &name, Table *table,
+                   const std::string &clause, const std::string &sub_type);
 
   template <typename Writer> void Serialize(Writer &writer) const;
 
