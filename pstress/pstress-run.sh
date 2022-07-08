@@ -7,23 +7,12 @@
 # Note: if an option is passed to this script, it will use that option as the configuration file instead, for example ./pstress-run.sh pstress-run.conf
 CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf file should be in the same path as pstress-run.sh
 
-# ========================================= Improvement ideas ====================================================================
-# * SAVE_TRIALS_WITH_CORE_ONLY=0 (These likely include some of the 'SIGKILL' issues - no core but terminated)
-# * SQL hashing s/t2/t1/, hex values "0x"
-# * Full MTR grammar on one-liners
-# * Interleave all statements with another that is likely to cause issues, for example "USE mysql"
-
 # ========================================= MAIN CODE ============================================================================
 # Internal variables: DO NOT CHANGE!
 RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/')
 SCRIPT_AND_PATH=$(readlink -f $0); SCRIPT=$(echo ${SCRIPT_AND_PATH} | sed 's|.*/||'); SCRIPT_PWD=$(cd `dirname $0` && pwd)
 WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; PXC_START_TIMEOUT=300; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
 SERVER_FAIL_TO_START_COUNT=0;ENGINE=InnoDB;
-
-# Set ASAN coredump options
-# https://github.com/google/sanitizers/wiki/SanitizerCommonFlags
-# https://github.com/google/sanitizers/wiki/AddressSanitizerFlags
-export ASAN_OPTIONS=quarantine_size_mb=512:atexit=true:detect_invalid_pointer_pairs=1:dump_instruction_bytes=true:abort_on_error=1  # This used to have disable_core=0 (now disable_coredump=0 ?) - TODO: check optimal setting
 
 # Read configuration
 if [ "$1" != "" ]; then CONFIGURATION_FILE=$1; fi
@@ -154,15 +143,6 @@ else
   fi
 fi
 
-#Sanity check for PXB Crash testing run
-if [[ ${PXB_CRASH_RUN} -eq 1 ]]; then
-  echoit "MODE: Percona Xtrabackup crash test run"
-  if [[ ! -d ${PXB_BASEDIR} ]]; then
-    echoit "Assert: $PXB_BASEDIR does not exist. Terminating!"
-    exit 1
-  fi
-fi
-
 if [ "${CONFIGURATION_FILE}" == "pstress-run-PXC80.conf" -o "${CONFIGURATION_FILE}" == "pstress-run-PXC57.conf" ]; then PXC=1; fi
 if [ "$(whoami)" == "root" ]; then MYEXTRA="--user=root ${MYEXTRA}"; fi
 if [ "${PXC_CLUSTER_RUN}" == "1" ]; then
@@ -232,10 +212,6 @@ ctrl-c(){
     echoit "Done. Moving the trial $0 was currently working on to workdir as ${WORKDIR}/${TRIAL}/..."
     mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a /${WORKDIR}/pstress-run.log
   fi
-  if [ "$PMM" == "1" ]; then
-    echoit "Attempting to cleanup PMM client services..."
-    sudo pmm-admin remove --all > /dev/null
-  fi
   echoit "Attempting to cleanup the pstress rundir ${RUNDIR}..."
   rm -Rf ${RUNDIR}
   if [ $SAVED -eq 0 -a ${SAVE_SQL} -eq 0 ]; then
@@ -252,10 +228,6 @@ ctrl-c(){
 savetrial(){  # Only call this if you definitely want to save a trial
   echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/${TRIAL}"
   mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a /${WORKDIR}/pstress-run.log
-  if [ "$PMM_CLEAN_TRIAL" == "1" ];then
-    echoit "Removing mysql instance (pq${RANDOMD}-${TRIAL}) from pmm-admin"
-    sudo pmm-admin remove mysql pq${RANDOMD}-${TRIAL} > /dev/null
-  fi
   SAVED=$[ $SAVED + 1 ]
 }
 
@@ -263,10 +235,6 @@ removetrial(){
   echoit "Removing trial rundir ${RUNDIR}/${TRIAL}"
   if [ "${RUNDIR}" != "" -a "${TRIAL}" != "" -a -d ${RUNDIR}/${TRIAL}/ ]; then  # Protection against dangerous rm's
     rm -Rf ${RUNDIR}/${TRIAL}/
-  fi
-  if [ "$PMM_CLEAN_TRIAL" == "1" ];then
-    echoit "Removing mysql instance (pq${RANDOMD}-${TRIAL}) from pmm-admin"
-    sudo pmm-admin remove mysql pq${RANDOMD}-${TRIAL} > /dev/null
   fi
 }
 
@@ -849,13 +817,6 @@ EOF
       ISSTARTED=1
       echoit "Server started ok. Client: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET}"
       ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "CREATE DATABASE IF NOT EXISTS test;" > /dev/null 2>&1
-      if [ "$PMM" == "1" ];then
-        echoit "Adding Orchestrator user for MySQL replication topology management.."
-        printf "[client]\nuser=root\nsocket=${SOCKET}\n" | \
-        ${BASEDIR}/bin/mysql --defaults-file=/dev/stdin  -e "GRANT SUPER, PROCESS, REPLICATION SLAVE, RELOAD ON *.* TO 'orc_client_user'@'%' IDENTIFIED BY 'orc_client_password'" 2>/dev/null
-        echoit "Starting pmm client for this server..."
-        sudo pmm-admin add mysql pq${RANDOMD}-${TRIAL} --socket=${SOCKET} --user=root --query-source=perfschema
-      fi
     fi
   elif [[ "${PXC}" == "1" ]]; then
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
@@ -1006,16 +967,6 @@ EOF
       if [ "`ps -ef | grep ${PQPID} | grep -v grep`" == "" ]; then  # pstress ended
         break
       fi
-    # Initiate Percona Xtrabackup
-      if [[ ${PXB_CRASH_RUN} -eq 1 ]]; then
-        if [[ $X -ge $PXB_INITIALIZE_BACKUP_SEC ]]; then
-          $PXB_BASEDIR/bin/xtrabackup --user=root --password='' --backup --target-dir=${RUNDIR}/${TRIAL}/xb_full -S${SOCKET} --datadir=${RUNDIR}/${TRIAL}/data --lock-ddl > ${RUNDIR}/${TRIAL}/backup.log 2>&1
-          $PXB_BASEDIR/bin/xtrabackup --prepare --target_dir=${RUNDIR}/${TRIAL}/xb_full --lock-ddl > ${RUNDIR}/${TRIAL}/prepare_backup.log 2>&1
-          echoit "Backup completed"
-          PXB_CHECK=1
-          break 
-        fi
-      fi
       if [ $X -ge ${PSTRESS_RUN_TIMEOUT} ]; then
         echoit "${PSTRESS_RUN_TIMEOUT}s timeout reached. Terminating this trial..."
         TIMEOUT_REACHED=1
@@ -1029,12 +980,6 @@ EOF
         break
       fi
     done
-    if [ "$PMM" == "1" ]; then
-      if ps -p  ${MPID} > /dev/null ; then
-        echoit "PMM trial info : Sleeping 5 mints to check the data collection status"
-        sleep 300
-      fi
-    fi
   else
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
       echoit "Server (PID: ${MPID} | Socket: ${SOCKET}) failed to start after ${MYSQLD_START_TIMEOUT} seconds. Will issue extra kill -9 to ensure it's gone..."
@@ -1157,11 +1102,6 @@ EOF
     elif [ ${TRIAL} -eq 1 ]; then
        savetrial
        TRIAL_SAVED=1
-    elif [[ ${PXB_CHECK} -eq 1 ]]; then
-      echoit "Saving this trial for backup restore analysis"
-      savetrial
-      TRIAL_SAVED=1
-      PXB_CHECK=0
     elif [[ ${CRASH_CHECK} -eq 1 ]]; then
       echoit "Saving this trial for backup restore analysis"
       savetrial
@@ -1224,9 +1164,6 @@ fi
 echo "[$(date +'%D %T')] ${ONGOING}" >> ~/ongoing.pquery-runs.txt
 ONGOING=
 
-if [[ ${PXB_CRASH_RUN} -eq 1 ]]; then
-  echoit "PXB Base: ${PXB_BASEDIR}"
-fi
 # Start vault server for pquery encryption run
 if [[ $WITH_KEYRING_VAULT -eq 1 ]];then
   echoit "Setting up vault server"
@@ -1312,33 +1249,6 @@ if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
   echo "${MYEXTRA}${MYSAFE}" | if grep -qi "innodb[_-]log[_-]checksum[_-]algorithm"; then
     # Ensure that if MID created log files with the standard checksum algo, whilst we start the server with another one, that log files are re-created by mysqld
     rm ${WORKDIR}/data.template/ib_log*
-  fi
-  if [ "$PMM" == "1" ];then
-    echoit "Initiating PMM configuration"
-    if ! docker ps -a | grep 'pmm-data' > /dev/null ; then
-      docker create -v /opt/prometheus/data -v /opt/consul-data -v /var/lib/mysql --name pmm-data percona/pmm-server:${PMM_VERSION_CHECK} /bin/true > /dev/null
-      check_cmd $? "pmm-server docker creation failed"
-    fi
-    if ! docker ps -a | grep 'pmm-server' | grep ${PMM_VERSION_CHECK} | grep -v pmm-data > /dev/null ; then
-      docker run -d -p 80:80 --volumes-from pmm-data --name pmm-server --restart always percona/pmm-server:${PMM_VERSION_CHECK} > /dev/null
-      check_cmd $? "pmm-server container creation failed"
-    elif ! docker ps | grep 'pmm-server' | grep ${PMM_VERSION_CHECK} > /dev/null ; then
-      docker start pmm-server > /dev/null
-      check_cmd $? "pmm-server container not started"
-    fi
-    if [[ ! -e `which pmm-admin 2> /dev/null` ]] ;then
-      echoit "Assert! The pmm-admin client binary was not found, please install the pmm-admin client package"
-      exit 1
-    else
-      PMM_ADMIN_VERSION=`sudo pmm-admin --version`
-      if [ "$PMM_ADMIN_VERSION" != "${PMM_VERSION_CHECK}" ]; then
-        echoit "Assert! The pmm-admin client version is $PMM_ADMIN_VERSION. Required version is ${PMM_VERSION_CHECK}"
-        exit 1
-      else
-        IP_ADDRESS=`ip route get 8.8.8.8 | head -1 | cut -d' ' -f8`
-        sudo pmm-admin config --server $IP_ADDRESS
-      fi
-    fi
   fi
 elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
   echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
