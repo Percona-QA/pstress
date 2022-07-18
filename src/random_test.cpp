@@ -1961,7 +1961,8 @@ void Table::DropColumn(Thd1 *thd) {
 
   auto name = columns_->at(ps)->name_;
 
-  if (name.compare("pkey") == 0 || name.compare("pkey_rename") == 0) {
+  if (rand_int(100, 1) <= options->at(Option::PRIMARY_KEY)->getInt() &&
+      name.find("pkey") != std::string::npos) {
     table_mutex.unlock();
     return;
   }
