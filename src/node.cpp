@@ -176,6 +176,7 @@ void Node::tryConnect() {
     mysql_free_result(result);
   }
   mysql_close(conn);
+  mysql_thread_end();
   if (options->at(Option::TEST_CONNECTION)->getBool()) {
     exit(EXIT_SUCCESS);
   }

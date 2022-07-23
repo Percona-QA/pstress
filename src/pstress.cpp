@@ -184,7 +184,7 @@ int main(int argc, char *argv[]) {
   clean_up_at_end();
   mysql_library_end();
   delete_options();
-  std::cout << "COMPLTED" << std::endl;
+  std::cout << "COMPLETED" << std::endl;
 
   return EXIT_SUCCESS;
 }
