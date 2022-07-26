@@ -248,6 +248,11 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* Number of columns in an index of a table */
+  opt = newOption(Option::INT, Option::DESC_INDEXES_IN_COLUMN, "desc-prob");
+  opt->help = "probability of using desc in index";
+  opt->setInt(34);
+
   /* Only Partition tables */
   opt =
       newOption(Option::BOOL, Option::ONLY_PARTITION, "only-partition-tables");

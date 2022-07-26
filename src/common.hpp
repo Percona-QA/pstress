@@ -145,6 +145,7 @@ struct Option {
     CHAR_LENGTH,
     VARCHAR_LENGTH,
     BLOB_LENGTH,
+    DESC_INDEXES_IN_COLUMN,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

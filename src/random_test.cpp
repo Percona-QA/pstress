@@ -1451,83 +1451,85 @@ void Table::CreateDefaultColumn() {
   }
 }
 
-/* create default indexes */
-void Table::CreateDefaultIndex() {
+static Index *add_index(const std::string &name, const Columns *cols,
+                        bool auto_inc, int number_of_compressed) {
 
-  int auto_inc_pos = -1; // auto_inc_column_position
-
-  static size_t max_indexes = opt_int(INDEXES);
-
-  if (max_indexes == 0)
-    return;
-
-  /* if table have few column, decrease number of indexes */
-  int indexes = rand_int(
-      columns_->size() < max_indexes ? columns_->size() : max_indexes, 1);
+  Index *id = new Index(name);
+  size_t number_of_columns = rand_int(cols->size() - number_of_compressed, 1);
 
   /* for auto-inc columns handling, we need to add auto_inc as first column */
-  for (size_t i = 0; i < columns_->size(); i++) {
-    if (columns_->at(i)->auto_increment) {
-      auto_inc_pos = i;
+  int auto_inc_pos = -1;
+  if (auto_inc) {
+    for (size_t i = 0; i < cols->size(); i++) {
+      if (cols->at(i)->auto_increment) {
+        auto_inc_pos = i;
+      }
     }
   }
 
-  /*which column will hve auto_inc */
-  int auto_inc_index = rand_int(indexes - 1, 0);
+  std::vector<int> col_pos; // position of columns
+  /* pick some columns */
+  while (col_pos.size() < number_of_columns) {
+    int current = rand_int(cols->size() - 1);
 
-  for (int i = 0; i < indexes; i++) {
-    Index *id = new Index(name_ + "i" + std::to_string(i));
+    if (cols->at(current)->compressed)
+      continue;
 
-    static size_t max_columns = opt_int(INDEX_COLUMNS);
-
-    int number_of_compressed = 0;
-
-    for (auto column : *columns_)
-      if (column->compressed)
-        number_of_compressed++;
-
-    size_t number_of_columns = columns_->size() - number_of_compressed;
-
-    /* only compressed columns */
-    if (number_of_columns == 0)
-      return;
-
-    number_of_columns = rand_int(
-        (max_columns < number_of_columns ? max_columns : number_of_columns), 1);
-
-    std::vector<int> col_pos; // position of columns
-
-    /* pick some columns */
-    while (col_pos.size() < number_of_columns) {
-      int current = rand_int(columns_->size() - 1);
-      if (columns_->at(current)->compressed)
-        continue;
-      /* auto-inc column should be first column in auto_inc_index */
-      if (auto_inc_pos != -1 && i == auto_inc_index && col_pos.size() == 0)
-        col_pos.push_back(auto_inc_pos);
-      else {
-        bool already_added = false;
-        for (auto id : col_pos) {
-          if (id == current)
-            already_added = true;
-        }
-        if (!already_added)
-          col_pos.push_back(current);
+    /* auto-inc column should be first column in auto_inc_index */
+    if (auto_inc_pos != -1 && col_pos.size() == 0)
+      col_pos.push_back(auto_inc_pos);
+    else {
+      bool already_added = false;
+      for (auto id : col_pos) {
+        if (id == current)
+          already_added = true;
       }
-    } // while
-
-    for (auto pos : col_pos) {
-      auto col = columns_->at(pos);
-      static bool no_desc_support = opt_bool(NO_DESC_INDEX);
-      bool column_desc = false;
-      if (!no_desc_support) {
-        column_desc = rand_int(100) < DESC_INDEXES_IN_COLUMN
-                          ? true
-                          : false; // 33 % are desc //
-      }
-      id->AddInternalColumn(
-          new Ind_col(col, column_desc)); // desc is set as true
+      if (!already_added)
+        col_pos.push_back(current);
     }
+  } // while
+
+  for (auto pos : col_pos) {
+    auto col = cols->at(pos);
+    bool column_desc = false;
+    if (options->at(Option::NO_DESC_INDEX)->getBool() == false &&
+        rand_int(100) < options->at(Option::DESC_INDEXES_IN_COLUMN)->getInt()) {
+      column_desc = true;
+    }
+    id->AddInternalColumn(new Ind_col(col, column_desc)); // desc is set as true
+  }
+  return id;
+}
+
+/* create default indexes */
+void Table::CreateDefaultIndex() {
+
+  size_t number_of_compressed = 0;
+  for (auto column : *columns_)
+    if (column->compressed)
+      number_of_compressed++;
+
+  /* only compressed columns */
+  if (columns_->size() == number_of_compressed) {
+    return;
+  }
+
+  /* If table has few columns, decrease number of indexes */
+  size_t indexes = rand_int(options->at(Option::INDEXES)->getInt());
+  if (indexes == 0)
+    return;
+  else if (indexes > columns_->size() - number_of_compressed)
+    indexes = columns_->size() - number_of_compressed;
+
+  /*which column will have auto_inc */
+  size_t auto_inc_index = 0;
+  if (rand_int(100) <= 50)
+    auto_inc_index = rand_int(indexes, 1);
+
+  for (size_t i = 1; i <= indexes; i++) {
+    std::string name = name_ + std::to_string(i);
+    auto try_autoinc = auto_inc_index == i ? true : false;
+    Index *id = add_index(name, columns_, try_autoinc, number_of_compressed);
     AddInternalIndex(id);
   }
 }
@@ -2185,13 +2187,7 @@ void Table::AddIndex(Thd1 *thd) {
 
   for (auto pos : col_pos) {
     auto col = columns_->at(pos);
-    static bool no_desc_support = opt_bool(NO_DESC_INDEX);
     bool column_desc = false;
-    if (!no_desc_support) {
-      column_desc = rand_int(100) < DESC_INDEXES_IN_COLUMN
-                        ? true
-                        : false; // 33 % are desc //
-    }
     id->AddInternalColumn(new Ind_col(col, column_desc)); // desc is set as true
   }
 

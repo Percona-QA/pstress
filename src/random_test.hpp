@@ -26,7 +26,6 @@
 #define MIN_SEED_SIZE 10000
 #define MAX_SEED_SIZE 100000
 #define MAX_RANDOM_STRING_SIZE 32
-#define DESC_INDEXES_IN_COLUMN 34
 #define MYSQL_8 8.0
 
 #define opt_int(a) options->at(Option::a)->getInt();
@@ -34,6 +33,8 @@
 #define opt_bool(a) options->at(Option::a)->getBool();
 #define opt_string(a) options->at(Option::a)->getString()
 
+class Column;
+typedef std::vector<Column *> Columns;
 int rand_int(int upper, int lower = 0);
 std::string rand_float(float upper, float lower = 0);
 std::string rand_double(double upper, double lower = 0);
@@ -218,7 +219,7 @@ struct Table {
   std::string encryption = "N";
   int key_block_size = 0;
   // std::string data_directory; todo add corressponding code
-  std::vector<Column *> *columns_;
+  Columns *columns_;
   std::vector<Index *> *indexes_;
   std::mutex table_mutex;
 
