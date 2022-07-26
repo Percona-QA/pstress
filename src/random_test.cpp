@@ -1350,10 +1350,9 @@ void Table::CreateDefaultColumn() {
     Column::COLUMN_TYPES type;
     Column *col;
     /*  if we need to create primary column */
-    static int pkey_pb_per_table = opt_int(PRIMARY_KEY);
 
     /* First column can be primary */
-    if (i == 0 && rand_int(100) < pkey_pb_per_table) {
+    if (i == 0 && rand_int(100) <= options->at(Option::PRIMARY_KEY)->getInt()) {
       type = Column::INT;
       name = "pkey";
       col = new Column{name, this, type};
