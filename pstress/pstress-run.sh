@@ -279,6 +279,8 @@ if [[ $PXC -eq 1 ]];then
   echo "log-output=none" >> ${BASEDIR}/my.cnf
   echo "wsrep_slave_threads=2" >> ${BASEDIR}/my.cnf
   if [[ "$ENCRYPTION_RUN" == 1 ]];then
+    echo "early-plugin-load=keyring_file.so" >> ${BASEDIR}/my.cnf
+    echo "keyring_file_data=keyring" >> ${BASEDIR}/my.cnf
     echo "log_bin=binlog" >> ${BASEDIR}/my.cnf
     echo "binlog_format=ROW" >> ${BASEDIR}/my.cnf
     echo "gtid_mode=ON" >> ${BASEDIR}/my.cnf
@@ -415,23 +417,21 @@ pxc_startup(){
       SOCKET="${RUNDIR}/${TRIAL}/node${NR}/node${NR}_socket.sock"
     fi
   }
-  if [[ $WITH_KEYRING_VAULT -eq 1 ]]; then
-    MYEXTRA_KEYRING="--early-plugin-load=keyring_vault.so --loose-keyring_vault_config=$WORKDIR/vault/keyring_vault_pxc${i}.cnf"
-  fi
 
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n1.cnf
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n2.cnf
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n3.cnf
+
   get_error_socket_file 1
-  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA  --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   pxc_startup_status 1
+
   get_error_socket_file 2
-  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf \
-    $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   pxc_startup_status 2
+
   get_error_socket_file 3
-  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf \
-    $STARTUP_OPTION $MYEXTRA_KEYRING $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   pxc_startup_status 3
   
   if [ "$IS_STARTUP" == "startup" ]; then
