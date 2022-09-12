@@ -173,6 +173,15 @@ elif [ ${PXC} -eq 0 -a ${GRP_RPL} -eq 0 ]; then
   fi
 fi
 
+# Disable GCache MK rotation DDL if GCache encryption is not enabled
+if [ ${PXC} -eq 1 ]; then
+  if [ ${GCACHE_ENCRYPTION} -eq 0 ]; then
+    DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --rotate-gcache-key 0"
+  elif [ ${GCACHE_ENCRYPTION} -eq 1 ]; then
+    WSREP_PROVIDER_OPT="gcache.encryption=ON"
+  fi
+fi
+
 if [ ${THREADS} -eq 1 ]; then
   echoit "MODE: Single threaded pstress testing"
 else
@@ -279,8 +288,6 @@ if [[ $PXC -eq 1 ]];then
   echo "log-output=none" >> ${BASEDIR}/my.cnf
   echo "wsrep_slave_threads=2" >> ${BASEDIR}/my.cnf
   if [[ "$ENCRYPTION_RUN" == 1 ]];then
-    echo "early-plugin-load=keyring_file.so" >> ${BASEDIR}/my.cnf
-    echo "keyring_file_data=keyring" >> ${BASEDIR}/my.cnf
     echo "log_bin=binlog" >> ${BASEDIR}/my.cnf
     echo "binlog_format=ROW" >> ${BASEDIR}/my.cnf
     echo "gtid_mode=ON" >> ${BASEDIR}/my.cnf
@@ -380,6 +387,14 @@ pxc_startup(){
     sed -i "2i log-error=$node/node${i}.err" ${DATADIR}/n${i}.cnf
     sed -i "2i port=$RBASE1" ${DATADIR}/n${i}.cnf
     sed -i "2i datadir=$node" ${DATADIR}/n${i}.cnf
+    if [ ${ENCRYPTION_RUN} -eq 1 ]; then
+      sed -i "2i early-plugin-load=keyring_file.so" ${DATADIR}/n${i}.cnf
+      if [ "$IS_STARTUP" == "startup" ]; then
+        sed -i "2i keyring_file_data=${DATADIR}/node${i}.template/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
+      else
+        sed -i "2i keyring_file_data=${DATADIR}/node${i}/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
+      fi
+    fi
     if [[ "$ENCRYPTION_RUN" != 1 ]];then
       sed -i "2i wsrep_provider_options=\"gmcast.listen_addr=tcp://$LADDR1;$WSREP_PROVIDER_OPT\"" ${DATADIR}/n${i}.cnf
     else
@@ -1263,7 +1278,11 @@ elif [[ ${PXC} -eq 1 ]]; then
     echoit "PXC Cluster run: 'NO'"
   fi
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-    echoit "PXC Encryption run: 'YES'"
+    if [ ${GCACHE_ENCRYPTION} -eq 1 ]; then
+      echoit "PXC Encryption run: 'YES' | GCache Encryption: 'YES'"
+    else
+      echoit "PXC Encryption run: 'YES' | GCache Encryption: 'NO'"
+    fi
   else
     echoit "PXC Encryption run: 'NO'"
   fi
