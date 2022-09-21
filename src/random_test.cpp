@@ -248,9 +248,14 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_TABLESPACE_ENCRYPTION, 0);
     opt_int_set(ALTER_MASTER_KEY, 0);
     opt_int_set(ALTER_ENCRYPTION_KEY, 0);
+    opt_int_set(ALTER_GCACHE_MASTER_KEY, 0);
     opt_int_set(ROTATE_REDO_LOG_KEY, 0);
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
   }
+
+  /* Disable GCache encryption for MS or PS, only supported in PXC */
+   if (strcmp(FORK, "Percona-XtraDB-Cluster") != 0)
+      opt_int_set(ALTER_GCACHE_MASTER_KEY, 0);
 
   /* If OS is Mac, disable table compression as hole punching is not supported on OSX */
   if (strcmp(PLATFORM_ID, "Darwin") == 0)
@@ -3388,6 +3393,9 @@ void Thd1::run_some_query() {
       break;
     case Option::ALTER_ENCRYPTION_KEY:
       execute_sql("ALTER INSTANCE ROTATE INNODB SYSTEM KEY " + std::to_string(rand_int(9)), this);
+      break;
+    case Option::ALTER_GCACHE_MASTER_KEY:
+      execute_sql("ALTER INSTANCE ROTATE GCACHE MASTER KEY", this);
       break;
     case Option::ROTATE_REDO_LOG_KEY:
       execute_sql("SELECT rotate_system_key(\"percona_redo\")", this);
