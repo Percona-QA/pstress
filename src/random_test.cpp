@@ -253,8 +253,8 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
   }
 
-  /* Disable GCache encryption for MS or PS, only supported in PXC */
-   if (strcmp(FORK, "Percona-XtraDB-Cluster") != 0)
+  /* Disable GCache encryption for MS or PS, only supported in PXC-8.0 */
+   if (strcmp(FORK, "Percona-XtraDB-Cluster") != 0 || (strcmp(FORK, "Percona-XtraDB-Cluster") == 0 && server_version() < 80000))
       opt_int_set(ALTER_GCACHE_MASTER_KEY, 0);
 
   /* If OS is Mac, disable table compression as hole punching is not supported on OSX */
