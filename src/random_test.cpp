@@ -45,11 +45,11 @@ std::atomic<bool> connection_lost(false);
 std::vector<Partition::PART_TYPE> Partition::supported;
 
 /* get result of sql */
-static std::string get_result(std::string sql, Thd1 *thd) {
+static MYSQL_RES *get_result(std::string sql, Thd1 *thd) {
   thd->store_result = true;
   execute_sql(sql, thd);
   auto result = thd->result;
-  thd->result = "";
+  thd->result = nullptr;
   thd->store_result = false;
   return result;
 }
@@ -1098,9 +1098,15 @@ void Table::Check(Thd1 *thd) {
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
     table_mutex.unlock();
-    execute_sql("ALTER TABLE " + name_ + " CHECK PARTITION p" +
-                    std::to_string(partition),
-                thd);
+    auto row = mysql_fetch_row(get_result("ALTER TABLE " + name_ +
+                                              " CHECK PARTITION p" +
+                                              std::to_string(partition),
+                                          thd));
+    // Check the value of Msg_text column
+    if (strcmp(row[3], "OK") != 0) {
+      thd->thread_log << "msg_text: " << row[0] << " " << row[1] << " "
+                      << row[2] << " " << row[3] << std::endl;
+    }
   } else
     execute_sql("CHECK TABLE " + name_, thd);
 }
@@ -1567,16 +1573,19 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   }
 
   /* if temporary table encrypt variable set create encrypt table */
-  static auto temp_table_encrypt =
-      get_result("select @@innodb_temp_tablespace_encrypt", thd);
+
+  auto row = mysql_fetch_row(
+      get_result("select @@innodb_temp_tablespace_encrypt", thd));
+  static std::string temp_table_encrypt = row[0];
 
   if (strcmp(FORK, "Percona-Server") == 0 && server_version() < 80000 &&
       temp_table_encrypt.compare("ON") == 0 && table->type == TEMPORARY)
     table->encryption = 'Y';
 
   /* if innodb system is encrypt , create encrypt table */
-  static auto system_table_encrypt =
-      get_result("select @@innodb_sys_tablespace_encrypt", thd);
+  auto row1 = mysql_fetch_row(
+      get_result("select @@innodb_sys_tablespace_encrypt", thd));
+  static std::string system_table_encrypt = row1[0];
 
   if (strcmp(FORK, "Percona-Server") == 0 && table->tablespace.size() > 0 &&
       table->tablespace.compare("innodb_system") == 0 &&
@@ -1793,13 +1802,12 @@ bool execute_sql(std::string sql, Thd1 *thd) {
     thd->success = true;
     MYSQL_RES *result;
     result = mysql_store_result(thd->conn);
+    thd->result = result;
 
     /* log result */
     if (thd->store_result) {
       if (!result)
         throw std::runtime_error(sql + " does not return result set");
-      auto row = mysql_fetch_row(result);
-      thd->result = row[0];
     } else if (log_client_output) {
       if (result != NULL) {
         MYSQL_ROW row;
@@ -3142,6 +3150,99 @@ void create_database_tablespace(Thd1 *thd) {
   }
 }
 
+bool check_tables_partitions_preload(Thd1 *thd) {
+  size_t current = 0;
+  while (current < all_tables->size()) {
+    if ((int)current % options->at(Option::THREADS)->getInt() ==
+        thd->thread_id) {
+      auto table = all_tables->at(current);
+
+      int partition_count;
+      if (table->type == Table::PARTITION) {
+        switch (static_cast<Partition *>(table)->part_type) {
+          case Partition::LIST:
+            partition_count = static_cast<Partition *>(table)->lists.size();
+            for (int i = 0; i < partition_count; i++) {
+              MYSQL_RES *result = get_result(
+                  "ALTER TABLE " + table->name_ + " CHECK PARTITION " +
+                      static_cast<Partition *>(table)->lists[i].name,
+                  thd);
+              MYSQL_ROW row;
+
+              while ((row = mysql_fetch_row(result))) {
+                // Check the value of Msg_text column
+                if (strcmp(row[3], "OK") != 0) {
+                  thd->thread_log << "msg_text: " << row[0] << " " << row[1]
+                                  << " " << row[2] << " " << row[3]
+                                  << std::endl;
+                }
+                break;  // Displays just the contents of first row in case of an
+                        // error. Remove, for more details/rows.
+              }
+            }
+            break;
+          case Partition::RANGE:
+            partition_count = static_cast<Partition *>(table)->positions.size();
+            for (int i = 0; i < partition_count; i++) {
+              MYSQL_RES *result = get_result(
+                  "ALTER TABLE " + table->name_ + " CHECK PARTITION " +
+                      static_cast<Partition *>(table)->positions[i].name,
+                  thd);
+              MYSQL_ROW row;
+
+              while ((row = mysql_fetch_row(result))) {
+                // Check the value of Msg_text column
+                if (strcmp(row[3], "OK") != 0) {
+                  thd->thread_log << "msg_text: " << row[0] << " " << row[1]
+                                  << " " << row[2] << " " << row[3]
+                                  << std::endl;
+                }
+                break;  // Displays just the contents of first row in case of an
+                        // error. Remove, for more details/rows.
+              }
+            }
+            break;
+          case Partition::HASH:
+          case Partition::KEY:
+            partition_count = static_cast<Partition *>(table)->number_of_part;
+            for (int i = 0; i < partition_count; i++) {
+              MYSQL_RES *result =
+                  get_result("ALTER TABLE " + table->name_ +
+                                 " CHECK PARTITION p" + std::to_string(i),
+                             thd);
+              MYSQL_ROW row;
+
+              while ((row = mysql_fetch_row(result))) {
+                // Check the value of Msg_text column
+                if (strcmp(row[3], "OK") != 0) {
+                  thd->thread_log << "msg_text: " << row[0] << " " << row[1]
+                                  << " " << row[2] << " " << row[3]
+                                  << std::endl;
+                }
+                break;  // Displays just the contents of first row in case of an
+                        // error. Remove, for more details/rows.
+              }
+            }
+            break;
+          default:
+            return false;
+        }
+
+      } else {
+        auto row =
+            mysql_fetch_row(get_result("CHECK TABLE " + table->name_, thd));
+        // Check the value of Msg_text column
+        if (strcmp(row[3], "OK") != 0) {
+          thd->thread_log << "msg_text: " << row[0] << " " << row[1] << " "
+                          << row[2] << " " << row[3] << std::endl;
+        }
+      }
+    }
+    current++;
+  }
+  return true;
+}
+
 /* load metadata */
 bool Thd1::load_metadata() {
   sum_of_all_opts = sum_of_all_options(this);
@@ -3156,9 +3257,11 @@ bool Thd1::load_metadata() {
   rng = std::mt19937(initial_seed);
 
   /* find out innodb page_size */
-  if (options->at(Option::ENGINE)->getString().compare("INNODB") == 0)
-    g_innodb_page_size =
-        std::stoi(get_result("select @@innodb_page_size", this)) / 1024;
+  if (options->at(Option::ENGINE)->getString().compare("INNODB") == 0) {
+    auto row = mysql_fetch_row(get_result("select @@innodb_page_size", this));
+    // Use the value of first column
+    g_innodb_page_size = std::stoi(row[0]) / 1024;
+  }
 
   /* create in-memory data for general tablespaces */
   create_in_memory_data();
@@ -3234,6 +3337,14 @@ void Thd1::run_some_query() {
                  << std::endl;
       std::chrono::seconds dura(1);
       std::this_thread::sleep_for(dura);
+    }
+  }
+
+  if (options->at(Option::CHECK_TABLE_PRELOAD)->getBool() &&
+      options->at(Option::STEP)->getInt() != 1) {
+    if (!check_tables_partitions_preload(this)) {
+      std::cout << "Failed on thread :" << thread_id << std::endl;
+      throw std::runtime_error("Check table/partitions failed!");
     }
   }
 

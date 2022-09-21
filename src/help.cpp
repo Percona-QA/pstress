@@ -526,6 +526,13 @@ void add_options() {
   opt->setInt(5);
   opt->setSQL();
 
+  /* Check Table Pre-load */
+  opt = newOption(Option::BOOL, Option::CHECK_TABLE_PRELOAD, "check-preload");
+  opt->help = "check table, for partition table randomly check either "
+              "partition or full table before the load is started";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* Add drop Partition */
   opt =
       newOption(Option::INT, Option::ADD_DROP_PARTITION, "add-drop-partition");

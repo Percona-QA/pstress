@@ -162,7 +162,7 @@ struct Thd1 {
   MYSQL *conn;
   std::atomic<unsigned long long> &performed_queries_total;
   std::atomic<unsigned long long> &failed_queries_total;
-  std::string result;         // resul of sql
+  MYSQL_RES *result;          // result set of sql
   bool ddl_query = false;     // is the query ddl
   bool success = false;       // if the sql is successfully executed
   bool store_result = false;  // store result of executed sql
@@ -333,4 +333,5 @@ void alter_database_encryption(Thd1 *thd);
 void create_in_memory_data();
 void create_default_tables(Thd1 *thd);
 void create_database_tablespace(Thd1 *thd);
+bool check_tables_partitions_preload(Thd1 *thd);
 #endif
