@@ -12,7 +12,7 @@ CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf
 RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's/..\(......\).*/\1/')
 SCRIPT_AND_PATH=$(readlink -f $0); SCRIPT=$(echo ${SCRIPT_AND_PATH} | sed 's|.*/||'); SCRIPT_PWD=$(cd `dirname $0` && pwd)
 WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; PXC=0; GRP_RPL=0; PXC_START_TIMEOUT=60; GRP_RPL_START_TIMEOUT=60; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
-SERVER_FAIL_TO_START_COUNT=0;ENGINE=InnoDB; UUID=$(uuidgen);
+SERVER_FAIL_TO_START_COUNT=0; ENGINE=InnoDB; UUID=$(uuidgen); GCACHE_ENCRYPTION=0;
 
 # Read configuration
 if [ "$1" != "" ]; then CONFIGURATION_FILE=$1; fi
@@ -25,10 +25,29 @@ if [[ ${SIGNAL} -ne 15 && ${SIGNAL} -ne 4 && ${SIGNAL} -ne 9 ]]; then
   exit
 fi
 
-# Disable encryption in case RocksDB is enabled
+# RocksDB does not support encryption. Disable all keyring encryption types
 if [ "${ENGINE}" == "RocksDB" ]; then
-  KEYRING_PLUGIN=""
+  KEYRING_FILE=0
   KEYRING_COMPONENT=0
+  KEYRING_VAULT=0
+fi
+
+# Check no two encryption types are enabled at the same time
+if [ ${ENCRYPTION_RUN} -eq 1 ]; then
+  if [[ ${KEYRING_VAULT} -eq 1 && ${KEYRING_COMPONENT} -eq 1 ]]; then
+    echo "Enable one encryption type at a time"
+    exit 1
+  elif [[ ${KEYRING_VAULT} -eq 1 && ${KEYRING_FILE} -eq 1 ]]; then
+    echo "Enable one encryption type at a time"
+    exit 1
+  elif [[ ${KEYRING_FILE} -eq 1 && ${KEYRING_COMPONENT} -eq 1 ]]; then
+    echo "Enable one encryption type at a time"
+    exit 1
+  fi
+elif [ ${ENCRYPTION_RUN} -eq 0 ]; then
+  KEYRING_COMPONENT=0
+  KEYRING_VAULT=0
+  KEYRING_FILE=0
 fi
 
 # Safety checks: ensure variables are correctly set to avoid rm -Rf issues (if not set correctly, it was likely due to altering internal variables at the top of this file)
@@ -133,7 +152,7 @@ if [ "${PXC_CLUSTER_RUN}" == "1" ]; then
 elif [ "${GRP_RPL_CLUSTER_RUN}" == "1" ]; then
   echoit "As GRP_RPL_CLUSTER_RUN=1, this script is auto-assuming this is a Group Replication run and will set GRP_RPL=1"
   GRP_RPL=1
-  THREADS=$(cat ${GR_CLUSTER_CONFIG} | grep threads | head -n1 | sed 's/.*=//' | sed 's/^ *//g')
+  THREADS=$(cat ${GR_CLUSTER_CONFIG} | grep threads | grep -v "#" | head -n1 | sed 's/.*=//' | sed 's/^ *//g')
 fi
 if [ "${PXC}" == "1" ]; then
   if [ ${QUERIES_PER_THREAD} -lt 2147483647 ]; then  # Starting up a cluster takes more time, so don't rotate too quickly
@@ -312,11 +331,7 @@ pxc_startup(){
   SOCKET2=${RUNDIR}/${TRIAL}/node2/node2_socket.sock
   SOCKET3=${RUNDIR}/${TRIAL}/node3/node3_socket.sock
   if check_for_version $MYSQL_VERSION "5.7.0" ; then
-    if [[ "$ENCRYPTION_RUN" == 1 ]];then
-      MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure ${KEYRING_PLUGIN} --basedir=${BASEDIR}"
-    else
-      MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure --basedir=${BASEDIR}"
-    fi
+    MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure --basedir=${BASEDIR}"
   else
     MID="${BASEDIR}/bin/mysqld --no-defaults --basedir=${BASEDIR}"
   fi
@@ -388,14 +403,19 @@ pxc_startup(){
     sed -i "2i port=$RBASE1" ${DATADIR}/n${i}.cnf
     sed -i "2i datadir=$node" ${DATADIR}/n${i}.cnf
     if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-      sed -i "2i early-plugin-load=keyring_file.so" ${DATADIR}/n${i}.cnf
-      if [ "$IS_STARTUP" == "startup" ]; then
-        sed -i "2i keyring_file_data=${DATADIR}/node${i}.template/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
-      else
-        sed -i "2i keyring_file_data=${DATADIR}/node${i}/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
+      if [ ${KEYRING_FILE} -eq 1 ]; then
+        sed -i "2i early-plugin-load=keyring_file.so" ${DATADIR}/n${i}.cnf
+        if [ "$IS_STARTUP" == "startup" ]; then
+          sed -i "2i keyring_file_data=${DATADIR}/node${i}.template/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
+        else
+          sed -i "2i keyring_file_data=${DATADIR}/node${i}/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
+        fi
+      elif [ ${KEYRING_VAULT} -eq 1 ]; then
+        sed -i "2i early-plugin-load=keyring_vault.so" ${DATADIR}/n${i}.cnf
+        sed -i "2i keyring_vault_config=$WORKDIR/vault/keyring_vault_pxc${i}.cnf" ${DATADIR}/n${i}.cnf
       fi
     fi
-    if [[ "$ENCRYPTION_RUN" != 1 ]];then
+    if [ ${ENCRYPTION_RUN} -eq 0 ];then
       sed -i "2i wsrep_provider_options=\"gmcast.listen_addr=tcp://$LADDR1;$WSREP_PROVIDER_OPT\"" ${DATADIR}/n${i}.cnf
     else
       sed -i "2i wsrep_provider_options=\"gmcast.listen_addr=tcp://$LADDR1;$WSREP_PROVIDER_OPT;socket.ssl_key=${WORKDIR}/cert/server-key.pem;socket.ssl_cert=${WORKDIR}/cert/server-cert.pem;socket.ssl_ca=${WORKDIR}/cert/ca.pem\"" ${DATADIR}/n${i}.cnf
@@ -632,15 +652,18 @@ fi
   }
 
   get_error_socket_file 1
-  if [ "${ENCRYPTION_RUN}" == "1" ]; then
-    if [ "${KEYRING_COMPONENT}" == "1" ]; then
+  if [ ${ENCRYPTION_RUN} -eq 1 ]; then
+    if [ ${KEYRING_COMPONENT} -eq 1  ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
-    elif [ "${KEYRING_PLUGIN}" != ""  ]; then
+    elif [ ${KEYRING_FILE} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${KEYRING_PLUGIN} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
+    elif [ ${KEYRING_VAULT} -eq 1 ]; then
+      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
-      echoit "ERROR: You have enabled ENCRYPTION_RUN=1, but disabled both KEYRING_PLUGIN and KEYRING_COMPONENT. Please enable atleast one!"
+      echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
@@ -672,14 +695,17 @@ fi
   get_error_socket_file 2
 
   if [ "${ENCRYPTION_RUN}" == "1" ]; then
-    if [ "${KEYRING_COMPONENT}" == "1" ]; then
+    if [ ${KEYRING_COMPONENT} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA > $ERR_FILE 2>&1 &
-    elif [ "${KEYRING_PLUGIN}" != ""  ]; then
+    elif [ ${KEYRING_FILE} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${KEYRING_PLUGIN} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
+    elif [ ${KEYRING_VAULT} -eq 1 ]; then
+      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
-      echoit "ERROR: You have enabled ENCRYPTION_RUN=1, but disabled both KEYRING_PLUGIN and KEYRING_COMPONENT. Please enable atleast one!"
+      echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
@@ -710,15 +736,18 @@ fi
 
   get_error_socket_file 3
 
-  if [ "${ENCRYPTION_RUN}" == "1" ]; then
-    if [ "${KEYRING_COMPONENT}" == "1" ]; then
+  if [ ${ENCRYPTION_RUN} -eq 1 ]; then
+    if [ ${KEYRING_COMPONENT} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA > $ERR_FILE 2>&1 &
-    elif [ "${KEYRING_PLUGIN}" != ""  ]; then
+    elif [ ${KEYRING_FILE} -eq 1  ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${KEYRING_PLUGIN} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
+    elif [ ${KEYRING_VAULT} -eq 1 ]; then
+      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
-      echoit "ERROR: You have enabled ENCRYPTION_RUN=1, but disabled both KEYRING_PLUGIN and KEYRING_COMPONENT. Please enable atleast one!"
+      echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
@@ -775,12 +804,12 @@ pstress_test(){
     fi
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
-      if [ "${KEYRING_COMPONENT}" == "1" ]; then
+      if [ ${KEYRING_COMPONENT} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
       fi
     else
       cp -R ${WORKDIR}/data.template/* ${RUNDIR}/${TRIAL}/data 2>&1
-      if [ "${KEYRING_COMPONENT}" == "1" ]; then
+      if [ ${KEYRING_COMPONENT} -eq 1 ]; then
         echoit "Creating local manifest file mysqld.my"
         cat << EOF >${RUNDIR}/${TRIAL}/data/mysqld.my
 {
@@ -833,17 +862,21 @@ EOF
     PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
     echoit "Starting mysqld. Error log is stored at ${RUNDIR}/${TRIAL}/log/master.err"
     if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-      if [ ${KEYRING_COMPONENT} -eq 1 ]; then
-        CMD="${BIN} ${MYEXTRA}  --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+      if [ ${KEYRING_VAULT} -eq 1 ]; then
+        CMD="${BIN} ${MYEXTRA} ${VAULT_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
-      elif [ "${KEYRING_PLUGIN}" != ""  ]; then
-	CMD="${BIN} ${MYEXTRA} ${KEYRING_PLUGIN} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+      elif [ ${KEYRING_FILE} -eq 1 ]; then
+        CMD="${BIN} ${MYEXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+          --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+          --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
+      elif [ ${KEYRING_COMPONENT} -eq 1 ]; then
+        CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       else
-        echoit "ERROR: You have enabled ENCRYPTION_RUN=1, but disabled both KEYRING_PLUGIN and KEYRING_COMPONENT. Please enable atleast one!"
-	exit 1
+        echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
+        exit 1
       fi
     else
       CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
@@ -943,7 +976,7 @@ EOF
       echoit "PXC_WSREP_PROVIDER_ADD_RANDOM_WSREP_PROVIDER_CONFIG_OPTIONS=1: adding wsrep provider configuration option(s) ${OPTIONS_TO_ADD} to this run..."
       WSREP_PROVIDER_OPT="$OPTIONS_TO_ADD"
     fi
-    echo "${MYEXTRA} ${KEYRING_PLUGIN} ${PXC_MYEXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
+    echo "${MYEXTRA} ${KEYRING_PARAM} ${PXC_MYEXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
     echo "${MYINIT}" > ${RUNDIR}/${TRIAL}/MYINIT
     echo "$WSREP_PROVIDER_OPT" > ${RUNDIR}/${TRIAL}/WSREP_PROVIDER_OPT
     pxc_startup
@@ -979,7 +1012,7 @@ EOF
       echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
       rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
       for i in $(seq 1 3); do
-        if [ "${KEYRING_COMPONENT}" == "1" -a "${ENCRYPTION_RUN}" == "1" ]; then
+        if [ ${KEYRING_COMPONENT} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
           sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node$i/component_keyring_file.cnf
         fi
       done
@@ -989,7 +1022,7 @@ EOF
       cp -R ${WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
       cp -R ${WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
       cp -R ${WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
-      if [ "${KEYRING_COMPONENT}" == "1" -a "${ENCRYPTION_RUN}" == "1" ]; then
+      if [ ${KEYRING_COMPONENT} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
         for i in $(seq 1 3); do
           echoit "Creating local manifest file mysqld.my for node$i"
           cat << EOF >${RUNDIR}/${TRIAL}/node$i/mysqld.my
@@ -1337,25 +1370,60 @@ elif [ "${VERSION_INFO}" != "5.7" -a "${VERSION_INFO}" != "8.0" ]; then
   echo "WARNING: mysqld (${BIN}) version detection failed. This is likely caused by using this script with a non-supported distribution or version of mysqld. Please expand this script to handle (which shoud be easy to do). Even so, the script will now try and continue as-is, but this may fail."
 fi
 
-# Keyring component is unsupported in 5.7
-  if [ "${VERSION_INFO}" == "5.7" ]; then
-    KEYRING_COMPONENT=0
+if [ ${ENCRYPTION_RUN} -eq 1 ]; then
+  if [ ${PXC} -eq 1 ]; then
+    if [ ${KEYRING_VAULT} -eq 0 -a ${KEYRING_FILE} -eq 0 ]; then
+      echoit "Enable atleast one encryption type (keyring_vault or keyring_file) if ENCRYPTION_RUN=1"
+      exit 1
+    fi
+  elif [ ${KEYRING_VAULT} -eq 0 -a ${KEYRING_FILE} -eq 0 -a ${KEYRING_COMPONENT} -eq 0 ]; then
+    echoit "Enable atleast one encryption type (keyring_vault or keyring_file or keyring_component) if ENCRYPTION_RUN=1"
+    exit 1
   fi
-  if [ "${KEYRING_COMPONENT}" == "1" ]; then
-    KEYRING_PLUGIN=""
-    echoit "Creating global manifest file mysqld.my"
-    cat << EOF >${BASEDIR}/bin/mysqld.my
+fi
+
+# Start vault server for pstress encryption run
+if [ ${KEYRING_VAULT} -eq 1 ];then
+  echoit "Setting up vault server"
+  mkdir $WORKDIR/vault
+  rm -rf $WORKDIR/vault/*
+  killall vault > /dev/null 2>&1
+  if [[ $PXC -eq 1 ]];then
+    ${SCRIPT_PWD}/vault_test_setup.sh --workdir=$WORKDIR/vault --setup-pxc-mount-points --use-ssl > /dev/null 2>&1
+  else
+    ${SCRIPT_PWD}/vault_test_setup.sh --workdir=$WORKDIR/vault --use-ssl > /dev/null 2>&1
+    VAULT_PARAM="--early-plugin-load=keyring_vault.so --keyring_vault_config=$WORKDIR/vault/keyring_vault_ps.cnf"
+  fi
+elif [ ${KEYRING_FILE} -eq 1 ]; then
+  KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
+fi
+
+# Currently Keyring component is unsupported in PXC
+# Reported JIRA: https://jira.percona.com/browse/PXC-3989
+# Disabling Keyring component until the bug is fixed
+if [ ${PXC} -eq 1 ]; then
+  KEYRING_COMPONENT=0
+elif [ "${VERSION_INFO}" == "5.7" ]; then
+  if [ ${KEYRING_COMPONENT} -eq 1 ]; then
+    echoit "Keyring component is un-supported on PS-5.7"
+    exit 1
+  fi
+fi
+
+if [ ${KEYRING_COMPONENT} -eq 1 ]; then
+  echoit "Creating global manifest file mysqld.my"
+  cat << EOF >${BASEDIR}/bin/mysqld.my
 {
   "read_local_manifest": true
 }
 EOF
-    echoit "Creating global configuration file component_keyring_file.cnf"
-    cat << EOF >${BASEDIR}/lib/plugin/component_keyring_file.cnf
+  echoit "Creating global configuration file component_keyring_file.cnf"
+  cat << EOF >${BASEDIR}/lib/plugin/component_keyring_file.cnf
 {
   "read_local_config": true
 }
 EOF
-  fi
+fi
 
 if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
   echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
