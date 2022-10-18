@@ -8,11 +8,11 @@
 #                                                                                             #
 # Usage   :                                                                                   #
 # 1. The user can pass the path of pstress log file as shown below to convert it in SQL file  #
-# ./pstress_log_to_sql_converter.sh --logdir <val>                                            #
+# ./pstress_log_to_sql_converter.sh --logfile <val>                                           #
 #                                                                                             #
 # 2. The user can use this script to also execute the converted SQL file against a running    #
 # server by setting the path --mysql-client and --socket                                      #
-# ./pstress_log_to_sql_converter.sh --logdir <val> --mysql-client <val> --socket <val>        #
+# ./pstress_log_to_sql_converter.sh --logfile <val> --mysql-client <val> --socket <val>       #
 #                                                                                             #
 # For more info:                                                                              #
 # ./pstress_run_log_to_sql_converter.sh --help                                                #
