@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstring>
 #include <random>
+#include <sstream>
 std::atomic_flag lock_metadata = ATOMIC_FLAG_INIT;
 std::atomic<bool> metadata_loaded(false);
 
@@ -112,8 +113,17 @@ void Node::workerThread(int number) {
     if (!success)
       thread_log << " initial setup failed, check logs for details "
                  << std::endl;
-    else
-      thd->run_some_query();
+    else {
+      if (!thd->run_some_query()) {
+        std::ostringstream errmsg;
+        errmsg << "Thread " << thd->thread_id
+               << " failed, check logs for detail message ";
+        std::cerr << errmsg.str() << std::endl;
+        if (general_log.is_open()) {
+          general_log << errmsg.str() << std::endl;
+        }
+      }
+    }
 
   } else {
     std::random_device rd;

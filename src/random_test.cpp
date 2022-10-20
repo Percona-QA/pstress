@@ -19,9 +19,15 @@ std::mt19937 rng;
 
 const std::string partition_string = "_p";
 const int version = 2;
-/* range for int, integers, floats and double */
+/* range for random number int, integers, floats and double.
+ more the value, less randomness.
+ for example if it is 1. then there is very high chance of executing
+ successful DML.
+todo allow this option to be configured by user */
 const int g_integer_range = 100;
 
+static bool encrypted_temp_tables = false;
+static bool encrypted_sys_tablelspaces = false;
 static std::vector<Table *> *all_tables = new std::vector<Table *>;
 static std::vector<std::string> g_undo_tablespace;
 static std::vector<std::string> g_encryption;
@@ -41,17 +47,55 @@ static std::chrono::system_clock::time_point start_time =
 std::atomic<size_t> table_started(0);
 std::atomic<size_t> table_completed(0);
 std::atomic_flag lock_stream = ATOMIC_FLAG_INIT;
-std::atomic<bool> connection_lost(false);
+std::atomic<bool> run_query_failed(false);
+/* partition type supported by system */
 std::vector<Partition::PART_TYPE> Partition::supported;
 
 /* get result of sql */
-static MYSQL_RES *get_result(std::string sql, Thd1 *thd) {
+static bool get_check_result(const std::string &sql, Thd1 *thd) {
+
+  bool success = true;
+  thd->result = nullptr;
   thd->store_result = true;
+
   execute_sql(sql, thd);
-  auto result = thd->result;
+
+  if (thd->result == nullptr)
+    success = false;
+
+  /* Print error message thread logs
+  Displays just the contents of first row in case of an
+  error. Remove, for more details/rows. */
+  if (success) {
+    auto row = mysql_fetch_row(thd->result);
+    // Check the value of Msg_text column
+    if (strcmp(row[3], "OK") != 0) {
+      thd->thread_log << "Error: " << row[0] << " " << row[1] << " " << row[2]
+                      << " " << row[3] << std::endl;
+      success = false;
+    }
+  }
+
+  mysql_free_result(thd->result);
   thd->result = nullptr;
   thd->store_result = false;
-  return result;
+  return success;
+}
+
+static std::string mysql_read_variable(const std::string &variable, Thd1 *thd) {
+  std::string query_result = "";
+
+  thd->result = nullptr;
+  thd->store_result = true;
+
+  execute_sql("select @@" + variable, thd);
+  if (thd->result != nullptr) {
+    assert(mysql_num_fields(thd->result) == 1);
+    query_result = mysql_fetch_row(thd->result)[0];
+  }
+  mysql_free_result(thd->result);
+  thd->store_result = false;
+  return query_result;
 }
 
 /* return server version in number format
@@ -90,6 +134,14 @@ static int server_version() {
 /* return probabality of all options and disable some feature based on user
  * request/ branch/ fork */
 int sum_of_all_options(Thd1 *thd) {
+
+  /* find out innodb page_size */
+  if (options->at(Option::ENGINE)->getString().compare("INNODB") == 0) {
+    g_innodb_page_size =
+        std::stoi(mysql_read_variable("innodb_page_size", thd));
+    assert(g_innodb_page_size % 1024 == 0);
+    g_innodb_page_size /= 1024;
+  }
 
   /*check which all partition type supported */
   auto part_supp = opt_string(PARTITION_SUPPORTED);
@@ -254,9 +306,17 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
   }
 
+  if (mysql_read_variable("innodb_temp_tablespace_encrypt", thd) == "1")
+    encrypted_temp_tables = true;
+
+  if (strcmp(FORK, "Percona-Server") == 0 &&
+      mysql_read_variable("innodb_sys_tablespace_encrypt", thd) == "1")
+    encrypted_sys_tablelspaces = true;
+
   /* Disable GCache encryption for MS or PS, only supported in PXC-8.0 */
-   if (strcmp(FORK, "Percona-XtraDB-Cluster") != 0 || (strcmp(FORK, "Percona-XtraDB-Cluster") == 0 && server_version() < 80000))
-      opt_int_set(ALTER_GCACHE_MASTER_KEY, 0);
+  if (strcmp(FORK, "Percona-XtraDB-Cluster") != 0 ||
+      (strcmp(FORK, "Percona-XtraDB-Cluster") == 0 && server_version() < 80000))
+    opt_int_set(ALTER_GCACHE_MASTER_KEY, 0);
 
   /* If OS is Mac, disable table compression as hole punching is not supported on OSX */
   if (strcmp(PLATFORM_ID, "Darwin") == 0)
@@ -429,7 +489,7 @@ std::vector<std::string> *random_strs_generator(unsigned long int seed) {
 std::vector<std::string> *random_strs;
 
 int rand_int(int upper, int lower) {
-  /*todo change the approach if it is too slow */
+  assert(upper >= lower);
   std::uniform_int_distribution<std::mt19937::result_type> dist(
       lower, upper); // distribution in range [lower, upper]
   return dist(rng);
@@ -437,6 +497,7 @@ int rand_int(int upper, int lower) {
 
 /* return random float number in the range of upper and lower */
 std::string rand_float(float upper, float lower) {
+  assert(upper >= lower);
   static std::uniform_real_distribution<> dis(lower, upper);
   std::ostringstream out;
   out << std::fixed;
@@ -445,6 +506,7 @@ std::string rand_float(float upper, float lower) {
 }
 
 std::string rand_double(double upper, double lower) {
+  assert(upper >= lower);
   static std::uniform_real_distribution<> dis(lower, upper);
   std::ostringstream out;
   out << std::fixed;
@@ -456,10 +518,6 @@ std::string rand_double(double upper, double lower) {
 std::string rand_string(int upper, int lower) {
   std::string rs = ""; /*random_string*/
   auto size = rand_int(upper, lower);
-
-  /* let the query fail with string size greater */
-  if (rand_int(100) < 3)
-    size *= 1;
 
   while (size > 0) {
     auto str = random_strs->at(rand_int(random_strs->size() - 1));
@@ -531,23 +589,21 @@ static std::string rand_value_universal(Column::COLUMN_TYPES type_,
   int rand_length;
   switch (type_) {
   case (Column::COLUMN_TYPES::INTEGER):
-    static auto rec0 = options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
-    return std::to_string(rand_int(rec0));
+    return std::to_string(
+        rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
     break;
   case (Column::COLUMN_TYPES::INT):
-    static auto rec = g_integer_range * opt_int(INITIAL_RECORDS_IN_TABLE);
-    return std::to_string(rand_int(rec));
+    return std::to_string(
+        rand_int(g_integer_range *
+                 options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
     break;
   case (Column::COLUMN_TYPES::FLOAT): {
-    static float rec1 =
-        (1 / g_integer_range) * opt_int(INITIAL_RECORDS_IN_TABLE);
-    return rand_float(rec1);
+    return rand_float(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
     break;
   }
   case (Column::COLUMN_TYPES::DOUBLE): {
-    static float rec2 = (1 / g_integer_range / g_integer_range) *
-                        opt_int(INITIAL_RECORDS_IN_TABLE);
-    return rand_double(rec2);
+    return rand_double(1.0 / g_integer_range *
+                       options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
     break;
   }
   case Column::COLUMN_TYPES::CHAR:
@@ -995,9 +1051,71 @@ std::string Index::definition() {
   return def;
 }
 
+bool Table::load(Thd1 *thd) {
+  thd->ddl_query = true;
+  if (!execute_sql(definition(false), thd)) {
+    thd->thread_log << "Failed to create table " << name_ << std::endl;
+    run_query_failed = true;
+    return false;
+  }
+
+  /* load default data in temporary table */
+  if (!options->at(Option::JUST_LOAD_DDL)->getBool()) {
+    thd->ddl_query = false;
+    size_t number_of_records =
+        options->at(Option::EXACT_INITIAL_RECORDS)->getBool()
+            ? options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()
+            : rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
+
+    // todo bulk insert for Parititon LIST. We need to smart generate random
+    // list
+    if (type == PARTITION &&
+        static_cast<Partition *>(this)->part_type == Partition::LIST) {
+      for (size_t i = 0; i < number_of_records; i++) {
+        InsertRandomRow(thd);
+      }
+
+    } else if (!InsertBulkRecord(thd, number_of_records))
+      return false;
+  }
+
+  thd->ddl_query = true;
+  if (!load_secondary_indexes(thd)) {
+    return false;
+  }
+
+  if (run_query_failed) {
+    thd->thread_log << "some other thread failed, Exiting. Please check logs "
+                    << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
 Table::Table(std::string n) : name_(n), indexes_() {
   columns_ = new std::vector<Column *>;
   indexes_ = new std::vector<Index *>;
+}
+
+bool Table::load_secondary_indexes(Thd1 *thd) {
+
+  if (indexes_->size() == 0)
+    return true;
+
+  for (auto id : *indexes_) {
+    if (id == indexes_->at(auto_inc_index))
+      continue;
+    std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition();
+    if (!execute_sql(sql, thd)) {
+      thd->thread_log << "Failed to add index " << id->name_ << " on " << name_
+                      << std::endl;
+      run_query_failed = true;
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /* Constructor used by load_metadata */
@@ -1099,17 +1217,11 @@ void Table::Check(Thd1 *thd) {
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
     table_mutex.unlock();
-    auto row = mysql_fetch_row(get_result("ALTER TABLE " + name_ +
-                                              " CHECK PARTITION p" +
-                                              std::to_string(partition),
-                                          thd));
-    // Check the value of Msg_text column
-    if (strcmp(row[3], "OK") != 0) {
-      thd->thread_log << "msg_text: " << row[0] << " " << row[1] << " "
-                      << row[2] << " " << row[3] << std::endl;
-    }
+    get_check_result("ALTER TABLE " + name_ + " CHECK PARTITION p" +
+                         std::to_string(partition),
+                     thd);
   } else
-    execute_sql("CHECK TABLE " + name_, thd);
+    get_check_result("CHECK TABLE " + name_, thd);
 }
 
 void Table::Analyze(Thd1 *thd) {
@@ -1338,7 +1450,7 @@ Table::~Table() {
 /* create default column */
 void Table::CreateDefaultColumn() {
   auto no_auto_inc = opt_bool(NO_AUTO_INC);
-  bool auto_increment = false;
+  bool has_auto_increment = false;
 
   /* if table is partition add new column */
   if (type == PARTITION) {
@@ -1375,7 +1487,7 @@ void Table::CreateDefaultColumn() {
           columns_->at(0)->auto_increment = true;
         else
           col->auto_increment = true;
-        auto_increment = true;
+        has_auto_increment = true;
       }
     } else {
       name = std::to_string(i);
@@ -1420,9 +1532,9 @@ void Table::CreateDefaultColumn() {
 
       /* 25% column can have auto_inc */
       if (col->type_ == Column::INT && !no_auto_inc &&
-          auto_increment == false && rand_int(100) > 25) {
+          has_auto_increment == false && rand_int(100) > 25) {
         col->auto_increment = true;
-        auto_increment = true;
+        has_auto_increment = true;
       }
     }
     AddInternalColumn(col);
@@ -1440,7 +1552,7 @@ void Table::CreateDefaultIndex() {
     return;
 
   /* if table have few column, decrease number of indexes */
-  int indexes = rand_int(
+  size_t indexes = rand_int(
       columns_->size() < max_indexes ? columns_->size() : max_indexes, 1);
 
   /* for auto-inc columns handling, we need to add auto_inc as first column */
@@ -1450,10 +1562,10 @@ void Table::CreateDefaultIndex() {
     }
   }
 
-  /*which column will hve auto_inc */
-  int auto_inc_index = rand_int(indexes - 1, 0);
+  /*which column will have auto_inc */
+  auto_inc_index = rand_int(indexes - 1, 0);
 
-  for (int i = 0; i < indexes; i++) {
+  for (size_t i = 0; i < indexes; i++) {
     Index *id = new Index(name_ + "i" + std::to_string(i));
 
     static size_t max_columns = opt_int(INDEX_COLUMNS);
@@ -1511,7 +1623,7 @@ void Table::CreateDefaultIndex() {
 }
 
 /* Create new table and pick some attributes */
-Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
+Table *Table::table_id(TABLE_TYPES type, int id) {
   Table *table;
   std::string name = "tt_" + std::to_string(id);
   switch (type) {
@@ -1573,24 +1685,11 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
           table->encryption = g_encryption.at(rand_index);
   }
 
-  /* if temporary table encrypt variable set create encrypt table */
-
-  auto row = mysql_fetch_row(
-      get_result("select @@innodb_temp_tablespace_encrypt", thd));
-  static std::string temp_table_encrypt = row[0];
-
-  if (strcmp(FORK, "Percona-Server") == 0 && server_version() < 80000 &&
-      temp_table_encrypt.compare("ON") == 0 && table->type == TEMPORARY)
+  if (encrypted_temp_tables && table->type == TEMPORARY)
     table->encryption = 'Y';
 
-  /* if innodb system is encrypt , create encrypt table */
-  auto row1 = mysql_fetch_row(
-      get_result("select @@innodb_sys_tablespace_encrypt", thd));
-  static std::string system_table_encrypt = row1[0];
-
-  if (strcmp(FORK, "Percona-Server") == 0 && table->tablespace.size() > 0 &&
-      table->tablespace.compare("innodb_system") == 0 &&
-      system_table_encrypt.compare("ON") == 0) {
+  if (encrypted_sys_tablelspaces &&
+      table->tablespace.compare("innodb_system") == 0) {
     table->encryption = 'Y';
   }
 
@@ -1616,7 +1715,7 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
 }
 
 /* prepare table definition */
-std::string Table::definition() {
+std::string Table::definition(bool with_index) {
   std::string def = "CREATE";
   if (type == TEMPORARY)
     def += " TEMPORARY";
@@ -1645,9 +1744,16 @@ std::string Table::definition() {
     }
   }
 
-  if (indexes_->size() > 0) {
-    for (auto id : *indexes_) {
-      def += id->definition() + ", ";
+  if (with_index) {
+    if (indexes_->size() > 0) {
+      for (auto id : *indexes_) {
+        def += id->definition() + ", ";
+      }
+    }
+  } else {
+    /* only load autoinc */
+    if (indexes_->size() > 0) {
+      def += indexes_->at(auto_inc_index)->definition() + ", ";
     }
   }
 
@@ -1702,11 +1808,17 @@ std::string Table::definition() {
       break;
     case Partition::RANGE:
       def += "(";
-      for (size_t i = 0; i < par->positions.size(); i++) {
-        def += " PARTITION p" + std::to_string(i) + " VALUES LESS THAN (" +
-               std::to_string(par->positions[i].range) + ")";
+      for (size_t i = 0; i <= par->positions.size(); i++) {
+        std::string range;
+        if (i == par->positions.size())
+          range = "MAXVALUE";
+        else
+          range = std::to_string(par->positions[i].range);
 
-        if (i == par->positions.size() - 1)
+        def += " PARTITION p" + std::to_string(i) + " VALUES LESS THAN (" +
+               range + ")";
+
+        if (i == par->positions.size())
           def += ")";
         else
           def += ",";
@@ -1736,7 +1848,7 @@ std::string Table::definition() {
 }
 
 /* create default table includes all tables*/
-void create_default_tables(Thd1 *thd) {
+void generate_metadata_for_tables() {
   auto tables = opt_int(TABLES);
 
   auto only_temporary_tables = opt_bool(ONLY_TEMPORARY);
@@ -1744,15 +1856,15 @@ void create_default_tables(Thd1 *thd) {
   if (!only_temporary_tables) {
     for (int i = 1; i <= tables; i++) {
       if (!options->at(Option::ONLY_PARTITION)->getBool())
-        all_tables->push_back(Table::table_id(Table::NORMAL, i, thd));
+        all_tables->push_back(Table::table_id(Table::NORMAL, i));
       if (!options->at(Option::NO_PARTITION)->getBool())
-        all_tables->push_back(Table::table_id(Table::PARTITION, i, thd));
+        all_tables->push_back(Table::table_id(Table::PARTITION, i));
     }
   }
 }
 
 /* return true if SQL is successful, else return false */
-bool execute_sql(std::string sql, Thd1 *thd) {
+bool execute_sql(const std::string &sql, Thd1 *thd) {
   auto query = sql.c_str();
   static auto log_all = opt_bool(LOG_ALL_QUERIES);
   static auto log_failed = opt_bool(LOG_FAILED_QUERIES);
@@ -1796,26 +1908,24 @@ bool execute_sql(std::string sql, Thd1 *thd) {
     if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
         mysql_errno(thd->conn) == CR_SERVER_LOST) {
       thd->thread_log << "server gone, while processing " + sql;
-      connection_lost = true;
+      run_query_failed = true;
     }
   } else {
     thd->max_con_fail_count = 0;
     thd->success = true;
-    MYSQL_RES *result;
-    result = mysql_store_result(thd->conn);
-    thd->result = result;
+    thd->result = mysql_store_result(thd->conn);
 
     /* log result */
     if (thd->store_result) {
-      if (!result)
+      if (!thd->result)
         throw std::runtime_error(sql + " does not return result set");
     } else if (log_client_output) {
-      if (result != NULL) {
+      if (thd->result != nullptr) {
         MYSQL_ROW row;
         unsigned int i, num_fields;
 
-        num_fields = mysql_num_fields(result);
-        while ((row = mysql_fetch_row(result))) {
+        num_fields = mysql_num_fields(thd->result);
+        while ((row = mysql_fetch_row(thd->result))) {
           for (i = 0; i < num_fields; i++) {
             if (row[i]) {
               if (strlen(row[i]) == 0) {
@@ -1841,13 +1951,14 @@ bool execute_sql(std::string sql, Thd1 *thd) {
     if (log_all || log_success) {
       thd->thread_log << " S " << sql;
       int number;
-      if (result == NULL)
+      if (thd->result == nullptr)
         number = mysql_affected_rows(thd->conn);
       else
-        number = mysql_num_rows(result);
+        number = mysql_num_rows(thd->result);
       thd->thread_log << " rows:" << number << std::endl;
       }
-    mysql_free_result(result);
+      if (!thd->store_result)
+        mysql_free_result(thd->result);
   }
 
   if (thd->ddl_query) {
@@ -1858,19 +1969,6 @@ bool execute_sql(std::string sql, Thd1 *thd) {
   }
 
   return (res == 0 ? 1 : 0);
-}
-
-/* load some records in table */
-void load_default_data(Table *table, Thd1 *thd) {
-  thd->ddl_query = false;
-  static int initial_records =
-      options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
-  int rec = options->at(Option::EXACT_INITIAL_RECORDS)->getBool()
-                ? initial_records
-                : rand_int(initial_records);
-  for (int i = 0; i < rec; i++) {
-    table->InsertRandomRow(thd, false);
-  }
 }
 
 void Table::SetEncryption(Thd1 *thd) {
@@ -2585,13 +2683,91 @@ void Table::UpdateRandomROW(Thd1 *thd) {
   execute_sql(sql, thd);
 }
 
-void Table::InsertRandomRow(Thd1 *thd, bool is_lock) {
-  if (is_lock)
-    table_mutex.lock();
+bool Table::InsertBulkRecord(Thd1 *thd, size_t number_of_records) {
+
+  if (number_of_records == 0)
+    return true;
+
+  std::string prepare_sql = "INSERT INTO " + name_ + " (";
+
+  std::vector<int> unique_keys;
+
+  assert(number_of_records <=
+         static_cast<size_t>(
+             g_integer_range *
+             options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
+
+  for (const auto &column : *columns_) {
+    prepare_sql += column->name_ + ", ";
+
+    /* if a table has primary key generated random keys */
+    if (column->primary_key) {
+      size_t record_generated = 0;
+      while (record_generated < number_of_records) {
+        /* 0 in primary key generates */
+        auto tmp_key = rand_int(
+            g_integer_range *
+                options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt(),
+            1);
+        bool key_found = false;
+        for (auto &key : unique_keys) {
+          if (key == tmp_key) {
+            key_found = true;
+            break;
+          }
+        }
+        if (key_found == false) {
+          unique_keys.push_back(tmp_key);
+          record_generated++;
+        }
+      }
+    }
+  }
+
+  prepare_sql.erase(prepare_sql.length() - 2);
+  prepare_sql += ")";
+
+  std::string values = " VALUES";
+
+  while (number_of_records-- > 0) {
+    std::string value = "(";
+    for (const auto &column : *columns_) {
+      if (column->type_ == Column::COLUMN_TYPES::GENERATED)
+        value += "DEFAULT";
+      else if (column->primary_key)
+        value += std::to_string(unique_keys[number_of_records]);
+      else if (column->auto_increment == true)
+        value += "NULL";
+      else
+        value += column->rand_value();
+
+      value += ", ";
+    }
+    value.erase(value.size() - 2);
+    value += ")";
+    values += value;
+    if (values.size() > 1024 * 1024 || number_of_records == 0) {
+      if (!execute_sql(prepare_sql + values, thd)) {
+        ddl_logs_write.lock();
+        thd->ddl_logs << "Bulk insert failed for table  " << name_ << std::endl;
+        ddl_logs_write.unlock();
+        run_query_failed = true;
+        return false;
+      }
+      values = " VALUES";
+    } else {
+      values += ", ";
+    }
+  }
+
+  return true;
+}
+
+void Table::InsertRandomRow(Thd1 *thd) {
+  table_mutex.lock();
   std::string vals = "";
   std::string type = "INSERT";
 
-  if (is_lock)
     type = rand_int(3) == 0 ? "INSERT" : "REPLACE";
 
   std::string sql = type + " INTO " + name_ + "  ( ";
@@ -2613,8 +2789,7 @@ void Table::InsertRandomRow(Thd1 *thd, bool is_lock) {
   }
   sql += ") VALUES(" + vals;
   sql += " )";
-  if (is_lock)
-    table_mutex.unlock();
+  table_mutex.unlock();
   execute_sql(sql, thd);
 }
 
@@ -3164,65 +3339,28 @@ bool check_tables_partitions_preload(Thd1 *thd) {
           case Partition::LIST:
             partition_count = static_cast<Partition *>(table)->lists.size();
             for (int i = 0; i < partition_count; i++) {
-              MYSQL_RES *result = get_result(
+              get_check_result(
                   "ALTER TABLE " + table->name_ + " CHECK PARTITION " +
                       static_cast<Partition *>(table)->lists[i].name,
                   thd);
-              MYSQL_ROW row;
-
-              while ((row = mysql_fetch_row(result))) {
-                // Check the value of Msg_text column
-                if (strcmp(row[3], "OK") != 0) {
-                  thd->thread_log << "msg_text: " << row[0] << " " << row[1]
-                                  << " " << row[2] << " " << row[3]
-                                  << std::endl;
-                }
-                break;  // Displays just the contents of first row in case of an
-                        // error. Remove, for more details/rows.
-              }
             }
             break;
           case Partition::RANGE:
             partition_count = static_cast<Partition *>(table)->positions.size();
             for (int i = 0; i < partition_count; i++) {
-              MYSQL_RES *result = get_result(
+              get_check_result(
                   "ALTER TABLE " + table->name_ + " CHECK PARTITION " +
                       static_cast<Partition *>(table)->positions[i].name,
                   thd);
-              MYSQL_ROW row;
-
-              while ((row = mysql_fetch_row(result))) {
-                // Check the value of Msg_text column
-                if (strcmp(row[3], "OK") != 0) {
-                  thd->thread_log << "msg_text: " << row[0] << " " << row[1]
-                                  << " " << row[2] << " " << row[3]
-                                  << std::endl;
-                }
-                break;  // Displays just the contents of first row in case of an
-                        // error. Remove, for more details/rows.
-              }
             }
             break;
           case Partition::HASH:
           case Partition::KEY:
             partition_count = static_cast<Partition *>(table)->number_of_part;
             for (int i = 0; i < partition_count; i++) {
-              MYSQL_RES *result =
-                  get_result("ALTER TABLE " + table->name_ +
-                                 " CHECK PARTITION p" + std::to_string(i),
-                             thd);
-              MYSQL_ROW row;
-
-              while ((row = mysql_fetch_row(result))) {
-                // Check the value of Msg_text column
-                if (strcmp(row[3], "OK") != 0) {
-                  thd->thread_log << "msg_text: " << row[0] << " " << row[1]
-                                  << " " << row[2] << " " << row[3]
-                                  << std::endl;
-                }
-                break;  // Displays just the contents of first row in case of an
-                        // error. Remove, for more details/rows.
-              }
+              get_check_result("ALTER TABLE " + table->name_ +
+                                   " CHECK PARTITION p" + std::to_string(i),
+                               thd);
             }
             break;
           default:
@@ -3230,13 +3368,7 @@ bool check_tables_partitions_preload(Thd1 *thd) {
         }
 
       } else {
-        auto row =
-            mysql_fetch_row(get_result("CHECK TABLE " + table->name_, thd));
-        // Check the value of Msg_text column
-        if (strcmp(row[3], "OK") != 0) {
-          thd->thread_log << "msg_text: " << row[0] << " " << row[1] << " "
-                          << row[2] << " " << row[3] << std::endl;
-        }
+        get_check_result("CHECK TABLE " + table->name_, thd);
       }
     }
     current++;
@@ -3257,12 +3389,6 @@ bool Thd1::load_metadata() {
   initial_seed += options->at(Option::STEP)->getInt();
   rng = std::mt19937(initial_seed);
 
-  /* find out innodb page_size */
-  if (options->at(Option::ENGINE)->getString().compare("INNODB") == 0) {
-    auto row = mysql_fetch_row(get_result("select @@innodb_page_size", this));
-    // Use the value of first column
-    g_innodb_page_size = std::stoi(row[0]) / 1024;
-  }
 
   /* create in-memory data for general tablespaces */
   create_in_memory_data();
@@ -3273,7 +3399,7 @@ bool Thd1::load_metadata() {
     std::cout << "metadata loaded from " << file << std::endl;
   } else {
     create_database_tablespace(this);
-    create_default_tables(this);
+    generate_metadata_for_tables();
     std::cout << "metadata created randomly" << std::endl;
   }
 
@@ -3283,8 +3409,8 @@ bool Thd1::load_metadata() {
   return 1;
 }
 
-void Thd1::run_some_query() {
-  bool just_ddl = opt_bool(JUST_LOAD_DDL);
+/* return true if successful or error out in case of fail */
+bool Thd1::run_some_query() {
   execute_sql("USE " + options->at(Option::DATABASE)->getString(), this);
 
   /* first create temporary tables metadata if requried */
@@ -3301,33 +3427,21 @@ void Thd1::run_some_query() {
   std::vector<Table *> *all_session_tables = new std::vector<Table *>;
   for (int i = 0; i < temp_tables; i++) {
 
-    ddl_query = true;
-    Table *table = Table::table_id(Table::TEMPORARY, i, this);
-    if (!execute_sql(table->definition(), this))
-      thread_log << thread_id << " Error create table failed " << table->name_
-                 << std::endl;
-
+    Table *table = Table::table_id(Table::TEMPORARY, i);
+    if (!table->load(this))
+      return false;
     all_session_tables->push_back(table);
-
-    /* load default data in temporary table */
-    if (!just_ddl) {
-      load_default_data(table, this);
-    }
   }
 
   /* prepare is passed, create all tables */
   if (options->at(Option::PREPARE)->getBool() ||
       options->at(Option::STEP)->getInt() == 1) {
     auto current = table_started++;
+
     while (current < all_tables->size()) {
       auto table = all_tables->at(current);
-      ddl_query = true;
-      if (!execute_sql(table->definition(), this))
-        throw std::runtime_error("Create table failed " + table->name_);
-      /* load default data in table*/
-      if (!just_ddl) {
-        load_default_data(table, this);
-      }
+      if (!table->load(this))
+        return false;
       table_completed++;
       current = table_started++;
     }
@@ -3337,6 +3451,11 @@ void Thd1::run_some_query() {
       thread_log << "Waiting for all threds to finish initial load "
                  << std::endl;
       std::chrono::seconds dura(1);
+      if (run_query_failed) {
+        thread_log << "Some other thread failed, Exiting. Please check logs "
+                   << std::endl;
+        return false;
+      }
       std::this_thread::sleep_for(dura);
     }
   }
@@ -3344,13 +3463,14 @@ void Thd1::run_some_query() {
   if (options->at(Option::CHECK_TABLE_PRELOAD)->getBool() &&
       options->at(Option::STEP)->getInt() != 1) {
     if (!check_tables_partitions_preload(this)) {
-      std::cout << "Failed on thread :" << thread_id << std::endl;
-      throw std::runtime_error("Check table/partitions failed!");
+      run_query_failed = true;
+      return false;
     }
   }
 
-  if (just_ddl || options->at(Option::PREPARE)->getBool())
-    return;
+  if (options->at(Option::JUST_LOAD_DDL)->getBool() ||
+      options->at(Option::PREPARE)->getBool())
+    return true;
 
   if (!lock_stream.test_and_set())
     std::cout << "starting random load in "
@@ -3469,7 +3589,7 @@ void Thd1::run_some_query() {
       table->SelectRandomRow(this);
       break;
     case Option::INSERT_RANDOM_ROW:
-      table->InsertRandomRow(this, true);
+      table->InsertRandomRow(this);
       break;
     case Option::DELETE_ALL_ROW:
       table->DeleteAllRows(this);
@@ -3538,7 +3658,7 @@ void Thd1::run_some_query() {
       success = false;
     }
 
-    if (connection_lost) {
+    if (run_query_failed) {
       break;
     }
   } // while
@@ -3555,4 +3675,5 @@ void Thd1::run_some_query() {
     if (table->type == Table::TEMPORARY)
       delete table;
   delete all_session_tables;
+  return true;
 }
