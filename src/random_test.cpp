@@ -162,8 +162,9 @@ int sum_of_all_options(Thd1 *thd) {
       algorithms.push_back("DEFAULT");
   }
 
-  /* Disabling until Bug: https://jira.percona.com/browse/PS-7865 is fixed by upstream */
-  if (server_version() >= 80000 && server_version() <= 80026) {
+  /* Disabling alter discard tablespace until 8.0.30
+   * Bug: https://jira.percona.com/browse/PS-7865 is fixed by upstream in MySQL 8.0.31 */
+  if (server_version() >= 80000 && server_version() <= 80030) {
     opt_int_set(ALTER_DISCARD_TABLESPACE, 0);
   }
 
