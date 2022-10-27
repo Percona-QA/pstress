@@ -50,7 +50,7 @@ struct Option {
     NO_TABLE_COMPRESSION,
     NO_TABLESPACE,
     NO_BLOB,
-    NO_VIRTUAL_COLUMNS,
+    NO_GENERATED_COLUMNS,
     TABLES,
     INDEXES,
     ALGORITHM,
@@ -142,6 +142,12 @@ struct Option {
     DROP_CREATE,
     EXACT_INITIAL_RECORDS,
     PREPARE,
+    BASE_COLUMNS_IN_GENERATED,
+    GENERATED_STORED,
+    CHAR_LENGTH,
+    VARCHAR_LENGTH,
+    BLOB_LENGTH,
+    DESC_INDEXES_IN_COLUMN,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

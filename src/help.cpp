@@ -148,13 +148,45 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
-  /* disable virtual columns*/
-  opt = newOption(Option::BOOL, Option::NO_VIRTUAL_COLUMNS, "no-virtual");
-  opt->help = "Disable virtual columns";
+  /* disable generated columns*/
+  opt = newOption(Option::BOOL, Option::NO_GENERATED_COLUMNS, "no-generated");
+  opt->help = "Disable generated columns";
   opt->setBool(false);
   opt->setArgs(no_argument);
 
-  /* disable blob,text columns*/
+  /* number of base columns in a generated column*/
+  opt = newOption(Option::INT, Option::BASE_COLUMNS_IN_GENERATED,
+                  "columns-in-generated");
+  opt->help = "maximum number of columns in a generated column";
+  opt->setInt(6);
+
+  /* generated column types */
+  opt = newOption(Option::INT, Option::GENERATED_STORED, "generated-stored");
+  opt->help = "Probability of generated columns STORED or VIRTUAL\n50 ==> "
+              "equal chances of stored and virtual\n100 => all columns are "
+              "stored\n0 all columns are virtual\n any other value sets the "
+              "probability of stored column accordingly";
+  opt->setInt(50);
+
+  /* blob column length */
+  opt = newOption(Option::INT, Option::BLOB_LENGTH, "blob-length");
+  opt->help =
+      "Maximum lenght of blob/text columns\nTINYBLOB/TINYTEXT 1/4 of "
+      "blob-length \nTEXT/BLOB 1/3 of blob-length \nMEDIUMBLOB/MEDIUMTEXT 1/2 "
+      "of blob-length\nLONGBLOB/LONGTEXT blob-length";
+  opt->setInt(1000);
+
+  /* char column length */
+  opt = newOption(Option::INT, Option::CHAR_LENGTH, "char-length");
+  opt->help = "char column maximum length";
+  opt->setInt(20);
+
+  /* varchar column length */
+  opt = newOption(Option::INT, Option::VARCHAR_LENGTH, "varchar-length");
+  opt->help = "varchar column maximum length.";
+  opt->setInt(40);
+
+  /* disable blob, text columns*/
   opt = newOption(Option::BOOL, Option::NO_BLOB, "no-blob");
   opt->help = "Disable blob columns";
   opt->setBool(false);
@@ -215,6 +247,11 @@ void add_options() {
   opt->help = "Disable index with desc on tables ";
   opt->setBool(false);
   opt->setArgs(no_argument);
+
+  /* Number of columns in an index of a table */
+  opt = newOption(Option::INT, Option::DESC_INDEXES_IN_COLUMN, "desc-prob");
+  opt->help = "probability of using desc in index";
+  opt->setInt(34);
 
   /* Only Partition tables */
   opt =
@@ -638,7 +675,7 @@ void add_options() {
   /* log all queries */
   opt = newOption(Option::BOOL, Option::LOG_ALL_QUERIES, "log-all-queries");
   opt->help = "Log all queries (succeeded and failed)";
-  opt->setBool(true); // todo diable while merge
+  opt->setBool(false);
   opt->setArgs(no_argument);
 
   /* execute sql sequentially */

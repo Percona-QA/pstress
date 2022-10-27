@@ -26,7 +26,6 @@
 #define MIN_SEED_SIZE 10000
 #define MAX_SEED_SIZE 100000
 #define MAX_RANDOM_STRING_SIZE 32
-#define DESC_INDEXES_IN_COLUMN 34
 #define MYSQL_8 8.0
 
 #define opt_int(a) options->at(Option::a)->getInt();
@@ -34,6 +33,8 @@
 #define opt_bool(a) options->at(Option::a)->getBool();
 #define opt_string(a) options->at(Option::a)->getString()
 
+class Column;
+typedef std::vector<Column *> Columns;
 int rand_int(int upper, int lower = 0);
 std::string rand_float(float upper, float lower = 0);
 std::string rand_double(double upper, double lower = 0);
@@ -99,7 +100,7 @@ public:
 struct Blob_Column : public Column {
   Blob_Column(std::string name, Table *table);
   Blob_Column(std::string name, Table *table, std::string sub_type_);
-  std::string sub_type; // sub_type can be tiny, medium, large blob
+  std::string sub_type;
   std::string clause() { return sub_type; };
   std::string rand_value() { return "\'" + rand_string(1000) + "\'"; }
   template <typename Writer> void Serialize(Writer &writer) const;
@@ -108,11 +109,11 @@ struct Blob_Column : public Column {
 struct Generated_Column : public Column {
 
   /* constructor for new random generated column */
-  Generated_Column(std::string name, Table *table);
+  Generated_Column(const std::string &name, Table *table);
 
   /* constructor used to prepare metadata */
-  Generated_Column(std::string name, Table *table, std::string clause,
-                   std::string sub_type);
+  Generated_Column(const std::string &name, Table *table,
+                   const std::string &clause, const std::string &sub_type);
 
   template <typename Writer> void Serialize(Writer &writer) const;
 
@@ -218,7 +219,7 @@ struct Table {
   std::string encryption = "N";
   int key_block_size = 0;
   // std::string data_directory; todo add corressponding code
-  std::vector<Column *> *columns_;
+  Columns *columns_;
   std::vector<Index *> *indexes_;
   std::mutex table_mutex;
 
