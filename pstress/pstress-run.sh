@@ -148,11 +148,11 @@ if [ "$(whoami)" == "root" ]; then MYEXTRA="--user=root ${MYEXTRA}"; fi
 if [ "${PXC_CLUSTER_RUN}" == "1" ]; then
   echoit "As PXC_CLUSTER_RUN=1, this script is auto-assuming this is a PXC run and will set PXC=1"
   PXC=1
-  THREADS=$(cat ${PXC_CLUSTER_CONFIG} | grep threads | head -n1 | sed 's/.*=//' | sed 's/^ *//g')
+  THREADS=$(cat ${PXC_CLUSTER_CONFIG} | grep ^threads | head -n1 | sed 's/.*=//' | sed 's/^ *//g')
 elif [ "${GRP_RPL_CLUSTER_RUN}" == "1" ]; then
   echoit "As GRP_RPL_CLUSTER_RUN=1, this script is auto-assuming this is a Group Replication run and will set GRP_RPL=1"
   GRP_RPL=1
-  THREADS=$(cat ${GR_CLUSTER_CONFIG} | grep threads | grep -v "#" | head -n1 | sed 's/.*=//' | sed 's/^ *//g')
+  THREADS=$(cat ${GR_CLUSTER_CONFIG} | grep ^threads | grep -v "#" | head -n1 | sed 's/.*=//' | sed 's/^ *//g')
 fi
 if [ "${PXC}" == "1" ]; then
   if [ ${QUERIES_PER_THREAD} -lt 2147483647 ]; then  # Starting up a cluster takes more time, so don't rotate too quickly

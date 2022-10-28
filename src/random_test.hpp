@@ -18,6 +18,7 @@
 #include <string.h>
 #include <vector>
 #include <writer.h>
+#include <memory>
 #define INNODB_16K_PAGE_SIZE 16
 #define INNODB_8K_PAGE_SIZE 8
 #define INNODB_32K_PAGE_SIZE 32
@@ -162,7 +163,7 @@ struct Thd1 {
   MYSQL *conn;
   std::atomic<unsigned long long> &performed_queries_total;
   std::atomic<unsigned long long> &failed_queries_total;
-  MYSQL_RES *result;          // result set of sql
+  std::shared_ptr<MYSQL_RES> result;          // result set of sql
   bool ddl_query = false;     // is the query ddl
   bool success = false;       // if the sql is successfully executed
   bool store_result = false;  // store result of executed sql

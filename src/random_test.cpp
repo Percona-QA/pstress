@@ -45,11 +45,15 @@ std::atomic<bool> connection_lost(false);
 std::vector<Partition::PART_TYPE> Partition::supported;
 
 /* get result of sql */
-static MYSQL_RES *get_result(std::string sql, Thd1 *thd) {
+static std::shared_ptr<MYSQL_RES> get_result(std::string sql, Thd1 *thd) {
   thd->store_result = true;
   execute_sql(sql, thd);
   auto result = thd->result;
-  thd->result = nullptr;
+  if (!result) {
+    thd->thread_log << "result is nullptr";
+  }
+  thd->result.reset();
+
   thd->store_result = false;
   return result;
 }
@@ -1092,18 +1096,40 @@ void Table::Optimize(Thd1 *thd) {
     execute_sql("OPTIMIZE TABLE " + name_, thd);
 }
 
+static MYSQL_ROW mysql_fetch_row_safe(Thd1 *thd, std::shared_ptr<MYSQL_RES> result) {
+  if (!result) {
+    thd->thread_log << "mysql_fetch_row called with nullptr arg!";
+    return nullptr;
+  }
+  return mysql_fetch_row(result.get());
+}
+
+static bool mysql_num_fields_safe(Thd1 *thd, std::shared_ptr<MYSQL_RES> result, unsigned int req) {
+  if (!result) {
+    thd->thread_log << "mysql_num_fields called with nullptr arg!";
+    return 0;
+  }
+  auto num_fields = mysql_num_fields(result.get());
+  auto ret = req <= num_fields;
+  if (!ret) {
+    thd->thread_log << "Expected at least " << req
+      << " fields but only " << num_fields << " exist";
+  }
+  return ret;
+}
 void Table::Check(Thd1 *thd) {
   if (type == PARTITION && rand_int(4) == 1) {
     table_mutex.lock();
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
     table_mutex.unlock();
-    auto row = mysql_fetch_row(get_result("ALTER TABLE " + name_ +
+    auto result = get_result("ALTER TABLE " + name_ +
                                               " CHECK PARTITION p" +
                                               std::to_string(partition),
-                                          thd));
+                                          thd);
+    auto row = mysql_fetch_row_safe(thd, result);
     // Check the value of Msg_text column
-    if (strcmp(row[3], "OK") != 0) {
+    if (row && mysql_num_fields_safe(thd, result, 4) && strcmp(row[3], "OK") != 0) {
       thd->thread_log << "msg_text: " << row[0] << " " << row[1] << " "
                       << row[2] << " " << row[3] << std::endl;
     }
@@ -1573,9 +1599,11 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
   }
 
   /* if temporary table encrypt variable set create encrypt table */
-
-  auto row = mysql_fetch_row(
-      get_result("select @@innodb_temp_tablespace_encrypt", thd));
+  auto result = get_result("select @@innodb_temp_tablespace_encrypt", thd);
+  if (! mysql_num_fields_safe(thd, result, 1)) {
+    throw std::runtime_error("Expected at least 1 field in result");
+  }
+  auto row = mysql_fetch_row_safe(thd, result);
   static std::string temp_table_encrypt = row[0];
 
   if (strcmp(FORK, "Percona-Server") == 0 && server_version() < 80000 &&
@@ -1583,8 +1611,11 @@ Table *Table::table_id(TABLE_TYPES type, int id, Thd1 *thd) {
     table->encryption = 'Y';
 
   /* if innodb system is encrypt , create encrypt table */
-  auto row1 = mysql_fetch_row(
-      get_result("select @@innodb_sys_tablespace_encrypt", thd));
+  result = get_result("select @@innodb_sys_tablespace_encrypt", thd);
+  if (! mysql_num_fields_safe(thd, result, 1)) {
+    throw std::runtime_error("Expected at least 1 field in result");
+  }
+  auto row1 = mysql_fetch_row_safe(thd, result);
   static std::string system_table_encrypt = row1[0];
 
   if (strcmp(FORK, "Percona-Server") == 0 && table->tablespace.size() > 0 &&
@@ -1802,7 +1833,9 @@ bool execute_sql(std::string sql, Thd1 *thd) {
     thd->success = true;
     MYSQL_RES *result;
     result = mysql_store_result(thd->conn);
-    thd->result = result;
+    thd->result = std::shared_ptr<MYSQL_RES>(result, [](MYSQL_RES* r){
+      if(r) mysql_free_result(r);
+    });
 
     /* log result */
     if (thd->store_result) {
@@ -1846,7 +1879,7 @@ bool execute_sql(std::string sql, Thd1 *thd) {
         number = mysql_num_rows(result);
       thd->thread_log << " rows:" << number << std::endl;
       }
-    mysql_free_result(result);
+//    mysql_free_result(result);
   }
 
   if (thd->ddl_query) {
@@ -3163,15 +3196,15 @@ bool check_tables_partitions_preload(Thd1 *thd) {
           case Partition::LIST:
             partition_count = static_cast<Partition *>(table)->lists.size();
             for (int i = 0; i < partition_count; i++) {
-              MYSQL_RES *result = get_result(
+              auto result = get_result(
                   "ALTER TABLE " + table->name_ + " CHECK PARTITION " +
                       static_cast<Partition *>(table)->lists[i].name,
                   thd);
               MYSQL_ROW row;
 
-              while ((row = mysql_fetch_row(result))) {
+              while ((row = mysql_fetch_row_safe(thd, result))) {
                 // Check the value of Msg_text column
-                if (strcmp(row[3], "OK") != 0) {
+                if (mysql_num_fields_safe(thd, result, 4) && strcmp(row[3], "OK") != 0) {
                   thd->thread_log << "msg_text: " << row[0] << " " << row[1]
                                   << " " << row[2] << " " << row[3]
                                   << std::endl;
@@ -3184,15 +3217,15 @@ bool check_tables_partitions_preload(Thd1 *thd) {
           case Partition::RANGE:
             partition_count = static_cast<Partition *>(table)->positions.size();
             for (int i = 0; i < partition_count; i++) {
-              MYSQL_RES *result = get_result(
+              auto result = get_result(
                   "ALTER TABLE " + table->name_ + " CHECK PARTITION " +
                       static_cast<Partition *>(table)->positions[i].name,
                   thd);
               MYSQL_ROW row;
 
-              while ((row = mysql_fetch_row(result))) {
+              while ((row = mysql_fetch_row_safe(thd, result))) {
                 // Check the value of Msg_text column
-                if (strcmp(row[3], "OK") != 0) {
+                if (mysql_num_fields_safe(thd, result, 4) && strcmp(row[3], "OK") != 0) {
                   thd->thread_log << "msg_text: " << row[0] << " " << row[1]
                                   << " " << row[2] << " " << row[3]
                                   << std::endl;
@@ -3206,15 +3239,15 @@ bool check_tables_partitions_preload(Thd1 *thd) {
           case Partition::KEY:
             partition_count = static_cast<Partition *>(table)->number_of_part;
             for (int i = 0; i < partition_count; i++) {
-              MYSQL_RES *result =
+              auto result =
                   get_result("ALTER TABLE " + table->name_ +
                                  " CHECK PARTITION p" + std::to_string(i),
                              thd);
               MYSQL_ROW row;
 
-              while ((row = mysql_fetch_row(result))) {
+              while ((row = mysql_fetch_row_safe(thd, result))) {
                 // Check the value of Msg_text column
-                if (strcmp(row[3], "OK") != 0) {
+                if (mysql_num_fields_safe(thd, result, 4) && strcmp(row[3], "OK") != 0) {
                   thd->thread_log << "msg_text: " << row[0] << " " << row[1]
                                   << " " << row[2] << " " << row[3]
                                   << std::endl;
@@ -3229,10 +3262,11 @@ bool check_tables_partitions_preload(Thd1 *thd) {
         }
 
       } else {
+        auto result = get_result("CHECK TABLE " + table->name_, thd);
         auto row =
-            mysql_fetch_row(get_result("CHECK TABLE " + table->name_, thd));
+            mysql_fetch_row_safe(thd, result);
         // Check the value of Msg_text column
-        if (strcmp(row[3], "OK") != 0) {
+        if (row && mysql_num_fields_safe(thd, result, 4) && strcmp(row[3], "OK") != 0) {
           thd->thread_log << "msg_text: " << row[0] << " " << row[1] << " "
                           << row[2] << " " << row[3] << std::endl;
         }
@@ -3258,7 +3292,11 @@ bool Thd1::load_metadata() {
 
   /* find out innodb page_size */
   if (options->at(Option::ENGINE)->getString().compare("INNODB") == 0) {
-    auto row = mysql_fetch_row(get_result("select @@innodb_page_size", this));
+    auto result = get_result("select @@innodb_page_size", this);
+    if (!mysql_num_fields_safe(this, result, 1)) {
+      throw std::runtime_error("Expected at least 1 field in result");
+    }
+    auto row = mysql_fetch_row_safe(this, result);
     // Use the value of first column
     g_innodb_page_size = std::stoi(row[0]) / 1024;
   }

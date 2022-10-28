@@ -96,25 +96,31 @@ void Node::workerThread(int number) {
   if (options->at(Option::PQUERY)->getBool() == false) {
     static bool success = false;
 
-    /* load metadata */
-    if (!lock_metadata.test_and_set()) {
-      success = thd->load_metadata();
-      metadata_loaded = true;
+    try {
+      /* load metadata */
+      if (!lock_metadata.test_and_set()) {
+        success = thd->load_metadata();
+        metadata_loaded = true;
+      }
+
+      /* wait untill metadata is finished */
+      while (!metadata_loaded) {
+        std::chrono::seconds dura(3);
+        std::this_thread::sleep_for(dura);
+        thread_log << "waiting for metadata load to finish" << std::endl;
+      }
+
+      if (!success)
+        thread_log << " initial setup failed, check logs for details "
+                  << std::endl;
+      else
+        thd->run_some_query();
+
+    } catch (const std::exception& e) {
+      thread_log << e.what();
+    } catch (...) {
+      thread_log << "Unknown exception caught";
     }
-
-    /* wait untill metadata is finished */
-    while (!metadata_loaded) {
-      std::chrono::seconds dura(3);
-      std::this_thread::sleep_for(dura);
-      thread_log << "waiting for metadata load to finish" << std::endl;
-    }
-
-    if (!success)
-      thread_log << " initial setup failed, check logs for details "
-                 << std::endl;
-    else
-      thd->run_some_query();
-
   } else {
     std::random_device rd;
     std::mt19937 gen(rd());
