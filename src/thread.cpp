@@ -22,8 +22,9 @@ void Node::workerThread(int number) {
   std::ofstream client_log;
   if (options->at(Option::LOG_CLIENT_OUTPUT)->getBool()) {
     std::ostringstream cl;
-    cl << myParams.logdir << "/" << myParams.myName << "_step_" << std::to_string(options->at(Option::STEP)->getInt())  << "_thread-" << number
-       << ".out";
+    cl << myParams.logdir << "/" << myParams.myName << "_step_"
+       << std::to_string(options->at(Option::STEP)->getInt()) << "_thread-"
+       << number << ".out";
     client_log.open(cl.str(), std::ios::out | std::ios::trunc);
     if (!client_log.is_open()) {
       general_log << "Unable to open logfile for client output " << cl.str()
@@ -32,28 +33,24 @@ void Node::workerThread(int number) {
     }
   }
 
-  if (options->at(Option::LOG_FAILED_QUERIES)->getBool() ||
-      options->at(Option::LOG_ALL_QUERIES)->getBool() ||
-      options->at(Option::LOG_QUERY_STATISTICS)->getBool() ||
-      options->at(Option::LOG_SUCCEDED_QUERIES)->getBool()) {
-    std::ostringstream os;
-    os << myParams.logdir << "/" << myParams.myName << "_step_" << std::to_string(options->at(Option::STEP)->getInt()) << "_thread-" << number
-       << ".sql";
-    thread_log.open(os.str(), std::ios::out | std::ios::trunc);
-    if (!thread_log.is_open()) {
-      general_log << "Unable to open thread logfile " << os.str() << ": "
-                  << std::strerror(errno) << std::endl;
-      return;
-    }
+  std::ostringstream os;
+  os << myParams.logdir << "/" << myParams.myName << "_step_"
+     << std::to_string(options->at(Option::STEP)->getInt()) << "_thread-"
+     << number << ".sql";
+  thread_log.open(os.str(), std::ios::out | std::ios::trunc);
+  if (!thread_log.is_open()) {
+    general_log << "Unable to open thread logfile " << os.str() << ": "
+                << std::strerror(errno) << std::endl;
+    return;
+  }
 
-    if (options->at(Option::LOG_QUERY_DURATION)->getBool()) {
-      thread_log.precision(3);
-      thread_log << std::fixed;
-      std::cerr.precision(3);
-      std::cerr << std::fixed;
-      std::cout.precision(3);
-      std::cout << std::fixed;
-    }
+  if (options->at(Option::LOG_QUERY_DURATION)->getBool()) {
+    thread_log.precision(3);
+    thread_log << std::fixed;
+    std::cerr.precision(3);
+    std::cerr << std::fixed;
+    std::cout.precision(3);
+    std::cout << std::fixed;
   }
 
   MYSQL *conn;

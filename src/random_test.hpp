@@ -10,6 +10,7 @@
 #include <filereadstream.h>
 #include <fstream>
 #include <iostream>
+#include <memory> //shared_ptr
 #include <mutex>
 #include <mysql.h>
 #include <prettywriter.h>
@@ -161,10 +162,9 @@ struct Thd1 {
   MYSQL *conn;
   std::atomic<unsigned long long> &performed_queries_total;
   std::atomic<unsigned long long> &failed_queries_total;
-  MYSQL_RES *result;          // result set of sql
+  std::shared_ptr<MYSQL_RES> result; // result set of sql
   bool ddl_query = false;     // is the query ddl
   bool success = false;       // if the sql is successfully executed
-  bool store_result = false;  // store result of executed sql
   int max_con_fail_count = 0; // consecutive failed queries
   int query_number = 0;
 };
@@ -325,7 +325,13 @@ Option::Opt pick_some_option();
 std::vector<std::string> *random_strs_generator(unsigned long int seed);
 bool load_metadata(Thd1 *thd);
 int save_dictionary(std::vector<Table *> *all_tables);
+
+/* Execute SQL and update thd variables
+param[in] sql	 	query that we want to execute
+param[in/out] thd	Thd used to execute sql
+*/
 bool execute_sql(const std::string &sql, Thd1 *thd);
+
 void save_metadata_to_file();
 void clean_up_at_end();
 void alter_tablespace_encryption(Thd1 *thd);
@@ -336,5 +342,4 @@ void alter_database_encryption(Thd1 *thd);
 void create_in_memory_data();
 void generate_metadata_for_tables();
 void create_database_tablespace(Thd1 *thd);
-bool check_tables_partitions_preload(Thd1 *thd);
 #endif
