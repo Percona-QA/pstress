@@ -158,7 +158,7 @@ pstress must be run from the directory where the executable binaries are located
 cd pstress/src
 
 ```bash
-./pstress-ps --tables 30 --logdir=$PWD/log --records 200 --threads 10 --seconds 100 --socket $SOCKET --insert-row 100 ---update-with-cond 50 --no-delete --log-failed-queries --log-all-queries --no-encryption
+./pstress-ps --tables 30 --logdir=$PWD/log --records 200 --threads 10 --seconds 100 --socket $SOCKET --insert-row 100 --update-with-cond 50 --no-delete --log-failed-queries --log-all-queries --no-encryption
 ```
 
 # How to do a sample pstress run through Driver Script
