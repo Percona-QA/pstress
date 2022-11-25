@@ -3476,15 +3476,12 @@ bool Thd1::run_some_query() {
   if (!lock_stream.test_and_set()) {
     std::stringstream s;
     if (check_failures > 0) {
-      /* run_query is failed and step is marked  */
-      run_query_failed = true;
       s << "Check table failed for " << check_failures << " "
         << (check_failures == 1 ? "table" : " tables")
         << ". Check thread logs for details \n ";
-    } else {
-      s << "Starting random load in " << options->at(Option::THREADS)->getInt()
-        << " threads.\n";
     }
+    s << "Starting random load in " << options->at(Option::THREADS)->getInt()
+      << " threads.\n";
     std::cout << s.str();
     this->ddl_logs << s.str();
   }
