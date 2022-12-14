@@ -27,9 +27,7 @@ fi
 
 # RocksDB does not support encryption. Disable all keyring encryption types
 if [ "${ENGINE}" == "RocksDB" ]; then
-  KEYRING_FILE=0
-  KEYRING_COMPONENT=0
-  KEYRING_VAULT=0
+  ENCRYPTION_RUN=0
 fi
 
 # Check no two encryption types are enabled at the same time
@@ -915,13 +913,14 @@ EOF
       fi
 
       if [ $(ls -l ${RUNDIR}/${TRIAL}/*/*core* 2>/dev/null | wc -l) -ge 1 ]; then break; fi  # Break the wait-for-server-started loop if a core file is found. Handling of core is done below.
+      # Check if mysqld is alive and if so, set ISSTARTED=1 so pstress will run
+      if ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET} ping > /dev/null 2>&1; then
+        ISSTARTED=1
+        echoit "Server started ok. Client: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET}"
+        ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "CREATE DATABASE IF NOT EXISTS test;" > /dev/null 2>&1
+        break;
+      fi
     done
-    # Check if mysqld is alive and if so, set ISSTARTED=1 so pstress will run
-    if ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET} ping > /dev/null 2>&1; then
-      ISSTARTED=1
-      echoit "Server started ok. Client: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET}"
-      ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "CREATE DATABASE IF NOT EXISTS test;" > /dev/null 2>&1
-    fi
   elif [[ "${PXC}" == "1" ]]; then
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       mkdir -p ${RUNDIR}/${TRIAL}/
@@ -1425,27 +1424,21 @@ EOF
 EOF
 fi
 
+echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
+mkdir ${WORKDIR}/mysqld
+cp -R ${BASEDIR}/bin ${WORKDIR}/mysqld/
+echoit "Making a copy of the library files required for starting server from incident directory"
+cp -R ${BASEDIR}/lib ${WORKDIR}/mysqld/
+echoit "Making a copy of the conf file $CONFIGURATION_FILE (useful later during repeating the crashes)..."
+cp ${SCRIPT_PWD}/$CONFIGURATION_FILE ${WORKDIR}/
+echoit "Making a copy of the seed file..."
+echo "${SEED}" > ${WORKDIR}/seed
+
 if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
-  echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
-  mkdir ${WORKDIR}/mysqld
-  cp -R ${BASEDIR}/bin ${WORKDIR}/mysqld/
-  echoit "Making a copy of the library files required for starting server from incident directory"
-  cp -R ${BASEDIR}/lib ${WORKDIR}/mysqld/
-  echoit "Making a copy of the conf file $CONFIGURATION_FILE (useful later during repeating the crashes)..."
-  cp ${SCRIPT_PWD}/$CONFIGURATION_FILE ${WORKDIR}/
-  echoit "Making a copy of the seed file..."
-  echo "${SEED}" > ${WORKDIR}/seed
   echoit "Generating datadir template (using mysql_install_db or mysqld --init)..."
   ${INIT_TOOL} ${INIT_OPT} --basedir=${BASEDIR} --datadir=${WORKDIR}/data.template > ${WORKDIR}/log/mysql_install_db.txt 2>&1
 elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-  echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
-  mkdir ${WORKDIR}/mysqld
-  cp -R ${BASEDIR}/bin ${WORKDIR}/mysqld/
-  echoit "Making a copy of the library files required for starting server from incident directory"
-  cp -R ${BASEDIR}/lib ${WORKDIR}/mysqld/
-  echoit "Making a copy of the conf file $CONFIGURATION_FILE (useful later during repeating the crashes)..."
-  cp ${SCRIPT_PWD}/$CONFIGURATION_FILE ${WORKDIR}/
-  if [[ ${PXC} -eq 1 ]]; then
+  if [ ${PXC} -eq 1 ]; then
     echoit "Ensuring PXC templates created for pstress run.."
     pxc_startup startup
     sleep 5
