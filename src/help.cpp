@@ -677,7 +677,7 @@ void add_options() {
   opt =
       newOption(Option::BOOL, Option::LOG_FAILED_QUERIES, "log-failed-queries");
   opt->help = "Log all failed queries";
-  opt->setBool(false);
+  opt->setBool(true);
   opt->setArgs(no_argument);
 
   /* log success queries */

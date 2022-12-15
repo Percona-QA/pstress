@@ -51,6 +51,7 @@ std::atomic_flag lock_stream = ATOMIC_FLAG_INIT;
 std::atomic<bool> run_query_failed(false);
 /* partition type supported by system */
 std::vector<Partition::PART_TYPE> Partition::supported;
+const int maximum_records_in_each_parititon_list = 100;
 
 static MYSQL_ROW mysql_fetch_row_safe(Thd1 *thd) {
   if (!thd->result) {
@@ -1061,7 +1062,7 @@ bool Table::load(Thd1 *thd) {
     return false;
   }
 
-  /* load default data in temporary table */
+  /* load default data in table */
   if (!options->at(Option::JUST_LOAD_DDL)->getBool()) {
     thd->ddl_query = false;
     size_t number_of_records =
@@ -1069,15 +1070,7 @@ bool Table::load(Thd1 *thd) {
             ? options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()
             : rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
 
-    // todo bulk insert for Parititon LIST. We need to smart generate random
-    // list
-    if (type == PARTITION &&
-        static_cast<Partition *>(this)->part_type == Partition::LIST) {
-      for (size_t i = 0; i < number_of_records; i++) {
-        InsertRandomRow(thd);
-      }
-
-    } else if (!InsertBulkRecord(thd, number_of_records))
+    if (!InsertBulkRecord(thd, number_of_records))
       return false;
   }
 
@@ -1132,11 +1125,11 @@ Partition::Partition(std::string n) : Table(n) {
   part_type = supported[rand_int(supported.size() - 1)];
 
   number_of_part = rand_int(options->at(Option::MAX_PARTITIONS)->getInt(), 2);
-  auto number_of_records =
-      options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
 
   /* randomly pick ranges for partition */
   if (part_type == RANGE) {
+    auto number_of_records =
+        options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
     for (int i = 0; i < number_of_part; i++) {
       positions.emplace_back("p",
                              rand_int(g_integer_range * number_of_records));
@@ -1151,12 +1144,13 @@ Partition::Partition(std::string n) : Table(n) {
         for (int j = i; j < number_of_part; j++)
           positions.at(j).range++;
     }
+
   } else if (part_type == LIST) {
+    auto number_of_records =
+        rand_int(maximum_records_in_each_parititon_list * number_of_part,
+                 number_of_part);
 
-    if (number_of_records < number_of_part)
-      number_of_records = number_of_part;
-
-    /* temporary vector to store all number_of_recoreds */
+    /* temporary vector to store all number_of_records */
     for (int i = 0; i < number_of_records; i++)
       total_left_list.push_back(i);
 
@@ -1164,6 +1158,7 @@ Partition::Partition(std::string n) : Table(n) {
       lists.emplace_back("p" + std::to_string(i));
       auto number_of_records_in_partition =
           rand_int(number_of_records) / number_of_part;
+
       if (number_of_records_in_partition == 0)
         number_of_records_in_partition = 1;
 
@@ -2684,13 +2679,24 @@ void Table::UpdateRandomROW(Thd1 *thd) {
 }
 
 bool Table::InsertBulkRecord(Thd1 *thd, size_t number_of_records) {
+  std::vector<int> unique_keys;
+  bool is_list_partition = false;
 
   if (number_of_records == 0)
     return true;
 
-  std::string prepare_sql = "INSERT INTO " + name_ + " (";
+  std::string prepare_sql = "INSERT ";
 
-  std::vector<int> unique_keys;
+  /* ignore error in the case parition list  */
+  if (type == PARTITION &&
+      static_cast<Partition *>(this)->part_type == Partition::LIST) {
+    is_list_partition = true;
+  }
+
+  if (is_list_partition)
+    prepare_sql += "IGNORE ";
+
+  prepare_sql += "INTO " + name_ + " (";
 
   assert(number_of_records <=
          static_cast<size_t>(
@@ -2702,6 +2708,7 @@ bool Table::InsertBulkRecord(Thd1 *thd, size_t number_of_records) {
 
     /* if a table has primary key generated random keys */
     if (column->primary_key) {
+      std::unordered_set<int> unique_keys_sets(number_of_records);
       size_t record_generated = 0;
       while (record_generated < number_of_records) {
         /* 0 in primary key generates */
@@ -2709,18 +2716,13 @@ bool Table::InsertBulkRecord(Thd1 *thd, size_t number_of_records) {
             g_integer_range *
                 options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt(),
             1);
-        bool key_found = false;
-        for (auto &key : unique_keys) {
-          if (key == tmp_key) {
-            key_found = true;
-            break;
-          }
-        }
-        if (key_found == false) {
-          unique_keys.push_back(tmp_key);
+
+        if (unique_keys_sets.count(tmp_key) == 0) {
+          unique_keys_sets.insert(tmp_key);
           record_generated++;
         }
       }
+      unique_keys.assign(unique_keys_sets.begin(), unique_keys_sets.end());
     }
   }
 
@@ -2735,10 +2737,16 @@ bool Table::InsertBulkRecord(Thd1 *thd, size_t number_of_records) {
       if (column->type_ == Column::COLUMN_TYPES::GENERATED)
         value += "DEFAULT";
       else if (column->primary_key)
-        value += std::to_string(unique_keys[number_of_records]);
+        value += std::to_string(unique_keys.at(number_of_records));
       else if (column->auto_increment == true)
         value += "NULL";
-      else
+      else if (is_list_partition && column->name_.compare("ip_col") == 0) {
+        /* for list partition we insert only maximum possible value
+         * todo modify rand_value to return list parititon range */
+        value += std::to_string(
+            rand_int(maximum_records_in_each_parititon_list *
+                     options->at(Option::MAX_PARTITIONS)->getInt()));
+      } else
         value += column->rand_value();
 
       value += ", ";

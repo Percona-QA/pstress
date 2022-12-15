@@ -17,6 +17,7 @@
 #include <random>
 #include <sstream>
 #include <string.h>
+#include <unordered_set>
 #include <vector>
 #include <writer.h>
 #define INNODB_16K_PAGE_SIZE 16
