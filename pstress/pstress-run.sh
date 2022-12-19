@@ -823,7 +823,7 @@ EOF
 EOF
       fi
     fi
-    MYEXTRA_SAVE_IT=${MYEXTRA}
+    MYEXTRA=
     if [ "${ADD_RANDOM_OPTIONS}" == "" ]; then  # Backwards compatibility for .conf files without this option
        ADD_RANDOM_OPTIONS=0
     fi
