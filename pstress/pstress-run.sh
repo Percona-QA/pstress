@@ -830,10 +830,15 @@ EOF
     if [ ${ADD_RANDOM_OPTIONS} -eq 1 ]; then  # Add random mysqld --options to MYEXTRA
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
+      OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
         OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${OPTIONS_INFILE} | head -n1)"
-        if [ "$(echo ${OPTION_TO_ADD} | sed 's| ||g;s|.*query.alloc.block.size=1125899906842624.*||' )" != "" ]; then  # http://bugs.mysql.com/bug.php?id=78238
-          OPTIONS_TO_ADD="${OPTIONS_TO_ADD} ${OPTION_TO_ADD}"
+        if [ ${#OPTION_NAME[@]} -eq 0 ]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        elif [[ ! ${OPTION_NAME[@]} =~ ${OPTION_TO_ADD%=*} ]]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
         fi
       done
       echoit "ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's MYEXTRA..."
@@ -843,12 +848,18 @@ EOF
       ADD_RANDOM_ROCKSDB_OPTIONS=0
     fi
     if [ ${ADD_RANDOM_ROCKSDB_OPTIONS} -eq 1 ]; then  # Add random rocksdb --options to MYEXTRA
-      OPTION_TO_ADD=
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
+      OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
         OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${ROCKSDB_OPTIONS_INFILE} | head -n1)"
-        OPTIONS_TO_ADD="${OPTIONS_TO_ADD} ${OPTION_TO_ADD}"
+	if [ ${#OPTION_NAME[@]} -eq 0 ]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        elif [[ ! ${OPTION_NAME[@]} =~ ${OPTION_TO_ADD%=*} ]]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        fi
       done
       echoit "ADD_RANDOM_ROCKSDB_OPTIONS=1: adding RocksDB mysqld option(s) ${OPTIONS_TO_ADD} to this run's MYEXTRA..."
       MYEXTRA="${MYEXTRA} ${OPTIONS_TO_ADD}"
@@ -944,10 +955,15 @@ EOF
     if [ ${PXC_ADD_RANDOM_OPTIONS} -eq 1 ]; then
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % PXC_MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
+      OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
-        OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${PXC_OPTIONS_INFILE} | head -n1)"
-        if [ "$(echo ${OPTION_TO_ADD} | sed 's| ||g;s|.*query.alloc.block.size=1125899906842624.*||' )" != "" ]; then  # http://bugs.mysql.com/bug.php?id=78238
-          OPTIONS_TO_ADD="${OPTIONS_TO_ADD} ${OPTION_TO_ADD}"
+	OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${PXC_OPTIONS_INFILE} | head -n1)"
+        if [ ${#OPTION_NAME[@]} -eq 0 ]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        elif [[ ! ${OPTION_NAME[@]} =~ ${OPTION_TO_ADD%=*} ]]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
         fi
       done
       echoit "PXC_ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's PXC_MYEXTRA..."
@@ -957,9 +973,16 @@ EOF
     if [ ${PXC_WSREP_ADD_RANDOM_WSREP_MYSQLD_OPTIONS} -eq 1 ]; then
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % PXC_WSREP_MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
+      OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
         OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${PXC_WSREP_OPTIONS_INFILE} | head -n1)"
-        OPTIONS_TO_ADD="${OPTIONS_TO_ADD} ${OPTION_TO_ADD}"
+	if [ ${#OPTION_NAME[@]} -eq 0 ]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        elif [[ ! ${OPTION_NAME[@]} =~ ${OPTION_TO_ADD%=*} ]]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        fi
       done
       echoit "PXC_WSREP_ADD_RANDOM_WSREP_MYSQLD_OPTIONS=1: adding wsrep provider mysqld option(s) ${OPTIONS_TO_ADD} to this run's PXC_MYEXTRA..."
       PXC_MYEXTRA="${PXC_MYEXTRA} ${OPTIONS_TO_ADD}"
@@ -968,9 +991,16 @@ EOF
     if [ ${PXC_WSREP_PROVIDER_ADD_RANDOM_WSREP_PROVIDER_CONFIG_OPTIONS} -eq 1 ]; then
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % PXC_WSREP_PROVIDER_MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
+      OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
         OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${PXC_WSREP_PROVIDER_OPTIONS_INFILE} | head -n1)"
-        OPTIONS_TO_ADD="${OPTION_TO_ADD};${OPTIONS_TO_ADD}"
+        if [ ${#OPTION_NAME[@]} -eq 0 ]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        elif [[ ! ${OPTION_NAME[@]} =~ ${OPTION_TO_ADD%=*} ]]; then
+          OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
+          OPTION_NAME+=(${OPTION_TO_ADD%=*})
+        fi
       done
       echoit "PXC_WSREP_PROVIDER_ADD_RANDOM_WSREP_PROVIDER_CONFIG_OPTIONS=1: adding wsrep provider configuration option(s) ${OPTIONS_TO_ADD} to this run..."
       WSREP_PROVIDER_OPT="$OPTIONS_TO_ADD"
