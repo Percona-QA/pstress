@@ -10,12 +10,14 @@
 #include <filereadstream.h>
 #include <fstream>
 #include <iostream>
+#include <memory> //shared_ptr
 #include <mutex>
 #include <mysql.h>
 #include <prettywriter.h>
 #include <random>
 #include <sstream>
 #include <string.h>
+#include <unordered_set>
 #include <vector>
 #include <writer.h>
 #define INNODB_16K_PAGE_SIZE 16
@@ -64,7 +66,6 @@ public:
   Column(std::string name, std::string type, Table *table)
       : type_(col_type(type)), name_(name), table_(table){};
 
-  /* table definition */
   std::string definition();
   /* return random value of that column */
   virtual std::string rand_value();
@@ -151,7 +152,7 @@ struct Thd1 {
       : thread_id(id), thread_log(tl), ddl_logs(ddl_l), client_log(client_l),
         conn(c), performed_queries_total(p), failed_queries_total(f){};
 
-  void run_some_query(); // create default tables and run random queries
+  bool run_some_query(); // create default tables and run random queries
   bool load_metadata();  // load metada of tool in memory
 
   int thread_id;
@@ -162,10 +163,9 @@ struct Thd1 {
   MYSQL *conn;
   std::atomic<unsigned long long> &performed_queries_total;
   std::atomic<unsigned long long> &failed_queries_total;
-  MYSQL_RES *result;          // result set of sql
+  std::shared_ptr<MYSQL_RES> result; // result set of sql
   bool ddl_query = false;     // is the query ddl
   bool success = false;       // if the sql is successfully executed
-  bool store_result = false;  // store result of executed sql
   int max_con_fail_count = 0; // consecutive failed queries
   int query_number = 0;
 };
@@ -175,8 +175,12 @@ struct Table {
   enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY } type;
 
   Table(std::string n);
-  static Table *table_id(TABLE_TYPES choice, int id, Thd1 *thd);
-  std::string definition();
+  static Table *table_id(TABLE_TYPES choice, int id);
+  std::string definition(bool with_index = true);
+  /* add secondary indexes */
+  bool load_secondary_indexes(Thd1 *thd);
+  /* execute table definition, Bulk data and then secondary index */
+  bool load(Thd1 *thd);
   static std::string &prepare_like_string(std::string &&str);
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
@@ -194,7 +198,8 @@ struct Table {
   void SetEncryptionInplace(Thd1 *thd);
   void SetTableCompression(Thd1 *thd);
   void ModifyColumn(Thd1 *thd);
-  void InsertRandomRow(Thd1 *thd, bool islock);
+  void InsertRandomRow(Thd1 *thd);
+  bool InsertBulkRecord(Thd1 *thd, size_t number_of_records);
   void DropColumn(Thd1 *thd);
   void AddColumn(Thd1 *thd);
   void DropIndex(Thd1 *thd);
@@ -217,6 +222,7 @@ struct Table {
   std::string compression;
   std::string encryption = "N";
   int key_block_size = 0;
+  size_t auto_inc_index;
   // std::string data_directory; todo add corressponding code
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
@@ -319,10 +325,14 @@ int sum_of_all_server_options();
 Option::Opt pick_some_option();
 std::vector<std::string> *random_strs_generator(unsigned long int seed);
 bool load_metadata(Thd1 *thd);
-void run_some_query(Thd1 *thd);
 int save_dictionary(std::vector<Table *> *all_tables);
-bool execute_sql(std::string sql, Thd1 *thd);
-void load_default_data(Table *table, Thd1 *thd);
+
+/* Execute SQL and update thd variables
+param[in] sql	 	query that we want to execute
+param[in/out] thd	Thd used to execute sql
+*/
+bool execute_sql(const std::string &sql, Thd1 *thd);
+
 void save_metadata_to_file();
 void clean_up_at_end();
 void alter_tablespace_encryption(Thd1 *thd);
@@ -331,7 +341,6 @@ void set_mysqld_variable(Thd1 *thd);
 void add_server_options(std::string str);
 void alter_database_encryption(Thd1 *thd);
 void create_in_memory_data();
-void create_default_tables(Thd1 *thd);
+void generate_metadata_for_tables();
 void create_database_tablespace(Thd1 *thd);
-bool check_tables_partitions_preload(Thd1 *thd);
 #endif

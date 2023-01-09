@@ -638,7 +638,7 @@ void add_options() {
   /* log all queries */
   opt = newOption(Option::BOOL, Option::LOG_ALL_QUERIES, "log-all-queries");
   opt->help = "Log all queries (succeeded and failed)";
-  opt->setBool(true); // todo diable while merge
+  opt->setBool(false);
   opt->setArgs(no_argument);
 
   /* execute sql sequentially */
@@ -677,7 +677,7 @@ void add_options() {
   opt =
       newOption(Option::BOOL, Option::LOG_FAILED_QUERIES, "log-failed-queries");
   opt->help = "Log all failed queries";
-  opt->setBool(false);
+  opt->setBool(true);
   opt->setArgs(no_argument);
 
   /* log success queries */
