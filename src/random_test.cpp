@@ -1240,6 +1240,7 @@ void Table::Truncate(Thd1 *thd) {
     table_mutex.lock();
     std::string part_name;
     auto part_table = static_cast<Partition *>(this);
+    assert(part_table->number_of_part > 0);
     if (part_table->part_type == Partition::HASH ||
         part_table->part_type == Partition::KEY) {
       part_name = std::to_string(rand_int(part_table->number_of_part - 1));
@@ -1365,7 +1366,7 @@ void Partition::AddDrop(Thd1 *thd) {
     /* drop partition or add partition */
     if (rand_int(1) == 0) {
       table_mutex.lock();
-
+      assert(lists.size() > 0);
       auto par = lists.at(rand_int(lists.size() - 1));
       auto part_name = par.name;
       table_mutex.unlock();
@@ -1811,9 +1812,9 @@ std::string Table::definition(bool with_index) {
       break;
     case Partition::RANGE:
       def += "(";
-      for (size_t i = 0; i <= par->positions.size(); i++) {
+      for (size_t i = 0; i < par->positions.size(); i++) {
         std::string range;
-        if (i == par->positions.size())
+        if (i == par->positions.size() - 1)
           range = "MAXVALUE";
         else
           range = std::to_string(par->positions[i].range);
@@ -1821,7 +1822,7 @@ std::string Table::definition(bool with_index) {
         def += " PARTITION p" + std::to_string(i) + " VALUES LESS THAN (" +
                range + ")";
 
-        if (i == par->positions.size())
+        if (i == par->positions.size() - 1)
           def += ")";
         else
           def += ",";
@@ -2319,6 +2320,7 @@ void Table::DeleteAllRows(Thd1 *thd) {
   if (type == PARTITION && rand_int(100) < 98) {
     sql += " PARTITION (";
     auto part = static_cast<Partition *>(this);
+    assert(part->number_of_part > 0);
     table_mutex.lock();
     if (part->part_type == Partition::RANGE) {
       sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
@@ -2354,6 +2356,7 @@ void Table::SelectAllRow(Thd1 *thd) {
   if (type == PARTITION && rand_int(100) < 98) {
     sql += " PARTITION (";
     auto part = static_cast<Partition *>(this);
+    assert(part->number_of_part > 0);
     table_mutex.lock();
     if (part->part_type == Partition::RANGE) {
       sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
@@ -2486,6 +2489,7 @@ void Table::DeleteRandomRow(Thd1 *thd) {
   if (type == PARTITION && rand_int(10) < 2) {
     sql += " PARTITION (";
     auto part = static_cast<Partition *>(this);
+    assert(part->number_of_part > 0);
     if (part->part_type == Partition::RANGE) {
       sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
     } else if (part->part_type == Partition::KEY ||
@@ -2552,6 +2556,7 @@ void Table::SelectRandomRow(Thd1 *thd) {
   if (type == PARTITION && rand_int(10) < 2) {
     sql += " PARTITION (";
     auto part = static_cast<Partition *>(this);
+    assert(part->number_of_part > 0);
     if (part->part_type == Partition::RANGE) {
       sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
     } else if (part->part_type == Partition::KEY ||
@@ -2630,6 +2635,7 @@ void Table::UpdateRandomROW(Thd1 *thd) {
   if (type == PARTITION && rand_int(10) < 2) {
     sql += " PARTITION (";
     auto part = static_cast<Partition *>(this);
+    assert(part->number_of_part > 0);
     if (part->part_type == Partition::RANGE) {
       sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
     } else if (part->part_type == Partition::KEY ||
