@@ -416,13 +416,12 @@ pick_algorithm_lock(std::string *const algo = nullptr,
 
   current_algo = algorithms[rand_int(algorithms.size() - 1)];
 
-  /*
-  Support Matrix	LOCK=DEFAULT	LOCK=EXCLUSIVE	LOCK=NONE
-  LOCK=SHARED ALGORITHM=INPLACE	Supported	Supported	Supported
-  Supported ALGORITHM=COPY	Supported	Supported	Not Supported
-  Supported ALGORITHM=INSTANT	Supported	Not Supported	Not Supported
-  Not Supported ALGORITHM=DEFAULT	Supported	Supported
-  Supported	Supported
+/*
+  Support Matrix	LOCK=DEFAULT	LOCK=EXCLUSIVE	 LOCK=NONE      LOCK=SHARED
+  ALGORITHM=INPLACE	Supported	Supported	 Supported      Supported
+  ALGORITHM=COPY	Supported	Supported	 Not Supported  Supported
+  ALGORITHM=INSTANT	Supported	Not Supported	 Not Supported  Not Supported
+  ALGORITHM=DEFAULT	Supported	Supported        Supported      Supported
 */
 
   /* If current_algo=INSTANT, we can set current_lock=DEFAULT directly as it is
@@ -430,7 +429,7 @@ pick_algorithm_lock(std::string *const algo = nullptr,
   if (current_algo == "INSTANT")
     current_lock = "DEFAULT";
   /* If current_algo=COPY; MySQL supported LOCK values are
-   * DEFAULT,EXCLUSIVE,SHARED At this point, it may pick LOCK=NONE as well, but
+   * DEFAULT,EXCLUSIVE,SHARED. At this point, it may pick LOCK=NONE as well, but
    * we will handle it later in the code. If current_algo=INPLACE|DEFAULT;
    * randomly pick any value, since all lock types are supported.*/
   else
