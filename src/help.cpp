@@ -361,6 +361,13 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /* Reload keyring component configuration */
+  opt = newOption(Option::INT, Option::ALTER_INSTANCE_RELOAD_KEYRING, "reload-keyring");
+  opt->help = "Alter instance reload keyring";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* rotate redo log key */
   opt = newOption(Option::INT, Option::ROTATE_REDO_LOG_KEY,
                   "rotate-redo-log-key");

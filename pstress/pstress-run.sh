@@ -5,7 +5,7 @@
 
 # ========================================= User configurable variables ==========================================================
 # Note: if an option is passed to this script, it will use that option as the configuration file instead, for example ./pstress-run.sh pstress-run.conf
-CONFIGURATION_FILE=pstress-run.conf  # Do not use any path specifiers, the .conf file should be in the same path as pstress-run.sh
+CONFIGURATION_FILE=pstress-run-80.conf  # Do not use any path specifiers, the .conf file should be in the same path as pstress-run.sh
 
 # ========================================= MAIN CODE ============================================================================
 # Internal variables: DO NOT CHANGE!
