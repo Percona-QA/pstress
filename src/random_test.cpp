@@ -28,6 +28,7 @@ const int g_integer_range = 100;
 
 static bool encrypted_temp_tables = false;
 static bool encrypted_sys_tablelspaces = false;
+static bool keyring_comp_status = false;
 static std::vector<Table *> *all_tables = new std::vector<Table *>;
 static std::vector<std::string> g_undo_tablespace;
 static std::vector<std::string> g_encryption;
@@ -179,6 +180,11 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_REDO_LOGGING, 0);
   }
 
+  /* check if keyring component is installed */
+  if (mysql_read_single_value("SELECT status_value FROM performance_schema.keyring_component_status WHERE \
+      status_key='component_status'", thd) == "Active")
+    keyring_comp_status = true;
+
   auto lock = opt_string(LOCK);
   if (lock.compare("all") == 0) {
     locks.push_back("DEFAULT");
@@ -304,6 +310,7 @@ int sum_of_all_options(Thd1 *thd) {
     opt_int_set(ALTER_GCACHE_MASTER_KEY, 0);
     opt_int_set(ROTATE_REDO_LOG_KEY, 0);
     opt_int_set(ALTER_DATABASE_ENCRYPTION, 0);
+    opt_int_set(ALTER_INSTANCE_RELOAD_KEYRING, 0);
   }
 
   if (mysql_read_single_value("select @@innodb_temp_tablespace_encrypt", thd) ==
@@ -3651,6 +3658,10 @@ bool Thd1::run_some_query() {
       break;
     case Option::ALTER_GCACHE_MASTER_KEY:
       execute_sql("ALTER INSTANCE ROTATE GCACHE MASTER KEY", this);
+      break;
+    case Option::ALTER_INSTANCE_RELOAD_KEYRING:
+      if (keyring_comp_status)
+        execute_sql("ALTER INSTANCE RELOAD KEYRING", this);
       break;
     case Option::ROTATE_REDO_LOG_KEY:
       execute_sql("SELECT rotate_system_key(\"percona_redo\")", this);
