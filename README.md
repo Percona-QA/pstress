@@ -52,7 +52,7 @@ Option | Function | Example | Default
 --address | IP address to connect to | | default: 
 --alt-db-enc | Alter Database Encryption mode to Y/N | | default#: 1
 --alt-discard-tbs | ALTER TABLE table_name DISCARD TABLESPACE | --alt-discard-tbs=50 | default#: 1
---alter-algorith | algorithm used in alter table. INPLACE/COPY/DEFAULT/ALL | --alter-algorith=INPLACE | default: all
+--alter-algorithm | algorithm used in alter table. INPLACE/COPY/DEFAULT/ALL | --alter-algorith=INPLACE | default: all
 --alter-lock | lock mechanism used in alter table. | --alter-lock=NONE | default: all
 --alter-redo-log | Alter instance enable/disable redo log | | default#: 0
 --alter-table-compress | Alter table compression | --alter-table-compress=50 | default#: 10
@@ -61,6 +61,7 @@ Option | Function | Example | Default
 --alt-tbs-rename | Alter tablespace rename | --alt-tbs-rename=50 | default#: 1
 --analyze | Analyze table, for partition table randomly analyze either partition or full table | --analyze=10 | default#: 1
 --check | check table, for partition table randomly check either partition or full table | | default#: 5
+--check-preload | check table, for partition table randomly check either partition or full table before the load is started | | default#: 0
 --columns | maximum columns in a table, default depends on page-size, branch. for 8.0 it is 7 for 5.7 it 10 | --columns=10 | default#: 10
 --commit-rollback-ratio |  ratio of commit to rollback. e.g. if 5, then 5 transactions will be committed and 1 will be rollback. if 0 then all transactions will be rollback | | default#: 5
 --config-file | Config file to use for test | | default: 
@@ -72,6 +73,8 @@ Option | Function | Example | Default
 --encryption-type | all ==> keyring/Y/N | --encryption-type=keyring | default: Y/N
 --engine | Engine used | --engine=InnoDB | default: INNODB
 --exact-initial-records | When passed with --records (N) option inserts exact number of  N records in tables | | default: 0
+--grammar-sql | grammar sql | | default#: 10
+--grammar-file | file to be used  for grammar sql T1_INT_1, T1_INT_2 will be replaced with int columns of some table in database T1_VARCHAR_1, T1_VARCHAR_2 will be replaced with varchar columns of some table in database | | default: grammar.sql
 --help | user asked for help | | default: 1
 --index-columns | maximum columns in an index of a table, default depends on page-size as well | --index-columns=5 | default#: 10
 --indexes | maximum indexes in a table,default depends on page-size as well | --indexes=2 | default#: 7
@@ -124,6 +127,7 @@ Option | Function | Example | Default
 --rename-column | alter table rename column | --rename-column=10 | default#: 1
 --rename-index | alter table rename index | | default#: 1
 --rotate-encryption-key | Alter instance rotate innodb system key X | | default#: 1
+--rotate-gcache-key | Alter instance rotate gcache master key | | default#: 1
 --rotate-master-key | Alter instance rotate innodb master key | --rotate-master-key=50 | default#: 1
 --rotate-redo-log-key | Rotate redo log key | --rotate-redo-log-key=50 | default#: 1
 --row-format | create table row format. it is the row format of table. a table can have compressed, dynamic, redundant row format. | --row-format=compressed | default: all
@@ -135,8 +139,6 @@ Option | Function | Example | Default
 --set-variable | set mysqld variable during the load.(session|global) | --set-variable=autocommit=OFF | default#: 3
 --socket | Socket file to use | | default: /tmp/socket.sock
 --sof | server options file, MySQL server options file, picks some of the mysqld options, and try to set them during the load , using set global and set session | --sof=innodb_temp_tablespace_encrypt=on=off | default:
---special-sql | special sql | | default#: 10
---sql-file | file to be used  for special sql T1_INT_1, T1_INT_2 will be replaced with int columns of some table in database T1_VARCHAR_1, T1_VARCHAR_2 will be replaced with varchar columns of some table in database | | default: grammar.sql
 --step | current step in pstress script | | default#: 1
 --tables | Number of initial tables | --tables=10 | default#: 10
 --tbs-count | random number of different general tablespaces | --tbs-count=3 | default#: 1
