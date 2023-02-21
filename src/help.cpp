@@ -677,7 +677,7 @@ void add_options() {
   opt =
       newOption(Option::BOOL, Option::LOG_QUERY_DURATION, "log-query-duration");
   opt->help = "Log query duration in milliseconds";
-  opt->setBool(false);
+  opt->setBool(true);
   opt->setArgs(no_argument);
 
   /* log failed queries */
