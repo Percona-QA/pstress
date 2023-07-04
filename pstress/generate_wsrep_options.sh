@@ -1,9 +1,9 @@
 #####################################################################################
 #!/bin/bash                                                                         #
 # Created by Puneet Kaushik, Percona LLC                                               #
-# Created on: 28-JUNE-2023                                                           #
+# Created on: 04-JULY-2023                                                           #
 #                                                                                   #
-# Purpose: This script auto-generates the wsrep_options.txt file                  #
+# Purpose: This script auto-generates the mysqld_options_pxc_wsrep_80.txt file                  #
 # Usage: ./generate_wsrep_options.sh <path to mysql install/base dir>             #
 # References: https://docs.percona.com/percona-xtradb-cluster/8.0/wsrep-system-index.html #
 #####################################################################################
@@ -16,10 +16,6 @@ OUTPUT_FILE=/tmp/mysqld_options_pxc_wsrep_80.txt
 
 # Internal variables, do not change
 TEMP_FILE=/tmp/mysqld_options_pxc_wsrep_80.tmp
-PORT=22000
-SOCKET=/tmp/mysql_22000.sock
-DATADIR=$BASEDIR/data
-MYSQLD_START_TIMEOUT=30
 
 # Check if mysqld binaries exists
 if [ ! -r $BASEDIR/bin/mysqld ]; then
@@ -33,31 +29,12 @@ echoit(){
   echo "[$(date +'%T')] $1" >> /tmp/generate_wsrep_options.log
 }
 
-echoit "Starting MySQL server"
-$BASEDIR/bin/mysqld --no-defaults --datadir=$DATADIR --initialize-insecure > /tmp/mysql_install_db.txt 2>&1
-$BASEDIR/bin/mysqld --no-defaults --datadir=$DATADIR --port=$PORT --socket=$SOCKET 2>&1 > /tmp/master.err 2>&1 &
-MPID=$!
 
-echoit "Waiting for the server to fully start..."
-for X in $(seq 0 ${MYSQLD_START_TIMEOUT}); do
-  sleep 1
-  if [ "$MPID" == "" ]; then echoit "Assert! ${MPID} empty. Terminating!"; exit 1; fi
-  if $BASEDIR/bin/mysqladmin -uroot -S${SOCKET} ping > /dev/null 2>&1; then
-    echoit "MySQL server started successfully"
-    break
-  fi
-done
+# Extract all options, their default values into temp filei
+$BASEDIR/bin/mysqld --no-defaults --help --verbose | grep "^pxc-*" 2>/dev/null > ${TEMP_FILE}
+$BASEDIR/bin/mysqld --no-defaults --help --verbose | grep "^wsrep-*" 2>/dev/null >> ${TEMP_FILE}
 
-# Extract all options, their default values into temp file
-$BASEDIR/bin/mysql --no-defaults -S$SOCKET -uroot -e "SHOW VARIABLES LIKE '%pxc%'" > $TEMP_FILE
-$BASEDIR/bin/mysql --no-defaults -S$SOCKET -uroot -e "SHOW VARIABLES LIKE '%wsrep%'" >> $TEMP_FILE
-
-# Remove the first line from the temp file
-# Variable_name, Variable_value (we do not need the column name displayed in temp file)
-sed -i '1d;6d' $TEMP_FILE
-sed -i 's/_/\-/g' $TEMP_FILE
-
-# List of rocksdb variables which must not be changed.
+# List of wsrep variables which must not be changed.
 EXCLUDED_LIST=( --wsrep-applier-FK-checks --wsrep-applier-UK-checks --wsrep-causal-reads --wsrep-cluster-address --wsrep-cluster-name --wsrep-data-home-dir --wsrep-dbug-option --wsrep-drupal-282555-workaround --wsrep-forced-binlog-format --wsrep-ignore-apply-errors --wsrep-min-log-verbosity --wsrep-node-address --wsrep-node-incoming-address --wsrep-node-name --wsrep-notify-cmd --wsrep-provider --wsrep-provider-options --wsrep-restart-slave --wsrep-slave-FK-checks --wsrep-slave-threads --wsrep-slave-UK-checks --wsrep-sst-donor --wsrep-sst-method --wsrep-sst-receive-address --wsrep-start-position --wsrep-disk-pages-encrypt --wsrep-gcache-encrypt --wsrep-SR-store --wsrep-sst-allowed-methods)
 
 # Create an output file which contains all the options/values
