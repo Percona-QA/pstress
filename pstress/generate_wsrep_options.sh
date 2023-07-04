@@ -1,12 +1,12 @@
-#####################################################################################
-#!/bin/bash                                                                         #
-# Created by Puneet Kaushik, Percona LLC                                               #
-# Created on: 04-JULY-2023                                                           #
-#                                                                                   #
-# Purpose: This script auto-generates the mysqld_options_pxc_wsrep_80.txt file                  #
-# Usage: ./generate_wsrep_options.sh <path to mysql install/base dir>             #
-# References: https://docs.percona.com/percona-xtradb-cluster/8.0/wsrep-system-index.html #
-#####################################################################################
+##############################################################################################
+#!/bin/bash                                                                                  #
+# Created by Puneet Kaushik, Percona LLC                                                     #
+# Created on: 04-JULY-2023                                                                   #
+#                                                                                            #  
+# Purpose: This script auto-generates the mysqld_options_pxc_wsrep_80.txt file               #
+# Usage: ./generate_wsrep_options.sh <path to mysql install/base dir>                        #
+# References: https://docs.percona.com/percona-xtradb-cluster/8.0/wsrep-system-index.html    #
+##############################################################################################
 
 # Script expected argument
 BASEDIR=$1
@@ -30,7 +30,7 @@ echoit(){
 }
 
 
-# Extract all options, their default values into temp filei
+# Extract all wsrep options, their default values into temp file
 $BASEDIR/bin/mysqld --no-defaults --help --verbose | grep "^pxc-*" 2>/dev/null > ${TEMP_FILE}
 $BASEDIR/bin/mysqld --no-defaults --help --verbose | grep "^wsrep-*" 2>/dev/null >> ${TEMP_FILE}
 
