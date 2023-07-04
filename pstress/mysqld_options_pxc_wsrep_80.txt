@@ -11,6 +11,13 @@
 --pxc-strict-mode=DISABLED
 --pxc-strict-mode=PERMISSIVE
 --pxc-strict-mode=MASTER
+--wsrep-OSU-method=TOI
+--wsrep-OSU-method=RSU
+--wsrep-OSU-method=NBO
+--wsrep-RSU-commit-timeout=5000
+--wsrep-RSU-commit-timeout=10000
+--wsrep-RSU-commit-timeout=250000
+--wsrep-RSU-commit-timeout=31536000000000
 --wsrep-applier-threads=1
 --wsrep-applier-threads=2
 --wsrep-applier-threads=12
@@ -30,6 +37,10 @@
 --wsrep-desync=1
 --wsrep-dirty-reads=0
 --wsrep-dirty-reads=1
+--wsrep-disk-pages-encrypt=0
+--wsrep-disk-pages-encrypt=1
+--wsrep-gcache-encrypt=0
+--wsrep-gcache-encrypt=1
 --wsrep-load-data-splitting=0
 --wsrep-load-data-splitting=1
 --wsrep-log-conflicts=0
@@ -55,9 +66,6 @@
 --wsrep-mode=IGNORE_NATIVE_REPLICATION_FILTER_RULES
 --wsrep-on=0
 --wsrep-on=1
---wsrep-OSU-method=TOI
---wsrep-OSU-method=RSU
---wsrep-OSU-method=NBO
 --wsrep-recover=0
 --wsrep-recover=1
 --wsrep-reject-queries=NONE
@@ -69,10 +77,6 @@
 --wsrep-restart-replica=1
 --wsrep-retry-autocommit=0
 --wsrep-retry-autocommit=1
---wsrep-RSU-commit-timeout=5000
---wsrep-RSU-commit-timeout=10000
---wsrep-RSU-commit-timeout=250000
---wsrep-RSU-commit-timeout=31536000000000
 --wsrep-sst-donor-rejects-queries=0
 --wsrep-sst-donor-rejects-queries=1
 --wsrep-sync-wait=0

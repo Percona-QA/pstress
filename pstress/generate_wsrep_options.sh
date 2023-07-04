@@ -35,7 +35,7 @@ $BASEDIR/bin/mysqld --no-defaults --help --verbose | grep "^pxc-*" 2>/dev/null >
 $BASEDIR/bin/mysqld --no-defaults --help --verbose | grep "^wsrep-*" 2>/dev/null >> ${TEMP_FILE}
 
 # List of wsrep variables which must not be changed.
-EXCLUDED_LIST=( --wsrep-applier-FK-checks --wsrep-applier-UK-checks --wsrep-causal-reads --wsrep-cluster-address --wsrep-cluster-name --wsrep-data-home-dir --wsrep-dbug-option --wsrep-drupal-282555-workaround --wsrep-forced-binlog-format --wsrep-ignore-apply-errors --wsrep-min-log-verbosity --wsrep-node-address --wsrep-node-incoming-address --wsrep-node-name --wsrep-notify-cmd --wsrep-provider --wsrep-provider-options --wsrep-restart-slave --wsrep-slave-FK-checks --wsrep-slave-threads --wsrep-slave-UK-checks --wsrep-sst-donor --wsrep-sst-method --wsrep-sst-receive-address --wsrep-start-position --wsrep-disk-pages-encrypt --wsrep-gcache-encrypt --wsrep-SR-store --wsrep-sst-allowed-methods)
+EXCLUDED_LIST=( --wsrep-applier-FK-checks --wsrep-applier-UK-checks --wsrep-causal-reads --wsrep-cluster-address --wsrep-cluster-name --wsrep-data-home-dir --wsrep-dbug-option --wsrep-drupal-282555-workaround --wsrep-forced-binlog-format --wsrep-ignore-apply-errors --wsrep-min-log-verbosity --wsrep-node-address --wsrep-node-incoming-address --wsrep-node-name --wsrep-notify-cmd --wsrep-provider --wsrep-provider-options --wsrep-restart-slave --wsrep-slave-FK-checks --wsrep-slave-threads --wsrep-slave-UK-checks --wsrep-sst-donor --wsrep-sst-method --wsrep-sst-receive-address --wsrep-start-position --wsrep-SR-store --wsrep-sst-allowed-methods)
 
 # Create an output file which contains all the options/values
 rm -rf $OUTPUT_FILE
@@ -203,7 +203,15 @@ while read line; do
  elif [[ "$OPTION" == "--wsrep-sst-donor-rejects-queries" ]]; then
     echoit " > Adding possible values 0, 1 for option '${OPTION}' to the final list..."
     echo "$OPTION=0" >> $OUTPUT_FILE
-    echo "$OPTION=1" >> $OUTPUT_FILE   
+    echo "$OPTION=1" >> $OUTPUT_FILE
+ elif [[ "$OPTION" == "--wsrep-gcache-encrypt" ]]; then
+    echoit " > Adding possible values 0, 1 for option '${OPTION}' to the final list..."
+    echo "$OPTION=0" >> $OUTPUT_FILE
+    echo "$OPTION=1" >> $OUTPUT_FILE
+ elif [[ "$OPTION" == "--wsrep-disk-pages-encrypt" ]]; then
+    echoit " > Adding possible values 0, 1 for option '${OPTION}' to the final list..."
+    echo "$OPTION=0" >> $OUTPUT_FILE
+    echo "$OPTION=1" >> $OUTPUT_FILE
   elif [ "${VALUE}" == "" ]; then
     echoit "  > Assert: Option '${OPTION}' is blank by default and not programmed into the script yet, please cover this in the script..."
     exit 1
