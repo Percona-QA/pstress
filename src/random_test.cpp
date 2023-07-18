@@ -14,6 +14,7 @@
 
 #define CR_SERVER_GONE_ERROR 2006
 #define CR_SERVER_LOST 2013
+#define CR_WSREP_NOT_PREPARED 1047
 using namespace rapidjson;
 std::mt19937 rng;
 
@@ -1915,7 +1916,8 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
       thd->thread_log << "Error " << mysql_error(thd->conn) << std::endl;
     }
     if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
-        mysql_errno(thd->conn) == CR_SERVER_LOST) {
+        mysql_errno(thd->conn) == CR_SERVER_LOST ||
+	mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
       thd->thread_log << "server gone, while processing " + sql;
       run_query_failed = true;
     }
