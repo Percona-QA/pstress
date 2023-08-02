@@ -17,7 +17,10 @@
 using namespace rapidjson;
 std::mt19937 rng;
 
-const std::string partition_string = "_p";
+const std::string TABLE_PREFIX = "tt_";
+const std::string PARTITION_SUFFIX = "_p";
+const std::string FK_SUFFIX = "_fk";
+const std::string TEMP_SUFFIX = "_t";
 const int version = 2;
 /* range for random number int, integers, floats and double.
  more the value, less randomness.
@@ -45,9 +48,9 @@ std::mutex ddl_logs_write;
 static std::chrono::system_clock::time_point start_time =
     std::chrono::system_clock::now();
 
-std::atomic<size_t> table_started(0);
-std::atomic<size_t> check_failures(0);
+std::atomic<int> table_started(0);
 std::atomic<size_t> table_completed(0);
+std::atomic<size_t> check_failures(0);
 std::atomic_flag lock_stream = ATOMIC_FLAG_INIT;
 std::atomic<bool> run_query_failed(false);
 /* partition type supported by system */
@@ -62,6 +65,23 @@ static MYSQL_ROW mysql_fetch_row_safe(Thd1 *thd) {
   return mysql_fetch_row(thd->result.get());
 }
 
+/* return table pointer of matching table. This is only done during the
+ * first step or during the prepare, so you would have only tables that are not
+ * renamed  */
+static Table *pick_table(Table::TABLE_TYPES type, int id) {
+  std::string name = TABLE_PREFIX + std::to_string(id);
+  if (type == Table::FK) {
+    name += FK_SUFFIX;
+  } else if (type == Table::PARTITION) {
+    name += PARTITION_SUFFIX;
+  }
+  for (auto const &table : *all_tables) {
+    if (table->name_ == name)
+      return table;
+  }
+  return nullptr;
+}
+
 static bool mysql_num_fields_safe(Thd1 *thd, unsigned int req) {
   if (!thd->result) {
     thd->thread_log << "mysql_num_fields called with nullptr arg!";
@@ -74,6 +94,24 @@ static bool mysql_num_fields_safe(Thd1 *thd, unsigned int req) {
                     << num_fields << " exist";
   }
   return ret;
+}
+
+/* generate random numbers to populate in primary and fk
+@param[in] number_of_records
+@param[out] vector containing unique elements */
+static std::vector<int> generateUniqueRandomNumbers(int number_of_records) {
+
+  std::unordered_set<int> unique_keys_set(number_of_records);
+
+  int max_size =
+      g_integer_range * options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
+
+  while (unique_keys_set.size() < static_cast<size_t>(number_of_records)) {
+    unique_keys_set.insert(rand_int(max_size, 1));
+  }
+
+  std::vector<int> unique_keys(unique_keys_set.begin(), unique_keys_set.end());
+  return unique_keys;
 }
 
 /* run check table */
@@ -638,7 +676,7 @@ static std::string rand_value_universal(Column::COLUMN_TYPES type_,
   return "";
 }
 
-/* return random value of any string */
+/* return random value of  a column*/
 std::string Column::rand_value() { return rand_value_universal(type_, length); }
 
 /* return random value of sub string */
@@ -973,6 +1011,14 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
       };
       writer.EndArray();
     }
+  } else if (type == FK) {
+    auto fk_table = static_cast<const FK_table *>(this);
+    std::string on_update = fk_table->enumToString(fk_table->on_update);
+    std::string on_delete = fk_table->enumToString(fk_table->on_delete);
+    writer.String("on_update");
+    writer.String(on_update.c_str(), static_cast<SizeType>(on_update.length()));
+    writer.String("on_delete");
+    writer.String(on_delete.c_str(), static_cast<SizeType>(on_delete.length()));
   }
 
   writer.String("engine");
@@ -1070,19 +1116,21 @@ bool Table::load(Thd1 *thd) {
 
   /* load default data in table */
   if (!options->at(Option::JUST_LOAD_DDL)->getBool()) {
-    thd->ddl_query = false;
-    size_t number_of_records =
-        options->at(Option::EXACT_INITIAL_RECORDS)->getBool()
-            ? options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()
-            : rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
 
-    if (!InsertBulkRecord(thd, number_of_records))
+    thd->ddl_query = false;
+    if (!InsertBulkRecord(thd))
       return false;
   }
 
   thd->ddl_query = true;
   if (!load_secondary_indexes(thd)) {
     return false;
+  }
+
+  if (this->type == Table::TABLE_TYPES::FK) {
+    if (!static_cast<FK_table *>(this)->load_fk_constrain(thd)) {
+      return false;
+    }
   }
 
   if (run_query_failed) {
@@ -1116,6 +1164,33 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
     }
   }
 
+  return true;
+}
+
+bool FK_table::load_fk_constrain(Thd1 *thd) {
+
+  std::string constraint = name_ + "_" + parent->name_;
+  std::string pk;
+  for (const auto &col : *parent->columns_) {
+    if (col->primary_key == true) {
+      pk = col->name_;
+      break;
+    }
+  }
+  assert(pk.size() > 0);
+
+  std::string sql = "ALTER TABLE " + name_ + " ADD CONSTRAINT " + constraint +
+                    " FOREIGN KEY (ifk_col) REFERENCES " + parent->name_ +
+                    " (" + pk + ")";
+  sql += " ON UPDATE " + enumToString(on_update);
+  sql += " ON DELETE  " + enumToString(on_delete);
+
+  if (!execute_sql(sql, thd)) {
+    thd->thread_log << "Failed to add fk constraint "
+                    << " on " << name_ << std::endl;
+    run_query_failed = true;
+    return false;
+  }
   return true;
 }
 
@@ -1460,6 +1535,12 @@ void Table::CreateDefaultColumn() {
   auto no_auto_inc = opt_bool(NO_AUTO_INC);
   bool has_auto_increment = false;
 
+  if (type == FK) {
+    std::string name = "fk_col";
+    Column::COLUMN_TYPES type = Column::INTEGER;
+    AddInternalColumn(new Column{name, this, type});
+  }
+
   /* if table is partition add new column */
   if (type == PARTITION) {
     std::string name = "p_col";
@@ -1489,6 +1570,7 @@ void Table::CreateDefaultColumn() {
       name = "pkey";
       col = new Column{name, this, type};
       col->primary_key = true;
+
       if (!no_auto_inc && rand_int(3) < 3) {
         /* 75% of primary key tables are autoinc */
         if (this->type == PARTITION && rand_int(3) == 1)
@@ -1633,23 +1715,30 @@ void Table::CreateDefaultIndex() {
 /* Create new table and pick some attributes */
 Table *Table::table_id(TABLE_TYPES type, int id) {
   Table *table;
-  std::string name = "tt_" + std::to_string(id);
+  std::string name = TABLE_PREFIX + std::to_string(id);
   switch (type) {
   case PARTITION:
-    table = new Partition(name + partition_string);
+    table = new Partition(name + PARTITION_SUFFIX);
     break;
   case NORMAL:
     table = new Table(name);
     break;
   case TEMPORARY:
-    table = new Temporary_table(name + "_t");
+    table = new Temporary_table(name + TEMP_SUFFIX);
     break;
   default:
     throw std::runtime_error("Unhandle Table type");
+  case FK:
+    table = new FK_table(name + FK_SUFFIX);
     break;
   }
 
   table->type = type;
+
+  table->number_of_initial_records =
+      options->at(Option::EXACT_INITIAL_RECORDS)->getBool()
+          ? options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()
+          : rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
 
   static auto no_encryption = opt_bool(NO_ENCRYPTION);
 
@@ -1720,8 +1809,20 @@ Table *Table::table_id(TABLE_TYPES type, int id) {
 
   table->CreateDefaultColumn();
   table->CreateDefaultIndex();
+  if (type == FK) {
+    static_cast<FK_table *>(table)->pickRefrence(table);
+  }
 
   return table;
+}
+
+/* check if table has a primary key */
+bool Table::has_pk() const {
+  for (const auto &col : *columns_) {
+    if (col->primary_key)
+      return true;
+  }
+  return false;
 }
 
 /* prepare table definition */
@@ -1865,10 +1966,28 @@ void generate_metadata_for_tables() {
 
   if (!only_temporary_tables) {
     for (int i = 1; i <= tables; i++) {
-      if (!options->at(Option::ONLY_PARTITION)->getBool())
-        all_tables->push_back(Table::table_id(Table::NORMAL, i));
-      if (!options->at(Option::NO_PARTITION)->getBool())
+      if (!options->at(Option::ONLY_PARTITION)->getBool()) {
+        auto parent_table = Table::table_id(Table::NORMAL, i);
+        all_tables->push_back(parent_table);
+
+        /* Create FK table */
+        if (!options->at(Option::NO_FK)->getBool() &&
+            options->at(Option::FK_PROB)->getInt() > rand_int(100) &&
+            parent_table->has_pk()) {
+          auto child_table = Table::table_id(Table::FK, i);
+          all_tables->push_back(child_table);
+          static_cast<FK_table *>(child_table)->parent = parent_table;
+        }
+      }
+
+      if (!options->at(Option::NO_PARTITION)->getBool() &&
+          options->at(Option::PARTITION_PROB)->getInt() > rand_int(100))
         all_tables->push_back(Table::table_id(Table::PARTITION, i));
+      /*
+      if (!options->at(Option::NO_FK)->getBool() &&
+          options->at(Option::FK_PROB)->getInt() > rand_int(100))
+        all_tables->push_back(Table::table_id(Table::FK, i));
+        */
     }
   }
 }
@@ -2690,14 +2809,23 @@ void Table::UpdateRandomROW(Thd1 *thd) {
   execute_sql(sql, thd);
 }
 
-bool Table::InsertBulkRecord(Thd1 *thd, size_t number_of_records) {
-  std::vector<int> unique_keys;
+bool Table::InsertBulkRecord(Thd1 *thd) {
   bool is_list_partition = false;
 
-  if (number_of_records == 0)
+  if (number_of_initial_records == 0)
     return true;
 
   std::string prepare_sql = "INSERT ";
+
+  std::vector<int> fk_unique_keys;
+
+  /* If a table has FK move its parent keys in fk_unique_keys */
+  if (type == TABLE_TYPES::FK) {
+    fk_unique_keys = std::move(thd->unique_keys);
+  }
+  if (has_pk()) {
+    thd->unique_keys = generateUniqueRandomNumbers(number_of_initial_records);
+  }
 
   /* ignore error in the case parition list  */
   if (type == PARTITION &&
@@ -2710,63 +2838,50 @@ bool Table::InsertBulkRecord(Thd1 *thd, size_t number_of_records) {
 
   prepare_sql += "INTO " + name_ + " (";
 
-  assert(number_of_records <=
-         static_cast<size_t>(
-             g_integer_range *
-             options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
+  assert(number_of_initial_records <=
+         (g_integer_range *
+          options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
 
   for (const auto &column : *columns_) {
     prepare_sql += column->name_ + ", ";
-
-    /* if a table has primary key generated random keys */
-    if (column->primary_key) {
-      std::unordered_set<int> unique_keys_sets(number_of_records);
-      size_t record_generated = 0;
-      while (record_generated < number_of_records) {
-        /* 0 in primary key generates */
-        auto tmp_key = rand_int(
-            g_integer_range *
-                options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt(),
-            1);
-
-        if (unique_keys_sets.count(tmp_key) == 0) {
-          unique_keys_sets.insert(tmp_key);
-          record_generated++;
-        }
-      }
-      unique_keys.assign(unique_keys_sets.begin(), unique_keys_sets.end());
-    }
   }
 
   prepare_sql.erase(prepare_sql.length() - 2);
   prepare_sql += ")";
 
   std::string values = " VALUES";
+  int records = 0;
 
-  while (number_of_records-- > 0) {
+  while (records < number_of_initial_records) {
     std::string value = "(";
     for (const auto &column : *columns_) {
-      if (column->type_ == Column::COLUMN_TYPES::GENERATED)
+      /* For FK we get the unique value from the parent table unique vector */
+      if (column->name_.find("fk_col") != std::string::npos) {
+        value +=
+            std::to_string(fk_unique_keys[rand_int(fk_unique_keys.size() - 1)]);
+      } else if (column->type_ == Column::COLUMN_TYPES::GENERATED) {
         value += "DEFAULT";
-      else if (column->primary_key)
-        value += std::to_string(unique_keys.at(number_of_records));
-      else if (column->auto_increment == true)
+      } else if (column->primary_key) {
+        value += std::to_string(thd->unique_keys.at(records));
+      } else if (column->auto_increment == true) {
         value += "NULL";
-      else if (is_list_partition && column->name_.compare("ip_col") == 0) {
+      } else if (is_list_partition && column->name_.compare("ip_col") == 0) {
         /* for list partition we insert only maximum possible value
          * todo modify rand_value to return list parititon range */
         value += std::to_string(
             rand_int(maximum_records_in_each_parititon_list *
                      options->at(Option::MAX_PARTITIONS)->getInt()));
-      } else
+      } else {
         value += column->rand_value();
+      }
 
       value += ", ";
     }
     value.erase(value.size() - 2);
     value += ")";
     values += value;
-    if (values.size() > 1024 * 1024 || number_of_records == 0) {
+    records++;
+    if (values.size() > 1024 * 1024 || number_of_initial_records == records) {
       if (!execute_sql(prepare_sql + values, thd)) {
         ddl_logs_write.lock();
         thd->ddl_logs << "Bulk insert failed for table  " << name_ << std::endl;
@@ -3216,6 +3331,10 @@ static std::string load_metadata_from_file() {
       }
     } else if (table_type.compare("NORMAL") == 0) {
       table = new Table(name);
+    } else if (table_type == "FK") {
+      std::string on_update = tab["on_update"].GetString();
+      std::string on_delete = tab["on_delete"].GetString();
+      table = new FK_table(name, on_update, on_delete);
     } else
       throw std::runtime_error("Unhandle Table type " + table_type);
 
@@ -3386,6 +3505,9 @@ static bool check_tables_partitions_preload(Table *table, Thd1 *thd) {
   } else {
     get_check_result("CHECK TABLE " + table->name_, thd) || failures++;
   }
+  if (failures != 0) {
+    check_failures++;
+  }
   return failures == 0 ? true : false;
 }
 
@@ -3423,6 +3545,8 @@ bool Thd1::load_metadata() {
 
 /* return true if successful or error out in case of fail */
 bool Thd1::run_some_query() {
+  std::vector<Table::TABLE_TYPES> tableTypes = {Table::NORMAL, Table::FK,
+                                                Table::PARTITION};
   execute_sql("USE " + options->at(Option::DATABASE)->getString(), this);
 
   /* first create temporary tables metadata if requried */
@@ -3433,7 +3557,7 @@ bool Thd1::run_some_query() {
     temp_tables = 0;
   else
     temp_tables = options->at(Option::TABLES)->getInt() /
-                  options->at(Option::TEMPORARY_TO_NORMAL_RATIO)->getInt();
+                  options->at(Option::TEMPORARY_PROB)->getInt();
 
   /* create temporary table */
   std::vector<Table *> *all_session_tables = new std::vector<Table *>;
@@ -3450,11 +3574,20 @@ bool Thd1::run_some_query() {
       options->at(Option::STEP)->getInt() == 1) {
     auto current = table_started++;
 
-    while (current < all_tables->size()) {
-      auto table = all_tables->at(current);
-      if (!table->load(this))
-        return false;
+    while (current <= options->at(Option::TABLES)->getInt()) {
+      /* first load normal table , then FK and then partition
+       FK table uses thd->unique_key vector to pick random FK
+       thd->unique_key is populated from primary key */
+
+      for (const auto &tableType : tableTypes) {
+        auto table = pick_table(tableType, current + 1);
+        if (table == nullptr)
+          continue;
+        if (!table->load(this)) {
+          return false;
+        }
       table_completed++;
+      }
       current = table_started++;
     }
 
@@ -3470,15 +3603,20 @@ bool Thd1::run_some_query() {
       }
       std::this_thread::sleep_for(dura);
     }
+    /* table initial data is created delete , empty the unique_keys */
+    this->unique_keys.resize(0);
+
   } else if (options->at(Option::CHECK_TABLE_PRELOAD)->getBool()) {
+    int number_of_tables = all_tables->size();
     auto current = table_started++;
 
-    while (current < all_tables->size()) {
+    while (current < number_of_tables) {
       auto table = all_tables->at(current);
-      check_tables_partitions_preload(table, this) || check_failures++;
+      check_tables_partitions_preload(table, this);
       table_completed++;
       current = table_started++;
     }
+
     // wait for all tables to finish check table
     while (table_completed < all_tables->size()) {
       thread_log << "Waiting for all threds to finish check tables "
@@ -3522,48 +3660,43 @@ bool Thd1::run_some_query() {
   /* freqency of all options per thread */
   int opt_feq[Option::MAX][2] = {{0, 0}};
 
-  /* variables related to trxs */
-  static auto trx_prob = options->at(Option::TRANSATION_PRB_K)->getInt();
-  static auto trx_max_size = options->at(Option::TRANSACTIONS_SIZE)->getInt();
-  static auto commit_to_rollback =
-      options->at(Option::COMMMIT_TO_ROLLBACK_RATIO)->getInt();
   static auto savepoint_prob = options->at(Option::SAVEPOINT_PRB_K)->getInt();
 
-  int trx_left = -1; // -1 for single trx
+  int trx_left = 0;
   int current_save_point = 0;
   while (std::chrono::system_clock::now() < end) {
 
+
     /* check if we need to make sql as part of existing or new trx */
-    if (trx_prob > 0) {
-      if (trx_left == 0)
-        execute_sql((rand_int(commit_to_rollback) == 0 ? "ROLLBACK" : "COMMIT"),
-                    this);
-
-      /*  check if sql are chossen as part of statement or single trx */
-      if (trx_left <= 0 && trx_max_size > 0 && rand_int(1000) < trx_prob) {
+    if (trx_left > 0) {
+      trx_left--;
+      if (trx_left == 0) {
+        if (rand_int(100, 1) > options->at(Option::COMMMIT_PROB)->getInt()) {
+          execute_sql("ROLLBACK", this);
+        } else {
+          execute_sql("COMMIT", this);
+        }
         current_save_point = 0;
-        if (rand_int(1000) == 1)
-          trx_left = trx_max_size * 100;
-        else
-          trx_left = rand_int(trx_max_size);
-        execute_sql("START TRANSACTION", this);
-      }
-
-      /* use savepoint or rollback to savepoint */
-      if (trx_left > 0 && savepoint_prob > 0) {
-        if (rand_int(1000) < savepoint_prob)
-          execute_sql("SAVEPOINT SAVE" + std::to_string(++current_save_point),
+      } else {
+        if (rand_int(1000) < savepoint_prob) {
+          current_save_point++;
+          execute_sql("SAVEPOINT SAVE" + std::to_string(current_save_point),
                       this);
+        }
 
-        /* 1/4 chances of rollbacking to savepoint */
-        if (current_save_point > 0 && rand_int(1000 * 4) < savepoint_prob) {
+        /* 10% chances of rollbacking to savepoint */
+        if (current_save_point > 0 && rand_int(10) == 1) {
           auto sv = rand_int(current_save_point, 1);
           execute_sql("ROLLBACK TO SAVEPOINT SAVE" + std::to_string(sv), this);
           current_save_point = sv - 1;
         }
-
-        trx_left--;
       }
+    }
+
+    if (trx_left == 0 &&
+        rand_int(1000) < options->at(Option::TRANSATION_PRB_K)->getInt()) {
+      execute_sql("START TRANSACTION", this);
+      trx_left = rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
     }
 
     auto table =
