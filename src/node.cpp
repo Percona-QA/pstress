@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 
+std::mutex node_mutex;
 Node::Node() {
   workers.clear();
   performed_queries_total = 0;
@@ -124,6 +125,7 @@ int Node::startWork() {
 }
 
 void Node::tryConnect() {
+  node_mutex.lock();
   MYSQL *conn;
   conn = mysql_init(NULL);
   if (conn == NULL) {
@@ -180,5 +182,6 @@ void Node::tryConnect() {
   if (options->at(Option::TEST_CONNECTION)->getBool()) {
     exit(EXIT_SUCCESS);
   }
+  node_mutex.unlock();
 }
 

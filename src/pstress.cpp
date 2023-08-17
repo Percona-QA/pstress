@@ -45,6 +45,19 @@ void read_section_settings(struct workerParams *wParams, std::string secName,
   wParams->infile = reader.Get(secName, "infile", "pquery.sql");
   wParams->logdir = reader.Get(secName, "logdir", "/tmp");
 }
+static std::vector<int> splitStringToIntArray(const std::string &input) {
+  std::vector<int> result;
+  std::istringstream iss(input);
+  std::string token;
+
+  while (getline(iss, token, ',')) {
+    int value;
+    std::istringstream(token) >> value;
+    result.push_back(value);
+  }
+
+  return result;
+}
 
 void create_worker(struct workerParams *Params) {
   Node newNode;
@@ -153,10 +166,21 @@ int main(int argc, char *argv[]) {
   }
 
   auto confFile = options->at(Option::CONFIGFILE)->getString();
-  if (confFile.empty()) {
+  auto ports = splitStringToIntArray(options->at(Option::PORT)->getString());
+  if (confFile.empty() && ports.size() == 1) {
+    std::cout << ports[0] << std::endl;
     /*single node and command line */
-    workerParams *wParams = new workerParams;
+    workerParams *wParams = new workerParams(ports[0]);
     create_worker(wParams);
+  } else if (confFile.empty() && ports.size() > 1) {
+    for (auto port : ports) {
+      workerParams *wParams = new workerParams(port);
+      wParams->myName = "node." + std::to_string(port);
+      nodes.push_back(std::thread(create_worker, wParams));
+    }
+      /* join all nodes */
+    for (auto node = nodes.begin(); node != nodes.end(); node++)
+      node->join();
   } else {
     INIReader reader(confFile);
     if (reader.ParseError() < 0) {
