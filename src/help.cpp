@@ -629,9 +629,12 @@ void add_options() {
   opt->help = "Config file to use for test";
 
   /*Port */
-  opt = newOption(Option::INT, Option::PORT, "port");
-  opt->help = "Port to use";
-  opt->setInt(3306);
+  opt = newOption(Option::STRING, Option::PORT, "port");
+  opt->help =
+      "Ports to use, It value is a LIST like 3108,3403,3408, Then it "
+      "would create 3 nodes to connect and run load on each node. Also to "
+      "connect using port, pass --address for example --address=127.0.0.1 ";
+  opt->setString("3306");
 
   /* Password*/
   opt = newOption(Option::STRING, Option::PASSWORD, "password");

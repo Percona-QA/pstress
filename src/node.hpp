@@ -15,7 +15,7 @@
 
 /* struct for node setup */
 struct workerParams {
-  workerParams() {
+  workerParams(short port_ = 0) {
     myName = "default.node.tld";
     database = opt_string(DATABASE);
     address = opt_string(ADDRESS);
@@ -24,9 +24,9 @@ struct workerParams {
     password = opt_string(PASSWORD);
     logdir = opt_string(LOGDIR);
     infile = opt_string(INFILE);
-    port = opt_int(PORT);
     threads = opt_int(THREADS);
     queries_per_thread = opt_int(QUERIES_PER_THREAD);
+    port = port_;
   };
   std::string myName; // unique name for worker
   std::string database;
