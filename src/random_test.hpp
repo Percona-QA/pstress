@@ -173,6 +173,8 @@ struct Thd1 {
    * which  is used for the FK tables  */
   std::vector<int> unique_keys;
   int query_number = 0;
+  struct workerParams *myParam;
+  bool tryreconnet();
 };
 
 /* Table basic properties */

@@ -45,20 +45,6 @@ void read_section_settings(struct workerParams *wParams, std::string secName,
   wParams->infile = reader.Get(secName, "infile", "pquery.sql");
   wParams->logdir = reader.Get(secName, "logdir", "/tmp");
 }
-static std::vector<int> splitStringToIntArray(const std::string &input) {
-  std::vector<int> result;
-  std::istringstream iss(input);
-  std::string token;
-
-  while (getline(iss, token, ',')) {
-    int value;
-    std::istringstream(token) >> value;
-    result.push_back(value);
-  }
-
-  return result;
-}
-
 void create_worker(struct workerParams *Params) {
   Node newNode;
   newNode.setAllParams(Params);
@@ -211,4 +197,32 @@ int main(int argc, char *argv[]) {
   std::cout << "COMPLETED" << std::endl;
 
   return EXIT_SUCCESS;
+}
+/* convert string to array of ints */
+std::vector<int> splitStringToIntArray(const std::string &input) {
+  std::vector<int> result;
+  std::istringstream iss(input);
+  std::string token;
+
+  while (getline(iss, token, ',')) {
+    int value;
+    std::istringstream(token) >> value;
+    result.push_back(value);
+  }
+
+  return result;
+}
+
+std::set<int> splitStringToIntSet(const std::string &input) {
+  std::set<int> result;
+  std::istringstream iss(input);
+  std::string token;
+
+  while (getline(iss, token, ',')) {
+    int value;
+    std::istringstream(token) >> value;
+    result.insert(value);
+  }
+
+  return result;
 }

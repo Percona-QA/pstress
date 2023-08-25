@@ -90,6 +90,8 @@ void Node::workerThread(int number) {
   Thd1 *thd = new Thd1(number, thread_log, general_log, client_log, conn,
                        performed_queries_total, failed_queries_total);
 
+  thd->myParam = &myParams;
+
   /* run pstress in with dynamic generator or infile */
   if (options->at(Option::PQUERY)->getBool() == false) {
     static bool success = false;
@@ -161,4 +163,23 @@ void Node::workerThread(int number) {
 
   mysql_close(conn);
   mysql_thread_end();
+}
+
+bool Thd1::tryreconnet() {
+  MYSQL *conn;
+  auto myParams = *this->myParam;
+  conn = mysql_init(NULL);
+  if (mysql_real_connect(conn, myParams.address.c_str(),
+                         myParams.username.c_str(), myParams.password.c_str(),
+                         myParams.database.c_str(), myParams.port,
+                         myParams.socket.c_str(), 0) == NULL) {
+    thread_log << "Error " << mysql_errno(conn);
+    mysql_close(conn);
+
+    return false;
+  }
+  MYSQL *old_conn = this->conn;
+  mysql_close(old_conn);
+  this->conn = conn;
+  return true;
 }
