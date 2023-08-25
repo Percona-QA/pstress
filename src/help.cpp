@@ -134,6 +134,10 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  opt = newOption(Option::STRING, Option::IGNORE_ERRORS, "mysql-ignore-errors");
+  opt->help = "Ignore MySQL errors. example --mysql-ignore-error=2013,1047";
+  opt->setString("NONE");
+
   /* todo set default to all */
   opt = newOption(Option::STRING, Option::ENCRYPTION_TYPE, "encryption-type");
   opt->help =

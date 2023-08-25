@@ -54,6 +54,7 @@ std::atomic<size_t> table_completed(0);
 std::atomic<size_t> check_failures(0);
 std::atomic_flag lock_stream = ATOMIC_FLAG_INIT;
 std::atomic<bool> run_query_failed(false);
+
 /* partition type supported by system */
 std::vector<Partition::PART_TYPE> Partition::supported;
 const int maximum_records_in_each_parititon_list = 100;
@@ -2034,9 +2035,17 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
       thd->thread_log << " F " << sql << std::endl;
       thd->thread_log << "Error " << mysql_error(thd->conn) << std::endl;
     }
-    if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
-        mysql_errno(thd->conn) == CR_SERVER_LOST ||
-	mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
+    static std::set<int> mysql_ignore_error =
+        splitStringToIntSet(options->at(Option::IGNORE_ERRORS)->getString());
+
+    if (mysql_ignore_error.count(mysql_errno(thd->conn)) > 0) {
+      thd->thread_log << "Ignoring error " << mysql_error(thd->conn)
+                      << std::endl;
+      sleep(10);
+      thd->tryreconnet();
+
+    } else if (mysql_errno(thd->conn) == CR_SERVER_LOST ||
+               mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
       thd->thread_log << "server gone, while processing " + sql;
       run_query_failed = true;
     }

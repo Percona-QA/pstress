@@ -25,11 +25,13 @@
 #define PLATFORM_ID "Linux"
 #endif
 
-#include <getopt.h>
-#include <atomic>
-#include <map>
-#include <string>
 #include <algorithm>
+#include <atomic>
+#include <getopt.h>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
 #include <vector>
 
 struct Option {
@@ -146,6 +148,7 @@ struct Option {
     FK_PROB,
     PARTITION_PROB,
     TEMPORARY_PROB,
+    IGNORE_ERRORS,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
@@ -221,5 +224,7 @@ void add_options();
 void add_server_options(std::string str);
 void add_server_options_file(std::string file_name);
 Option *newOption(Option::Type t, Option::Opt o, std::string s);
+std::set<int> splitStringToIntSet(const std::string &input);
+std::vector<int> splitStringToIntArray(const std::string &input);
 
 #endif
