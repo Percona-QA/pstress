@@ -153,6 +153,8 @@ void Node::workerThread(int number) {
       }
     }
   }
+  /* connection can be changed if we thd->tryreconnect is called */
+  conn = thd->conn;
   delete thd;
 
   if (thread_log.is_open())

@@ -11,6 +11,8 @@
 #include <sstream>
 #include <string>
 #include <libgen.h>
+#include <unistd.h>
+
 
 #define CR_SERVER_GONE_ERROR 2006
 #define CR_SERVER_LOST 2013
@@ -2990,7 +2992,8 @@ static void alter_redo_logging(Thd1 *thd) {
 
 /* alter database set encryption */
 void alter_database_encryption(Thd1 *thd) {
-  std::string sql = "ALTER DATABASE test ENCRYPTION ";
+  std::string sql = "ALTER DATABASE " +
+                    options->at(Option::DATABASE)->getString() + " ENCRYPTION ";
   sql += (rand_int(1) == 0 ? "'Y'" : "'N'");
   execute_sql(sql, thd);
 }
@@ -3435,9 +3438,13 @@ void clean_up_at_end() {
 /* create new database and tablespace */
 void create_database_tablespace(Thd1 *thd) {
 
-  /* drop database test*/
-  execute_sql("DROP DATABASE IF EXISTS test", thd);
-  execute_sql("CREATE DATABASE test", thd); // todo encrypt database/schema
+  std::string sql =
+      "DROP DATABASE IF EXISTS " + options->at(Option::DATABASE)->getString();
+  execute_sql(sql, thd);
+
+  sql = "CREATE DATABASE IF NOT EXISTS " +
+        options->at(Option::DATABASE)->getString();
+  execute_sql(sql, thd);
 
   for (auto &tab : g_tablespace) {
     if (tab.compare("innodb_system") == 0)
@@ -3853,6 +3860,7 @@ bool Thd1::run_some_query() {
   for (auto &table : *all_session_tables)
     if (table->type == Table::TEMPORARY)
       delete table;
+
   delete all_session_tables;
   return true;
 }
