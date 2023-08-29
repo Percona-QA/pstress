@@ -176,6 +176,24 @@ EOF
   fi
 }
 
+# Incase, user starts pstress in RR mode, check if RR is installed on the machine
+if [ $RR_MODE -eq 1 ]; then
+  echoit "Running pstress in RR mode. It is expected that pstress executions will be slower"
+  if [[ ! -e `which rr` ]];then
+    echo "rr package is not installed. Exiting"
+    echo "Install rr: https://github.com/rr-debugger/rr/wiki/Building-And-Installing"
+    exit 1
+  else
+    perf_event_var=$(cat /proc/sys/kernel/perf_event_paranoid)
+    if [ $perf_event_var -ne 1 ]; then
+      echo "rr needs /proc/sys/kernel/perf_event_paranoid <=1, but it is $perf_event_var"
+      echo "Change it to 1, consider running sudo sysctl -w kernel.perf_event_paranoid=1"
+      echo "For more information https://github.com/rr-debugger/rr/wiki/Building-And-Installing"
+      exit 1
+    fi
+  fi
+fi
+
 # Find mysqld binary
 if [ -r ${BASEDIR}/bin/mysqld ]; then
   BIN=${BASEDIR}/bin/mysqld
@@ -905,6 +923,9 @@ pstress_test(){
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
 
+    if [ $RR_MODE -eq 1 ]; then
+      CMD="rr $CMD"
+    fi
     echo $CMD
     $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
     MPID="$!"
