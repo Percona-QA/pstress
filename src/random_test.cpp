@@ -2030,7 +2030,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
   }
   thd->performed_queries_total++;
 
-  if (res == 1) { // query failed
+  if (res != 0) { // query failed
     thd->failed_queries_total++;
     thd->max_con_fail_count++;
     if (log_all || log_failed) {

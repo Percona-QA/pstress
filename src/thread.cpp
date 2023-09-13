@@ -175,7 +175,7 @@ bool Thd1::tryreconnet() {
                          myParams.username.c_str(), myParams.password.c_str(),
                          myParams.database.c_str(), myParams.port,
                          myParams.socket.c_str(), 0) == NULL) {
-    thread_log << "Error " << mysql_errno(conn);
+    thread_log << "Error Failed to reconnect " << mysql_errno(conn);
     mysql_close(conn);
 
     return false;
