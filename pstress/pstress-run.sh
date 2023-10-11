@@ -498,15 +498,27 @@ pxc_startup(){
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n3.cnf
 
   get_error_socket_file 1
-  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+  if [ $RR_MODE -eq 1 ]; then
+    rr ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+  elif [ $RR_MODE -eq 0 ]; then
+    ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+  fi
   pxc_startup_status 1
 
   get_error_socket_file 2
-  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  if [ $RR_MODE -eq 1 ]; then
+    rr ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  elif [ $RR_MODE -eq 0 ]; then
+    ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  fi
   pxc_startup_status 2
 
   get_error_socket_file 3
-  ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  if [ $RR_MODE -eq 1 ]; then
+    rr ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  elif [ $RR_MODE -eq 0 ]; then
+    ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+  fi
   pxc_startup_status 3
   
   if [ "$IS_STARTUP" == "startup" ]; then
@@ -1502,19 +1514,21 @@ elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
     if ${BASEDIR}/bin/mysqladmin -uroot -S${WORKDIR}/node1.template/node1_socket.sock  ping > /dev/null 2>&1; then
       echoit "PXC node1.template started" ;
     else
-      echoit "Assert: PXC data template creation failed.."
+      echoit "Assert: PXC data template1 creation failed.."
       exit 1
     fi
+    sleep 2
     if ${BASEDIR}/bin/mysqladmin -uroot -S${WORKDIR}/node2.template/node2_socket.sock  ping > /dev/null 2>&1; then
       echoit "PXC node2.template started" ;
     else
-      echoit "Assert: PXC data template creation failed.."
+      echoit "Assert: PXC data template2 creation failed.."
       exit 1
     fi
+    sleep 2
     if ${BASEDIR}/bin/mysqladmin -uroot -S${WORKDIR}/node3.template/node3_socket.sock  ping > /dev/null 2>&1; then
       echoit "PXC node3.template started" ;
     else
-      echoit "Assert: PXC data template creation failed.."
+      echoit "Assert: PXC data template3 creation failed.."
       exit 1
     fi
     echoit "Created PXC data templates for pstress run.."
