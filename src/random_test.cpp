@@ -2040,11 +2040,17 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
     static std::set<int> mysql_ignore_error =
         splitStringToIntSet(options->at(Option::IGNORE_ERRORS)->getString());
 
-    if (mysql_ignore_error.count(mysql_errno(thd->conn)) > 0) {
+    if (options->at(Option::IGNORE_ERRORS)->getString() == "all" ||
+        mysql_ignore_error.count(mysql_errno(thd->conn)) > 0) {
       thd->thread_log << "Ignoring error " << mysql_error(thd->conn)
                       << std::endl;
-      sleep(10);
-      thd->tryreconnet();
+
+      if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
+          mysql_errno(thd->conn) == CR_SERVER_LOST ||
+          mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
+        sleep(5);
+        thd->tryreconnet();
+      }
 
     } else if (mysql_errno(thd->conn) == CR_SERVER_LOST ||
                mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
