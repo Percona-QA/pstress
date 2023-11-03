@@ -61,6 +61,12 @@ std::atomic<bool> run_query_failed(false);
 std::vector<Partition::PART_TYPE> Partition::supported;
 const int maximum_records_in_each_parititon_list = 100;
 
+static void print_and_log(std::string &&str, Thd1 *thd) {
+  std::lock_guard<std::mutex> lock(ddl_logs_write);
+  std::cout << str << std::endl;
+  thd->thread_log << str << std::endl;
+}
+
 static MYSQL_ROW mysql_fetch_row_safe(Thd1 *thd) {
   if (!thd->result) {
     thd->thread_log << "mysql_fetch_row called with nullptr arg!";
@@ -1113,7 +1119,7 @@ std::string Index::definition() {
 bool Table::load(Thd1 *thd) {
   thd->ddl_query = true;
   if (!execute_sql(definition(false), thd)) {
-    thd->thread_log << "Failed to create table " << name_ << std::endl;
+    print_and_log("Failed to create table " + name_, thd);
     run_query_failed = true;
     return false;
   }
@@ -1161,8 +1167,7 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
       continue;
     std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition();
     if (!execute_sql(sql, thd)) {
-      thd->thread_log << "Failed to add index " << id->name_ << " on " << name_
-                      << std::endl;
+      print_and_log("Failed to add index " + id->name_ + " on " + name_, thd);
       run_query_failed = true;
       return false;
     }
@@ -1190,8 +1195,8 @@ bool FK_table::load_fk_constrain(Thd1 *thd) {
   sql += " ON DELETE  " + enumToString(on_delete);
 
   if (!execute_sql(sql, thd)) {
-    thd->thread_log << "Failed to add fk constraint "
-                    << " on " << name_ << std::endl;
+    print_and_log("Failed to add fk constraint " + constraint + " on " + name_,
+                  thd);
     run_query_failed = true;
     return false;
   }
@@ -2053,8 +2058,10 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
       }
 
     } else if (mysql_errno(thd->conn) == CR_SERVER_LOST ||
-               mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
-      thd->thread_log << "server gone, while processing " + sql;
+               mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED ||
+               mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR) {
+      auto error = mysql_error(thd->conn);
+      print_and_log("Fatal: " + std::string(error) + " " + sql, thd);
       run_query_failed = true;
     }
   } else {
@@ -2902,9 +2909,7 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
     records++;
     if (values.size() > 1024 * 1024 || number_of_initial_records == records) {
       if (!execute_sql(prepare_sql + values, thd)) {
-        ddl_logs_write.lock();
-        thd->ddl_logs << "Bulk insert failed for table  " << name_ << std::endl;
-        ddl_logs_write.unlock();
+        print_and_log("Bulk insert failed for table  " + name_, thd);
         run_query_failed = true;
         return false;
       }
@@ -3851,6 +3856,8 @@ bool Thd1::run_some_query() {
     }
 
     if (run_query_failed) {
+      thread_log << "Some other thread failed, Exiting. Please check logs "
+                 << std::endl;
       break;
     }
   } // while
