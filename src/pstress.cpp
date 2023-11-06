@@ -24,6 +24,7 @@
 
 /* Global variable to hold pstress build directory path */
 const char *binary_fullpath;
+extern std::atomic<bool> run_query_failed;
 
 void read_section_settings(struct workerParams *wParams, std::string secName,
                            std::string confFile) {
@@ -154,9 +155,9 @@ int main(int argc, char *argv[]) {
   auto confFile = options->at(Option::CONFIGFILE)->getString();
   auto ports = splitStringToIntArray(options->at(Option::PORT)->getString());
   if (confFile.empty() && ports.size() == 1) {
-    std::cout << ports[0] << std::endl;
     /*single node and command line */
     workerParams *wParams = new workerParams(ports[0]);
+    wParams->myName = "node." + std::to_string(ports[0]);
     create_worker(wParams);
   } else if (confFile.empty() && ports.size() > 1) {
     for (auto port : ports) {
@@ -195,8 +196,10 @@ int main(int argc, char *argv[]) {
   mysql_library_end();
   delete_options();
   std::cout << "COMPLETED" << std::endl;
-
-  return EXIT_SUCCESS;
+  if (run_query_failed)
+    return EXIT_FAILURE;
+  else
+    return EXIT_SUCCESS;
 }
 /* convert string to array of ints */
 std::vector<int> splitStringToIntArray(const std::string &input) {
