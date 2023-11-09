@@ -1748,7 +1748,6 @@ Table *Table::table_id(TABLE_TYPES type, int id) {
       options->at(Option::EXACT_INITIAL_RECORDS)->getBool()
           ? options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()
           : rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
-
   static auto no_encryption = opt_bool(NO_ENCRYPTION);
 
   /* temporary table on 8.0 can't have key block size */
@@ -2837,6 +2836,12 @@ void Table::UpdateRandomROW(Thd1 *thd) {
 
 bool Table::InsertBulkRecord(Thd1 *thd) {
   bool is_list_partition = false;
+
+  // if parent has no records, child can't have records
+  if (type == FK) {
+    if (static_cast<FK_table *>(this)->parent->number_of_initial_records == 0)
+      number_of_initial_records = 0;
+  }
 
   if (number_of_initial_records == 0)
     return true;
