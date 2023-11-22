@@ -239,7 +239,7 @@ function resume_pstress() {
     mkdir -p ${RESUME_INCIDENT_DIR}/${TRIAL}/data ${RESUME_INCIDENT_DIR}/${TRIAL}/tmp ${RESUME_INCIDENT_DIR}/${TRIAL}/log
     echoit "Copying datadir from previous trial ${RESUME_INCIDENT_DIR}/$((${TRIAL}-1))/data into ${RESUME_INCIDENT_DIR}/${TRIAL}/data";
     rsync -ar --exclude='*core*' ${RESUME_INCIDENT_DIR}/$(($TRIAL-1))/data/ ${RESUME_INCIDENT_DIR}/${TRIAL}/data 2>&1
-    if [ ${ENCRYPTION_RUN} -eq 1 -a ${KEYRING_COMPONENT} -eq 1 ]; then
+    if [ ${ENCRYPTION_RUN} -eq 1 -a ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
       sed -i "s|$RUNDIR/$(($TRIAL-1))|$RESUME_INCIDENT_DIR/$TRIAL|g" ${RESUME_INCIDENT_DIR}/${TRIAL}/data/component_keyring_file.cnf
     fi
   elif [ $PXC -eq 1 ]; then
@@ -419,14 +419,14 @@ if [ ${ENGINE} == "RocksDB" ]; then
 fi
 
 if [ ${ENCRYPTION_RUN} -eq 0 ]; then
- KEYRING_FILE=0
- KEYRING_COMPONENT=0
+ PLUGIN_KEYRING_FILE=0
+ COMPONENT_KEYRING_FILE=0
 fi
 
 if [ ${PXC} -eq 1 ]; then
   DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --primary-key-probability 100 --alt-discard-tbs 0"
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-    if [ ${KEYRING_FILE} -eq 1 ]; then
+    if [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
       KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
     fi
   elif [ ${ENCRYPTION_RUN} -eq 0 ]; then
@@ -437,7 +437,7 @@ if [ ${PXC} -eq 1 ]; then
   fi
 elif [ ${PXC} -eq 0 ]; then
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-    if [ ${KEYRING_FILE} -eq 1 ]; then
+    if [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
       KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
     fi
   elif [ ${ENCRYPTION_RUN} -eq 0 ]; then
