@@ -32,20 +32,16 @@ fi
 
 # Check no two encryption types are enabled at the same time
 if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-  if [[ ${KEYRING_VAULT} -eq 1 && ${KEYRING_COMPONENT} -eq 1 ]]; then
-    echo "Enable one encryption type at a time"
-    exit 1
-  elif [[ ${KEYRING_VAULT} -eq 1 && ${KEYRING_FILE} -eq 1 ]]; then
-    echo "Enable one encryption type at a time"
-    exit 1
-  elif [[ ${KEYRING_FILE} -eq 1 && ${KEYRING_COMPONENT} -eq 1 ]]; then
-    echo "Enable one encryption type at a time"
+  enabled_count=$((${COMPONENT_KEYRING_FILE} + ${COMPONENT_KEYRING_VAULT} + ${PLUGIN_KEYRING_VAULT} + ${PLUGIN_KEYRING_FILE}))
+  if [ "$enabled_count" -gt 1 ]; then
+    echo "Enable one encryption(keyring_file|keyring_vault) type(plugin|component) at a time"
     exit 1
   fi
 elif [ ${ENCRYPTION_RUN} -eq 0 ]; then
-  KEYRING_COMPONENT=0
-  KEYRING_VAULT=0
-  KEYRING_FILE=0
+  COMPONENT_KEYRING_FILE=0
+  COMPONENT_KEYRING_VAULT=0
+  PLUGIN_KEYRING_VAULT=0
+  PLUGIN_KEYRING_FILE=0
 fi
 
 # Safety checks: ensure variables are correctly set to avoid rm -Rf issues (if not set correctly, it was likely due to altering internal variables at the top of this file)
@@ -109,6 +105,25 @@ kill_server(){
   { kill -$SIG ${MPID} && wait ${MPID}; } 2>/dev/null
 }
 
+# Start vault server
+start_vault_server(){
+  echoit "Setting up vault server"
+  mkdir ${WORKDIR}/vault
+  rm -rf $WORKDIR/vault/*
+  # Kill any previously running vault server
+  killall vault > /dev/null 2>&1
+  #VID=$(ps -eaf | grep 'vault server' | grep -v 'grep' | awk '{print $2}'); kill -9 $VID
+  if [[ $PXC -eq 1 ]];then
+    ${SCRIPT_PWD}/vault_test_setup.sh --workdir=$WORKDIR/vault --setup-pxc-mount-points --use-ssl > /dev/null 2>&1
+  else
+    ${SCRIPT_PWD}/vault_test_setup.sh --workdir=$WORKDIR/vault --use-ssl > /dev/null 2>&1
+  fi
+  vault_url=$(grep 'vault_url' "${WORKDIR}/vault/keyring_vault_ps.cnf" | awk -F '=' '{print $2}' | tr -d '[:space:]')
+  secret_mount_point=$(grep 'secret_mount_point' "${WORKDIR}/vault/keyring_vault_ps.cnf" | awk -F '=' '{print $2}' | tr -d '[:space:]')
+  token=$(grep 'token' "${WORKDIR}/vault/keyring_vault_ps.cnf" | awk -F '=' '{print $2}' | tr -d '[:space:]')
+  vault_ca=$(grep 'vault_ca' "${WORKDIR}/vault/keyring_vault_ps.cnf" | awk -F '=' '{print $2}' | tr -d '[:space:]')
+}
+
 # PXC Bug found display function
 pxc_bug_found(){
   NODE=$1
@@ -130,26 +145,28 @@ EOF
 }
 
 create_local_manifest() {
-  node=$1
+  cmp_name=$1
+  node=$2
   echoit "Creating local manifest file mysqld.my"
-  if [ $# -eq 0 ]; then
+  if [ "$node" == "" ]; then
     cat << EOF >${RUNDIR}/${TRIAL}/data/mysqld.my
 {
- "components": "file://component_keyring_file"
+ "components": "file://$cmp_name"
 }
 EOF
   else
     cat << EOF >${RUNDIR}/${TRIAL}/node$node/mysqld.my
 {
- "components": "file://component_keyring_file"
+ "components": "file://$cmp_name"
 }
 EOF
   fi
 }
 
 create_global_config() {
-  echoit "Creating global configuration file component_keyring_file.cnf"
-  cat << EOF >${BASEDIR}/lib/plugin/component_keyring_file.cnf
+  cmp_name=$1
+  echoit "Creating global configuration file $cmp_name.cnf"
+  cat << EOF >${BASEDIR}/lib/plugin/$cmp_name.cnf
 {
   "read_local_config": true
 }
@@ -157,22 +174,45 @@ EOF
 }
 
 create_local_config() {
-  node=$1
-  echoit "Creating local configuration file component_keyring_file.cnf"
-  if [ $# -eq 0 ]; then
-    cat << EOF >${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
+  cmp_name=$1
+  node=$2
+  echoit "Creating local configuration file $cmp_name.cnf"
+  if [ "$cmp_name" == "component_keyring_file" ]; then
+    if [ "$node" == "" ]; then
+      cat << EOF >${RUNDIR}/${TRIAL}/data/$cmp_name.cnf
 {
- "path": "${RUNDIR}/${TRIAL}/data/component_keyring_file",
+ "path": "${RUNDIR}/${TRIAL}/data/$cmp_name",
  "read_only": false
 }
 EOF
-  else
-    cat << EOF >${RUNDIR}/${TRIAL}/node$node/component_keyring_file.cnf
+    else
+      cat << EOF >${RUNDIR}/${TRIAL}/node$node/$cmp_name.cnf
 {
- "path": "${RUNDIR}/${TRIAL}/node$node/component_keyring_file",
+ "path": "${RUNDIR}/${TRIAL}/node$node/$cmp_name",
  "read_only": false
 }
 EOF
+    fi
+  elif [ "$cmp_name" == "component_keyring_vault" ]; then
+    if [ "$node" == "" ]; then
+      cat << EOF >${RUNDIR}/${TRIAL}/data/$cmp_name.cnf
+{
+"vault_url" : "$vault_url",
+"secret_mount_point" : "$secret_mount_point",
+"token" : "$token",
+"vault_ca" : "$vault_ca"
+}
+EOF
+    else
+      cat << EOF >${RUNDIR}/${TRIAL}/node$node/$cmp_name.cnf
+{
+"vault_url" : "$vault_url",
+"secret_mount_point" : "$secret_mount_point",
+"token" : "$token",
+"vault_ca" : "$vault_ca"
+}
+EOF
+    fi
   fi
 }
 
@@ -213,7 +253,7 @@ else
 fi
 
 #Store MySQL version string
-MYSQL_VERSION=$(${BASEDIR}/bin/mysqld --version 2>&1 | grep -oe '[0-9]\.[0-9][\.0-9]*' | head -n1)
+MYSQL_VERSION=$(${BASEDIR}/bin/mysqld --version 2>&1 | grep -oP 'Ver \K[0-9]+\.[0-9]+\.[0-9]+')
 
 if [ "${CONFIGURATION_FILE}" == "pstress-run-PXC80.conf" -o "${CONFIGURATION_FILE}" == "pstress-run-PXC57.conf" ]; then PXC=1; fi
 if [ "$(whoami)" == "root" ]; then MYEXTRA="--user=root ${MYEXTRA}"; fi
@@ -441,14 +481,14 @@ pxc_startup(){
       if check_for_version $MYSQL_VERSION "8.0.0" ; then
         sed -i "2i binlog_encryption=ON" ${DATADIR}/n${i}.cnf
       fi
-      if [ ${KEYRING_FILE} -eq 1 ]; then
+      if [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
         sed -i "2i early-plugin-load=keyring_file.so" ${DATADIR}/n${i}.cnf
         if [ "$IS_STARTUP" == "startup" ]; then
           sed -i "2i keyring_file_data=${DATADIR}/node${i}.template/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
         else
           sed -i "2i keyring_file_data=${DATADIR}/node${i}/keyring_storage/keyring" ${DATADIR}/n${i}.cnf
         fi
-      elif [ ${KEYRING_VAULT} -eq 1 ]; then
+      elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
         sed -i "2i early-plugin-load=keyring_vault.so" ${DATADIR}/n${i}.cnf
         sed -i "2i keyring_vault_config=$WORKDIR/vault/keyring_vault_pxc${i}.cnf" ${DATADIR}/n${i}.cnf
       fi
@@ -705,13 +745,13 @@ fi
 
   get_error_socket_file 1
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-    if [ ${KEYRING_COMPONENT} -eq 1  ]; then
+    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
-    elif [ ${KEYRING_FILE} -eq 1 ]; then
+    elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
-    elif [ ${KEYRING_VAULT} -eq 1 ]; then
+    elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
@@ -719,8 +759,8 @@ fi
       exit 1
     fi
   else
-    ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
-    --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
+     ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
+     --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
   fi
   gr_startup_status 1
 
@@ -747,13 +787,13 @@ fi
   get_error_socket_file 2
 
   if [ "${ENCRYPTION_RUN}" == "1" ]; then
-    if [ ${KEYRING_COMPONENT} -eq 1 ]; then
+    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA > $ERR_FILE 2>&1 &
-    elif [ ${KEYRING_FILE} -eq 1 ]; then
+    elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
-    elif [ ${KEYRING_VAULT} -eq 1 ]; then
+    elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
@@ -789,13 +829,13 @@ fi
   get_error_socket_file 3
 
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-    if [ ${KEYRING_COMPONENT} -eq 1 ]; then
+    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA > $ERR_FILE 2>&1 &
-    elif [ ${KEYRING_FILE} -eq 1  ]; then
+    elif [ ${PLUGIN_KEYRING_FILE} -eq 1  ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
-    elif [ ${KEYRING_VAULT} -eq 1 ]; then
+    elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
@@ -855,14 +895,17 @@ pstress_test(){
     fi
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
-      if [ ${KEYRING_COMPONENT} -eq 1 ]; then
+      if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
       fi
     else
       cp -R ${WORKDIR}/data.template/* ${RUNDIR}/${TRIAL}/data 2>&1
-      if [ ${KEYRING_COMPONENT} -eq 1 ]; then
-        create_local_manifest
-        create_local_config
+      if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
+        create_local_manifest component_keyring_file
+        create_local_config component_keyring_file
+      elif [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+        create_local_manifest component_keyring_vault
+        create_local_config component_keyring_vault
       fi
     fi
     MYEXTRA=
@@ -913,15 +956,15 @@ pstress_test(){
     PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
     echoit "Starting mysqld. Error log is stored at ${RUNDIR}/${TRIAL}/log/master.err"
     if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-      if [ ${KEYRING_VAULT} -eq 1 ]; then
+      if [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
         CMD="${BIN} ${MYEXTRA} ${VAULT_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
-      elif [ ${KEYRING_FILE} -eq 1 ]; then
+      elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
         CMD="${BIN} ${MYEXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
-      elif [ ${KEYRING_COMPONENT} -eq 1 ]; then
+      elif [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
         CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
@@ -987,7 +1030,7 @@ pstress_test(){
       echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
       rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
       sed -i 's|safe_to_bootstrap:.*$|safe_to_bootstrap: 1|' ${RUNDIR}/${TRIAL}/node1/grastate.dat
-      if [ ${KEYRING_COMPONENT} -eq 1 ]; then
+      if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node1/component_keyring_file.cnf
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node2/component_keyring_file.cnf
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node3/component_keyring_file.cnf
@@ -998,13 +1041,20 @@ pstress_test(){
       cp -R ${WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
       cp -R ${WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
       cp -R ${WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
-      if [ ${KEYRING_COMPONENT} -eq 1 ]; then
-	create_local_manifest 1
-	create_local_manifest 2
-	create_local_manifest 3
-	create_local_config 1
-	create_local_config 2
-	create_local_config 3
+      if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
+        create_local_manifest component_keyring_file 1
+        create_local_manifest component_keyring_file 2
+        create_local_manifest component_keyring_file 3
+        create_local_config component_keyring_file 1
+        create_local_config component_keyring_file 2
+        create_local_config component_keyring_file 3
+      elif [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+        create_local_manifest component_keyring_vault 1
+        create_local_manifest component_keyring_vault 2
+        create_local_manifest component_keyring_vault 3
+        create_local_config component_keyring_vault 1
+        create_local_config component_keyring_vault 2
+        create_local_config component_keyring_vault 3
       fi
     fi
 
@@ -1099,7 +1149,7 @@ pstress_test(){
       echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
       rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
       for i in $(seq 1 3); do
-        if [ ${KEYRING_COMPONENT} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
+        if [ ${COMPONENT_KEYRING_FILE} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
           sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node$i/component_keyring_file.cnf
         fi
       done
@@ -1109,7 +1159,7 @@ pstress_test(){
       cp -R ${WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
       cp -R ${WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
       cp -R ${WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
-      if [ ${KEYRING_COMPONENT} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
+      if [ ${COMPONENT_KEYRING_FILE} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
         for i in $(seq 1 3); do
           echoit "Creating local manifest file mysqld.my for node$i"
           cat << EOF >${RUNDIR}/${TRIAL}/node$i/mysqld.my
@@ -1453,44 +1503,47 @@ if [ "${VERSION_INFO}" == "5.1" -o "${VERSION_INFO}" == "5.5" -o "${VERSION_INFO
   INIT_TOOL="${MID}"
   INIT_OPT="--no-defaults --force ${MYINIT}"
   START_OPT="--core"
-elif [ "${VERSION_INFO}" != "5.7" -a "${VERSION_INFO}" != "8.0" ]; then
+elif [ "${VERSION_INFO}" != "5.7" -a "${VERSION_INFO}" != "8.0" -a "${VERSION_INFO}" != "8.1" ]; then
   echo "WARNING: mysqld (${BIN}) version detection failed. This is likely caused by using this script with a non-supported distribution or version of mysqld. Please expand this script to handle (which shoud be easy to do). Even so, the script will now try and continue as-is, but this may fail."
 fi
 
 if [ "${VERSION_INFO}" == "5.7" ]; then
-  if [ "${KEYRING_COMPONENT}" == "1" ]; then
-    echoit "Keyring component is un-supported on PS-5.7 and PXC-5.7"
-    exit 1
-  fi
-  KEYRING_COMPONENT=0
+  # Keyring components are not supported in PS-5.7 and PXC-5.7, hence disabling it.
+  COMPONENT_KEYRING_FILE=0
+  COMPONENT_KEYRING_VAULT=0
 fi
 
 if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-  if [ ${KEYRING_VAULT} -eq 0 -a ${KEYRING_FILE} -eq 0 -a ${KEYRING_COMPONENT} -eq 0 ]; then
-    echoit "Enable atleast one encryption type (keyring_vault or keyring_file) if ENCRYPTION_RUN=1"
+  if [ $enabled_count -eq 0 ]; then
+      echoit "ERROR: Enable atleast one encryption(keyring_vault | keyring_file) type (plugin | component) if ENCRYPTION_RUN=1"
     exit 1
   fi
 fi
 
-# Start vault server for pstress encryption run
-if [ ${KEYRING_VAULT} -eq 1 ];then
-  echoit "Setting up vault server"
-  mkdir $WORKDIR/vault
-  rm -rf $WORKDIR/vault/*
-  killall vault > /dev/null 2>&1
-  if [[ $PXC -eq 1 ]];then
-    ${SCRIPT_PWD}/vault_test_setup.sh --workdir=$WORKDIR/vault --setup-pxc-mount-points --use-ssl > /dev/null 2>&1
-  else
-    ${SCRIPT_PWD}/vault_test_setup.sh --workdir=$WORKDIR/vault --use-ssl > /dev/null 2>&1
+if [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
+  if ! check_for_version $MYSQL_VERSION "8.1.0" ; then
+    start_vault_server
     VAULT_PARAM="--early-plugin-load=keyring_vault.so --keyring_vault_config=$WORKDIR/vault/keyring_vault_ps.cnf"
+  else
+    echoit "ERROR: Vault as a plugin is not supported from PS-8.1.0 onwards. Use COMPONENT_KEYRING_VAULT=1 instead"
+    exit 1
   fi
-elif [ ${KEYRING_FILE} -eq 1 ]; then
+elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
   KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
 fi
 
-if [ ${KEYRING_COMPONENT} -eq 1 ]; then
+if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
   create_global_manifest
-  create_global_config
+  create_global_config component_keyring_file
+elif [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+  if check_for_version $MYSQL_VERSION "8.1.0" ; then
+    start_vault_server
+    create_global_manifest
+    create_global_config component_keyring_vault
+  else
+    echoit "ERROR: Vault as a component is not supported in versions older than PS-8.1.0. Use PLUGIN_KEYRING_VAULT=1 instead"
+    exit 1
+  fi
 fi
 
 echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
