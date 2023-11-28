@@ -964,6 +964,8 @@ template <typename Writer> void Index::Serialize(Writer &writer) const {
   writer.StartObject();
   writer.String("name");
   writer.String(name_.c_str(), static_cast<SizeType>(name_.length()));
+  writer.String("unique");
+  writer.Bool(unique);
   writer.String(("index_columns"));
   writer.StartArray();
   for (auto ic : *columns_)
@@ -1088,7 +1090,7 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
 
 Ind_col::Ind_col(Column *c, bool d) : column(c), desc(d) {}
 
-Index::Index(std::string n) : name_(n), columns_() {
+Index::Index(std::string n, bool u) : name_(n), columns_(), unique(u) {
   columns_ = new std::vector<Ind_col *>;
 }
 
@@ -1097,6 +1099,8 @@ void Index::AddInternalColumn(Ind_col *column) { columns_->push_back(column); }
 /* index definition */
 std::string Index::definition() {
   std::string def;
+  if (unique)
+    def += "UNIQUE ";
   def += "INDEX " + name_ + "(";
   for (auto idc : *columns_) {
     def += idc->column->name_;
@@ -1704,6 +1708,19 @@ void Table::CreateDefaultIndex() {
           col_pos.push_back(current);
       }
     } // while
+
+    auto index_has_int_col = [&col_pos, this]() {
+      for (auto pos : col_pos) {
+        if (columns_->at(pos)->type_ == Column::INT)
+          return true;
+      }
+      return false;
+    };
+
+    if (index_has_int_col() &&
+        rand_int(1000) < options->at(Option::UNIQUE_INDEX_PROB_K)->getInt()) {
+      id->unique = true;
+    }
 
     for (auto pos : col_pos) {
       auto col = columns_->at(pos);
@@ -2443,6 +2460,10 @@ void Table::AddIndex(Thd1 *thd) {
     id->AddInternalColumn(new Ind_col(col, column_desc)); // desc is set as true
   }
 
+  if (rand_int(1000) <= options->at(Option::UNIQUE_INDEX_PROB_K)->getInt()) {
+    id->unique = true;
+  }
+
   std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition() + ",";
   sql += pick_algorithm_lock();
   table_mutex.unlock();
@@ -2857,6 +2878,59 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
   if (has_pk()) {
     thd->unique_keys = generateUniqueRandomNumbers(number_of_initial_records);
   }
+  auto column_has_unique_key = [this](Column *col) {
+    for (auto &index : *indexes_) {
+      if (index->unique) {
+        for (auto &ind_col : *index->columns_) {
+          auto column = ind_col->column;
+          if (column->type_ == Column::INT && column->name_ == col->name_)
+            return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  std::map<std::string, std::vector<int>> unique_keys;
+
+  auto generate_random_fk_keys_with_unique_column = [thd, this]() {
+    /* generate unique keys for FK column which picks unique value from parent
+     * table */
+    std::unordered_set<int> unique_keys_set(number_of_initial_records);
+
+    if (thd->unique_keys.size() ==
+        static_cast<size_t>(number_of_initial_records))
+      return thd->unique_keys;
+
+    /* populate unique_keys_set with unique keys */
+    while (unique_keys_set.size() <
+           static_cast<size_t>(number_of_initial_records)) {
+      unique_keys_set.insert(
+          thd->unique_keys.at(rand_int(number_of_initial_records)));
+    }
+    std::vector<int> unique_keys(unique_keys_set.begin(),
+                                 unique_keys_set.end());
+    return unique_keys;
+  };
+
+  for (const auto &column : *columns_) {
+    if (column->primary_key)
+      continue;
+    if (column_has_unique_key(column)) {
+      if (column->name_ == "fk_col") {
+        number_of_initial_records =
+            thd->unique_keys.size() <
+                    static_cast<size_t>(number_of_initial_records)
+                ? thd->unique_keys.size()
+                : number_of_initial_records;
+        unique_keys[column->name_] =
+            generate_random_fk_keys_with_unique_column();
+      } else {
+        unique_keys[column->name_] =
+            generateUniqueRandomNumbers(number_of_initial_records);
+      }
+    }
+  }
 
   /* ignore error in the case parition list  */
   if (type == PARTITION &&
@@ -2886,8 +2960,11 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
   while (records < number_of_initial_records) {
     std::string value = "(";
     for (const auto &column : *columns_) {
-      /* For FK we get the unique value from the parent table unique vector */
-      if (column->name_.find("fk_col") != std::string::npos) {
+      /* if column is part of unique index, we use the unique key */
+      if (unique_keys.find(column->name_) != unique_keys.end()) {
+        value += std::to_string(unique_keys.at(column->name_).at(records));
+      } else if (column->name_.find("fk_col") != std::string::npos) {
+        /* For FK we get the unique value from the parent table unique vector */
         value +=
             std::to_string(fk_unique_keys[rand_int(fk_unique_keys.size() - 1)]);
       } else if (column->type_ == Column::COLUMN_TYPES::GENERATED) {
@@ -3420,7 +3497,8 @@ static std::string load_metadata_from_file() {
     }
 
     for (auto &ind : tab["indexes"].GetArray()) {
-      Index *index = new Index(ind["name"].GetString());
+      Index *index =
+          new Index(ind["name"].GetString(), ind["unique"].GetBool());
 
       for (auto &ind_col : ind["index_columns"].GetArray()) {
         std::string index_base_column = ind_col["name"].GetString();

@@ -220,6 +220,13 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* unique index probability out of thousand */
+  opt =
+      newOption(Option::INT, Option::UNIQUE_INDEX_PROB_K, "unique-key-prob-k");
+  opt->help = "probability of creating unique index on table out of 1000. "
+              "Currently only supported if a table have int column";
+  opt->setInt(1);
+
   /* Only Partition tables */
   opt =
       newOption(Option::BOOL, Option::ONLY_PARTITION, "only-partition-tables");

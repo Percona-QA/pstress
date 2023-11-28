@@ -55,6 +55,7 @@ struct Option {
     NO_VIRTUAL_COLUMNS,
     TABLES,
     INDEXES,
+    UNIQUE_INDEX_PROB_K,
     ALGORITHM,
     LOCK,
     COLUMNS,

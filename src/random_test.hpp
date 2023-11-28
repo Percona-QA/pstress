@@ -17,6 +17,7 @@
 #include <random>
 #include <sstream>
 #include <string.h>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <writer.h>
@@ -135,7 +136,7 @@ struct Ind_col {
 };
 
 struct Index {
-  Index(std::string n);
+  Index(std::string n, bool u = false);
   void AddInternalColumn(Ind_col *column);
   template <typename Writer> void Serialize(Writer &writer) const;
   ~Index();
@@ -144,6 +145,7 @@ struct Index {
 
   std::string name_;
   std::vector<Ind_col *> *columns_;
+  bool unique;
 };
 
 struct Thd1 {
