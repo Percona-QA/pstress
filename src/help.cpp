@@ -464,43 +464,43 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
-  /* Select all row */
-  opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-rows");
+  opt = newOption(Option::INT, Option::SELECT_ROW_USING_PKEY, "select-precise");
+  opt->help = "Select table using single row";
+  opt->setInt(800);
+  opt->setSQL();
+
+  opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-bulk");
   opt->help = "select all table data and in case of partition randomly pick "
               "some partition";
   opt->setInt(8);
   opt->setSQL();
 
-  opt = newOption(Option::INT, Option::SELECT_ROW_USING_PKEY,
-                  "select-single-row");
-  opt->help = "Select table using single row";
-  opt->setInt(800);
-  opt->setSQL();
-
-  /* Insert random row */
-  opt = newOption(Option::INT, Option::INSERT_RANDOM_ROW, "insert-row");
+  opt = newOption(Option::INT, Option::INSERT_RANDOM_ROW, "insert");
   opt->help = "insert random row";
   opt->setInt(600);
   opt->setSQL();
 
   /* Update row using pkey */
-  opt =
-      newOption(Option::INT, Option::UPDATE_ROW_USING_PKEY, "update-with-cond");
+  opt = newOption(Option::INT, Option::UPDATE_ROW_USING_PKEY, "update-precise");
   opt->help = "Update row using where clause";
   opt->setInt(200);
   opt->setSQL();
 
-  /* Delete all rows */
-  opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-all-rows");
+  opt = newOption(Option::INT, Option::UPDATE_ALL_ROWS, "update-bulk");
   opt->help = "delete all rows of a table";
-  opt->setInt(1);
+  opt->setInt(2);
   opt->setSQL();
 
   /* Delete row using pkey */
-  opt =
-      newOption(Option::INT, Option::DELETE_ROW_USING_PKEY, "delete-with-cond");
+  opt = newOption(Option::INT, Option::DELETE_ROW_USING_PKEY, "delete-precise");
   opt->help = "delete row with where condition";
-  opt->setInt(200);
+  opt->setInt(100);
+  opt->setSQL();
+
+  /* Delete all rows */
+  opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-bulk");
+  opt->help = "delete all rows of a table";
+  opt->setInt(1);
   opt->setSQL();
 
   /* Drop column */
