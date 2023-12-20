@@ -327,6 +327,7 @@ int sum_of_all_options(Thd1 *thd) {
   /* If update is disable, set all update probability to zero */
   if (options->at(Option::NO_UPDATE)->getBool()) {
     options->at(Option::UPDATE_ROW_USING_PKEY)->setInt(0);
+    options->at(Option::UPDATE_ALL_ROWS)->setInt(0);
   }
   /* if insert is disable, set all insert probability to zero */
   if (options->at(Option::NO_INSERT)->getBool()) {
@@ -576,6 +577,8 @@ std::string rand_double(double upper, double lower) {
 /* return random string in range of upper and lower */
 std::string rand_string(int upper, int lower) {
   std::string rs = ""; /*random_string*/
+  assert(upper >= 2);
+  assert(upper >= lower);
   auto size = rand_int(upper, lower);
 
   while (size > 0) {
@@ -645,7 +648,6 @@ const std::string Column::col_type_to_string(COLUMN_TYPES type) {
 
 static std::string rand_value_universal(Column::COLUMN_TYPES type_,
                                         int length) {
-  int rand_length;
   switch (type_) {
   case (Column::COLUMN_TYPES::INTEGER):
     return std::to_string(
@@ -667,16 +669,11 @@ static std::string rand_value_universal(Column::COLUMN_TYPES type_,
   }
   case Column::COLUMN_TYPES::CHAR:
   case Column::COLUMN_TYPES::VARCHAR:
+  case Column::COLUMN_TYPES::BLOB:
     return "\'" + rand_string(length) + "\'";
     break;
   case Column::COLUMN_TYPES::BOOL:
     return (rand_int(1) == 1 ? "true" : "false");
-    break;
-  case Column::COLUMN_TYPES::BLOB:
-    rand_length = rand_int(length);
-    if (rand_int(10) != 10)
-      rand_length /= 10;
-    return "\'" + rand_string(rand_length) + "\'";
     break;
   case Column::COLUMN_TYPES::GENERATED:
   case Column::COLUMN_TYPES::COLUMN_MAX:
@@ -689,26 +686,17 @@ static std::string rand_value_universal(Column::COLUMN_TYPES type_,
 /* return random value of  a column*/
 std::string Column::rand_value() { return rand_value_universal(type_, length); }
 
-/* return random value of sub string */
+/* return random value of generated  */
 std::string Generated_Column::rand_value() {
   return rand_value_universal(g_type, length);
 }
 
-/* prepare single quoted string for LIKE clause */
-std::string &Table::prepare_like_string(std::string &&str) {
-  /* Check if the incoming string is empty */
-  if (str.at(0) == '\'' && str.at(1) == '\'')
-    str = str.insert(1, 1, '%');
-  /* Processing the single quoted values that are returned by 'rand_string' */
-  else if (str.at(0) == '\'') {
-    str = str.substr(0, 2);
-    str = str.insert(2, 1, '\'');
-    str = str.insert(1, 1, '%');
-    str = str.insert(3, 1, '%');
-  } else /*Return non-string number with single quotes */ {
-    str = "\'%" + str + "%\'";
-  }
-  return str;
+/* return random value of blob */
+std::string Blob_Column::rand_value() {
+  int max_size = length;
+  if (max_size > 1000 && rand_int(10000) != 1)
+    max_size = 1000;
+  return rand_value_universal(type_, max_size);
 }
 
 /* return table definition */
@@ -731,11 +719,11 @@ Column::Column(std::string name, Table *table, COLUMN_TYPES type)
   switch (type) {
   case CHAR:
     name_ = "c" + name;
-    length = rand_int(g_max_columns_length, 10);
+    length = rand_int(g_max_columns_length, 5);
     break;
   case VARCHAR:
     name_ = "v" + name;
-    length = rand_int(g_max_columns_length, 10);
+    length = rand_int(g_max_columns_length, 5);
     break;
   case INT:
   case INTEGER:
@@ -765,28 +753,40 @@ Blob_Column::Blob_Column(std::string name, Table *table)
   if (options->at(Option::NO_COLUMN_COMPRESSION)->getBool() == false &&
       rand_int(1) == 1)
     compressed = true;
-  switch (rand_int(5, 1)) {
+
+  switch (rand_int(6, 1)) {
   case 1:
     sub_type = "MEDIUMTEXT";
     name_ = "mt" + name;
+    length = rand_int(10000, 100);
     break;
   case 2:
     sub_type = "TEXT";
     name_ = "t" + name;
+    length = rand_int(1000, 100);
     break;
   case 3:
     sub_type = "LONGTEXT";
     name_ = "lt" + name;
+    length = rand_int(100000, 100);
     break;
   case 4:
     sub_type = "BLOB";
     name_ = "b" + name;
+    length = rand_int(1000, 100);
     break;
   case 5:
     sub_type = "LONGBLOB";
     name_ = "lb" + name;
+    length = rand_int(100000, 100);
+    break;
+  case 6:
+    sub_type = "TINYBLOB";
+    name_ = "tb" + name;
+    length = rand_int(255, 100);
     break;
   }
+  assert(length >= 2);
 }
 
 Blob_Column::Blob_Column(std::string name, Table *table, std::string sub_type_)
@@ -810,14 +810,14 @@ Generated_Column::Generated_Column(std::string name, Table *table)
   name_ = "g" + name;
   auto blob_supported = !options->at(Option::NO_BLOB)->getBool();
   g_type = COLUMN_MAX;
-  /* Generated columns are 2:2:2:2 (INT:VARCHAR:CHAR:BLOB) */
+  /* Generated columns are 4:2:2:1 (INT:VARCHAR:CHAR:BLOB) */
   while (g_type == COLUMN_MAX) {
-    auto x = rand_int(4, 1);
-    if (x <= 1)
+    auto x = rand_int(9, 1);
+    if (x <= 4)
       g_type = INT;
-    else if (x <= 2)
+    else if (x <= 6)
       g_type = VARCHAR;
-    else if (x <= 3)
+    else if (x <= 8)
       g_type = CHAR;
     else if (blob_supported && x <= 4) {
       g_type = BLOB;
@@ -855,38 +855,45 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     }
     str.pop_back();
   } else if (g_type == VARCHAR || g_type == CHAR || g_type == BLOB) {
-    auto size = rand_int(g_max_columns_length, col_pos.size());
+    size_t generated_column_length;
+    if (g_type == BLOB) {
+      generated_column_length = size_t(rand_int(5000, 5));
+    } else {
+      generated_column_length = size_t(rand_int(g_max_columns_length, 10));
+    }
     int actual_size = 0;
     std::string gen_sql;
+
+    /* we try to randomly distribute */
+    int max_size = generated_column_length / col_pos.size() * 2;
+    if (max_size < 2) {
+      max_size = 2;
+    }
     for (auto pos : col_pos) {
       auto col = table->columns_->at(pos);
-      auto current_size = rand_int((int)size / col_pos.size() * 2, 1);
       int column_size = 0;
       /* base column */
       switch (col->type_) {
       case INT:
       case INTEGER:
-        column_size = 10; // interger max string size is 10
-        break;
       case FLOAT:
       case DOUBLE:
-        column_size = 10;
+        column_size = 10; // max size of int
         break;
       case BOOL:
-        column_size = 1;
+        column_size = 2;
         break;
       case VARCHAR:
       case CHAR:
-        column_size = col->length;
-        break;
       case BLOB:
-        column_size = 5000; // todo set it different subtype
+        column_size = col->length;
         break;
       case COLUMN_MAX:
       case GENERATED:
         throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
                                  " at line " + std::to_string(__LINE__));
       }
+      auto current_size = rand_int(max_size, 2);
       if (column_size > current_size) {
         actual_size += current_size;
         gen_sql += "SUBSTRING(" + col->name_ + ",1," +
@@ -904,6 +911,8 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     str += gen_sql;
     str += ")";
     length = actual_size;
+    assert(length >= 2);
+
   } else {
     throw std::runtime_error("unhandled " + col_type_to_string(g_type) +
                              " at line " + std::to_string(__LINE__));
@@ -2203,7 +2212,7 @@ void Table::ModifyColumn(Thd1 *thd) {
     return;
 
   if (col->length != 0)
-    col->length = rand_int(g_max_columns_length, 0);
+    col->length = rand_int(g_max_columns_length, 5);
 
   if (col->auto_increment == true and rand_int(5) == 0)
     col->auto_increment = false;
@@ -2486,73 +2495,40 @@ void Table::AddIndex(Thd1 *thd) {
   }
 }
 
-void Table::DeleteAllRows(Thd1 *thd) {
-  std::string sql = "DELETE FROM " + name_;
-  if (type == PARTITION && rand_int(100) < 98) {
-    sql += " PARTITION (";
-    auto part = static_cast<Partition *>(this);
-    assert(part->number_of_part > 0);
-    table_mutex.lock();
-    if (part->part_type == Partition::RANGE) {
-      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
-      /* below randomness is added intentionally */
-      for (int i = 0; i < rand_int(part->positions.size()); i++) {
-        if (rand_int(5) == 1)
-          sql += "," +
-                 part->positions.at(rand_int(part->positions.size() - 1)).name;
-      }
-    } else if (part->part_type == Partition::KEY ||
-               part->part_type == Partition::HASH) {
-      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
-      for (int i = 0; i < rand_int(part->number_of_part); i++) {
-        if (rand_int(2) == 1)
-          sql += ", p" + std::to_string(rand_int(part->number_of_part - 1));
-      }
-    } else if (part->part_type == Partition::LIST) {
-      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
-      /* below randomness is added intentionally */
-      for (int i = 0; i < rand_int(part->lists.size()); i++) {
-        if (rand_int(5) == 1)
-          sql += "," + part->lists.at(rand_int(part->lists.size() - 1)).name;
-      }
+std::string Table::SelectColumn() {
+  std::string select;
+  if (rand_int(100) < 50)
+    select = "*";
+  else {
+    select = columns_->at(rand_int(columns_->size() - 1))->name_;
+    if (rand_int(100) < 20) {
+      for (const auto &col : *columns_)
+        if (rand_int(100) < 50)
+          select += ", " + col->name_;
     }
-    table_mutex.unlock();
-    sql += ")";
   }
+  return select;
+}
+
+void Table::UpdateAllRows(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql = "UPDATE " + name_ + " SET " + SetClause() + GetWhereBulk();
+  table_mutex.unlock();
+  execute_sql(sql, thd);
+}
+
+void Table::DeleteAllRows(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql = "DELETE FROM " + name_ + GetWhereBulk();
+  table_mutex.unlock();
   execute_sql(sql, thd);
 }
 
 void Table::SelectAllRow(Thd1 *thd) {
-  std::string sql = "SELECT * FROM " + name_;
-  if (type == PARTITION && rand_int(100) < 98) {
-    sql += " PARTITION (";
-    auto part = static_cast<Partition *>(this);
-    assert(part->number_of_part > 0);
-    table_mutex.lock();
-    if (part->part_type == Partition::RANGE) {
-      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
-      for (int i = 0; i < rand_int(part->positions.size()); i++) {
-        if (rand_int(2) == 1)
-          sql += "," +
-                 part->positions.at(rand_int(part->positions.size() - 1)).name;
-      }
-    } else if (part->part_type == Partition::KEY ||
-               part->part_type == Partition::HASH) {
-      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
-      for (int i = 0; i < rand_int(part->number_of_part); i++) {
-        if (rand_int(2) == 1)
-          sql += ", p" + std::to_string(rand_int(part->number_of_part - 1));
-      }
-    } else if (part->part_type == Partition::RANGE) {
-      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
-      for (int i = 0; i < rand_int(part->lists.size()); i++) {
-        if (rand_int(2) == 1)
-          sql += "," + part->lists.at(rand_int(part->lists.size() - 1)).name;
-      }
-    }
-    sql += ")";
-    table_mutex.unlock();
-  }
+  table_mutex.lock();
+  std::string sql =
+      "SELECT " + SelectColumn() + " FROM " + name_ + GetWhereBulk();
+  table_mutex.unlock();
   execute_sql(sql, thd);
 }
 
@@ -2611,98 +2587,42 @@ void Table::ColumnRename(Thd1 *thd) {
   }
 }
 
-void Table::DeleteRandomRow(Thd1 *thd) {
-  table_mutex.lock();
-  auto where = -1;
-  bool only_bool = true;
-  int pk_pos = -1;
+Column *Table::GetRandomColumn() {
 
-  for (size_t i = 0; i < columns_->size(); i++) {
-    auto col = columns_->at(i);
-    if (col->type_ != Column::BOOL)
-      only_bool = false;
-    if (col->primary_key)
-      pk_pos = i;
-  }
+  Column *col = nullptr;
 
-  /* 50% time we use primary key column */
-  if (pk_pos != -1 && rand_int(100) > 50)
-    where = pk_pos;
-  else {
-    /* iterate over and over to find a valid column */
-    while (where < 0) {
-      auto col_pos = rand_int(columns_->size() - 1);
-      switch (columns_->at(col_pos)->type_) {
-      case Column::BOOL:
-        if (only_bool || rand_int(1000) == 0)
-          where = col_pos;
-        break;
-      case Column::INT:
-      case Column::FLOAT:
-      case Column::DOUBLE:
-      case Column::VARCHAR:
-      case Column::CHAR:
-      case Column::BLOB:
-      case Column::GENERATED:
-        where = col_pos;
-        break;
-      case Column::INTEGER:
-        if (rand_int(1000) < 10)
-          where = col_pos;
-        break;
-      case Column::COLUMN_MAX:
+  auto only_bool = [](std::vector<Column *> *columns) {
+    for (auto c : *columns) {
+      if (c->type_ != Column::BOOL)
+        return false;
+    }
+    return true;
+  };
+
+  if (rand_int(100) > 50) {
+    for (auto c : *columns_) {
+      if (c->primary_key) {
+        col = c;
         break;
       }
     }
   }
-  std::string sql = "DELETE FROM " + name_;
 
-  if (type == PARTITION && rand_int(10) < 2) {
-    sql += " PARTITION (";
-    auto part = static_cast<Partition *>(this);
-    assert(part->number_of_part > 0);
-    if (part->part_type == Partition::RANGE) {
-      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
-    } else if (part->part_type == Partition::KEY ||
-               part->part_type == Partition::HASH) {
-      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
-    } else if (part->part_type == Partition::LIST) {
-      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
+  if (col == nullptr && indexes_->size() > 0) {
+    auto indx = indexes_->at(rand_int(indexes_->size() - 1));
+    if (rand_int(100) > 50 && indx->columns_->size() > 0) {
+      auto first_col = indx->columns_->at(0)->column;
+      if (first_col->type_ != Column::BOOL)
+        col = first_col;
     }
-
-    sql += ")";
   }
-  sql += " WHERE " + columns_->at(where)->name_;
 
-  auto prob = rand_int(100);
-  if (prob <= 90)
-    sql += " = " + columns_->at(where)->rand_value();
-  else if (prob <= 92)
-    sql += " >= " + columns_->at(where)->rand_value() + " AND " +
-           columns_->at(where)->name_ +
-           " <= " + columns_->at(where)->rand_value();
-  else if (prob <= 96)
-    sql += " IN (" + columns_->at(where)->rand_value() + "," +
-           columns_->at(where)->rand_value() + ")";
-  else if (prob <= 99)
-    sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
-           columns_->at(where)->rand_value();
-  else
-    sql += " LIKE " + prepare_like_string(columns_->at(where)->rand_value());
-
-  table_mutex.unlock();
-  execute_sql(sql, thd);
-}
-
-void Table::SelectRandomRow(Thd1 *thd) {
-  table_mutex.lock();
-  auto where = -1;
-  while (where < 0) {
+  while (col == nullptr) {
     auto col_pos = rand_int(columns_->size() - 1);
     switch (columns_->at(col_pos)->type_) {
     case Column::BOOL:
-      if (rand_int(1000) < 10)
-        where = col_pos;
+      if (rand_int(10000) == 1 || only_bool(columns_))
+        col = columns_->at(col_pos);
       break;
     case Column::INT:
     case Column::FLOAT:
@@ -2711,125 +2631,18 @@ void Table::SelectRandomRow(Thd1 *thd) {
     case Column::CHAR:
     case Column::BLOB:
     case Column::GENERATED:
-      where = col_pos;
+      col = columns_->at(col_pos);
       break;
     case Column::INTEGER:
       if (rand_int(1000) < 10)
-        where = col_pos;
+        col = columns_->at(col_pos);
       break;
     case Column::COLUMN_MAX:
       break;
     }
   }
-  std::string sql = "SELECT * FROM " + name_;
 
-  /* if it partition table randomly pick some partition */
-  if (type == PARTITION && rand_int(10) < 2) {
-    sql += " PARTITION (";
-    auto part = static_cast<Partition *>(this);
-    assert(part->number_of_part > 0);
-    if (part->part_type == Partition::RANGE) {
-      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
-    } else if (part->part_type == Partition::KEY ||
-               part->part_type == Partition::HASH) {
-      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
-    } else if (part->part_type == Partition::LIST) {
-      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
-    }
-
-    sql += ")";
-  }
-
-  sql += " WHERE " + columns_->at(where)->name_;
-  auto prob = rand_int(100);
-  if (rand_int(1000) < 2)
-    sql += " NOT BETWEEN " + columns_->at(where)->rand_value() + " AND " +
-           columns_->at(where)->rand_value();
-  else if (prob <= 90)
-    sql += " = " + columns_->at(where)->rand_value();
-  else if (prob <= 92)
-    sql += " >= " + columns_->at(where)->rand_value();
-  else if (prob <= 94)
-    sql += " >= " + columns_->at(where)->rand_value() + " AND " +
-           columns_->at(where)->name_ +
-           " <= " + columns_->at(where)->rand_value();
-  else if (prob <= 96)
-    sql += " IN (" + columns_->at(where)->rand_value() + ", " +
-           columns_->at(where)->rand_value() + ")";
-  else if (prob <= 98)
-    sql += " LIKE " + prepare_like_string(columns_->at(where)->rand_value());
-  else
-    sql += " BETWEEN " + columns_->at(where)->rand_value() + " AND " +
-           columns_->at(where)->rand_value();
-
-  table_mutex.unlock();
-  execute_sql(sql, thd);
-}
-
-/* update random row */
-void Table::UpdateRandomROW(Thd1 *thd) {
-  table_mutex.lock();
-  int set;
-  while (true) {
-    set = rand_int(columns_->size() - 1);
-    if (columns_->at(set)->type_ != Column::GENERATED)
-      break;
-  }
-
-  auto where = -1;
-  while (where < 0) {
-    auto col_pos = rand_int(columns_->size() - 1);
-    switch (columns_->at(col_pos)->type_) {
-    case Column::BOOL:
-      if (rand_int(1000) < 10)
-        where = col_pos;
-      break;
-    case Column::INT:
-    case Column::FLOAT:
-    case Column::DOUBLE:
-    case Column::VARCHAR:
-    case Column::CHAR:
-    case Column::BLOB:
-    case Column::GENERATED:
-      where = col_pos;
-      break;
-    case Column::INTEGER:
-      if (rand_int(1000) < 10)
-        where = col_pos;
-      break;
-    case Column::COLUMN_MAX:
-      break;
-    }
-  }
-  std::string sql = "UPDATE " + name_;
-
-  if (type == PARTITION && rand_int(10) < 2) {
-    sql += " PARTITION (";
-    auto part = static_cast<Partition *>(this);
-    assert(part->number_of_part > 0);
-    if (part->part_type == Partition::RANGE) {
-      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
-    } else if (part->part_type == Partition::KEY ||
-               part->part_type == Partition::HASH) {
-      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
-    }
-    if (part->part_type == Partition::LIST) {
-      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
-    }
-
-    sql += ")";
-  }
-
-  sql += " SET " + columns_->at(set)->name_ + " = " +
-         columns_->at(set)->rand_value() + " WHERE ";
-
-  /* if tables has pkey try to use that in where clause for 50% cases */
-  for (size_t i = 0; i < columns_->size(); i++) {
-    if (columns_->at(i)->primary_key && rand_int(100) <= 50) {
-      where = i;
-      break;
-    }
-  }
+  /*
   auto prob = rand_int(100);
   if (prob <= 90)
     sql +=
@@ -2850,9 +2663,149 @@ void Table::UpdateRandomROW(Thd1 *thd) {
   else
     sql += columns_->at(where)->name_ + " LIKE " +
            prepare_like_string(columns_->at(where)->rand_value());
+           */
+
+  return col;
+}
+
+std::string Table::GetRandomPartition() {
+  std::string sql = "";
+  if (type == PARTITION && rand_int(10) < 2) {
+    sql += " PARTITION (";
+    auto part = static_cast<Partition *>(this);
+    assert(part->number_of_part > 0);
+    if (part->part_type == Partition::RANGE) {
+      sql += part->positions.at(rand_int(part->positions.size() - 1)).name;
+      for (int i = 0; i < rand_int(part->positions.size()); i++) {
+        if (rand_int(5) == 1)
+          sql += "," +
+                 part->positions.at(rand_int(part->positions.size() - 1)).name;
+      }
+    } else if (part->part_type == Partition::KEY ||
+               part->part_type == Partition::HASH) {
+      sql += "p" + std::to_string(rand_int(part->number_of_part - 1));
+      for (int i = 0; i < rand_int(part->number_of_part); i++) {
+        if (rand_int(2) == 1)
+          sql += ", p" + std::to_string(rand_int(part->number_of_part - 1));
+      }
+    } else if (part->part_type == Partition::LIST) {
+      sql += part->lists.at(rand_int(part->lists.size() - 1)).name;
+      for (int i = 0; i < rand_int(part->lists.size()); i++) {
+        if (rand_int(5) == 1)
+          sql += "," + part->lists.at(rand_int(part->lists.size() - 1)).name;
+      }
+    }
+
+    sql += ")";
+  }
+  return sql;
+}
+
+std::string Table::GetWherePrecise() {
+  auto col = GetRandomColumn();
+  std::string where = GetRandomPartition() + " WHERE ";
+
+  int prob = rand_int(100);
+  if (col->is_col_string() && prob < 3)
+    where += col->name_ + " LIKE " + "\'" + rand_string(10, 3) + "%\'";
+  else if (col->is_col_number() && prob < 3) {
+    auto upper_value = col->rand_value();
+    auto lower_value =
+        std::to_string(std::stoi(upper_value) - rand_int(100, 3));
+    where += col->name_ + " BETWEEN " + lower_value + " AND " + upper_value;
+  } else if (prob < 6) {
+    where += col->name_ + " IN (" + col->rand_value() + ", " +
+             col->rand_value() + " )";
+  } else if (prob < 8) {
+    where += col->name_ + " = " + col->rand_value() + " OR " + col->name_ +
+             " = " + col->rand_value();
+  } else {
+    where += col->name_ + " = " + col->rand_value();
+  }
+  return where;
+}
+
+std::string Table::GetWhereBulk() {
+  auto col = GetRandomColumn();
+  std::string sql;
+  if (rand_int(100) < 70)
+    sql += GetRandomPartition();
+
+  if ((col->is_col_number() || col->type_ == Column::DOUBLE ||
+       col->type_ == Column::DOUBLE) &&
+      rand_int(100) < 90) {
+    int prob = rand_int(100);
+    if (prob < 90)
+      sql += " WHERE " + col->name_ + " >= " + col->rand_value() + " AND " +
+             col->name_ + " <= " + col->rand_value();
+    else if (prob < 95)
+      sql += " WHERE " + col->name_ + " <= " + col->rand_value();
+    else
+      sql += " WHERE " + col->name_ + " >= " + col->rand_value();
+
+    return sql;
+  }
+
+  if (col->is_col_string() && rand_int(100) < 90) {
+
+    sql += " WHERE " + col->name_ + " NOT BETWEEN " + col->rand_value() +
+           " and " + col->rand_value();
+  }
+
+  return sql;
+}
+
+void Table::SelectRandomRow(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql =
+      "SELECT " + SelectColumn() + " FROM " + name_ + GetWherePrecise();
+  table_mutex.unlock();
+  execute_sql(sql, thd);
+}
+
+void Table::UpdateRandomROW(Thd1 *thd) {
+  table_mutex.lock();
+
+  std::string sql;
+  if (rand_int(100) > 30) {
+    sql = "UPDATE " + name_ + " SET " + SetClause() + GetWherePrecise();
+  } else {
+    sql = "REPLACE INTO " + name_ + ColumnValues();
+  }
 
   table_mutex.unlock();
   execute_sql(sql, thd);
+}
+
+void Table::DeleteRandomRow(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql = "DELETE FROM " + name_ + GetWherePrecise();
+  table_mutex.unlock();
+  execute_sql(sql, thd);
+}
+
+std::string Table::SetClause() {
+  std::string set_clause;
+  Column *col = nullptr;
+
+  while (col == nullptr) {
+    int set = rand_int(columns_->size() - 1);
+    if (columns_->at(set)->type_ != Column::GENERATED)
+      col = columns_->at(set);
+  }
+
+  set_clause = col->name_ + " = " + col->rand_value();
+
+  if (rand_int(100) < 10) {
+    for (const auto &column : *columns_) {
+      if (column->type_ != Column::GENERATED && column->name_ != col->name_ &&
+          rand_int(100) > 50) {
+        set_clause += ", " + column->name_ + " = " + column->rand_value();
+      }
+    }
+  }
+
+  return set_clause + " ";
 }
 
 bool Table::InsertBulkRecord(Thd1 *thd) {
@@ -3004,14 +2957,9 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
   return true;
 }
 
-void Table::InsertRandomRow(Thd1 *thd) {
-  table_mutex.lock();
-  std::string vals = "";
-  std::string type = "INSERT";
-
-  type = rand_int(3) == 0 ? "INSERT" : "REPLACE";
-
-  std::string sql = type + " INTO " + name_ + "  ( ";
+std::string Table::ColumnValues() {
+  std::string vals;
+  std::string sql = "  ( ";
   for (auto &column : *columns_) {
     sql += column->name_ + " ,";
     std::string val;
@@ -3028,8 +2976,13 @@ void Table::InsertRandomRow(Thd1 *thd) {
     vals.pop_back();
     sql.pop_back();
   }
-  sql += ") VALUES(" + vals;
-  sql += " )";
+  sql += ") VALUES(" + vals + ")";
+  return sql;
+}
+
+void Table::InsertRandomRow(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql = "INSERT INTO " + name_ + ColumnValues();
   table_mutex.unlock();
   execute_sql(sql, thd);
 }
@@ -3873,6 +3826,9 @@ bool Thd1::run_some_query() {
       break;
     case Option::UPDATE_ROW_USING_PKEY:
       table->UpdateRandomROW(this);
+      break;
+    case Option::UPDATE_ALL_ROWS:
+      table->UpdateAllRows(this);
       break;
     case Option::OPTIMIZE:
       table->Optimize(this);

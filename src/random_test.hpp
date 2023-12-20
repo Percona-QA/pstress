@@ -40,7 +40,7 @@
 int rand_int(int upper, int lower = 0);
 std::string rand_float(float upper, float lower = 0);
 std::string rand_double(double upper, double lower = 0);
-std::string rand_string(int upper, int lower = 0);
+std::string rand_string(int upper, int lower = 2);
 
 struct Table;
 class Column {
@@ -97,6 +97,12 @@ public:
   bool compressed = false; // percona type compressed
   std::vector<int> unique_values;
   Table *table_;
+  virtual bool is_col_string() {
+    return type_ == COLUMN_TYPES::CHAR || type_ == COLUMN_TYPES::VARCHAR;
+  }
+  virtual bool is_col_number() {
+    return type_ == COLUMN_TYPES::INT || type_ == COLUMN_TYPES::INTEGER;
+  }
 };
 
 struct Blob_Column : public Column {
@@ -104,8 +110,10 @@ struct Blob_Column : public Column {
   Blob_Column(std::string name, Table *table, std::string sub_type_);
   std::string sub_type; // sub_type can be tiny, medium, large blob
   std::string clause() { return sub_type; };
-  std::string rand_value() { return "\'" + rand_string(1000) + "\'"; }
   template <typename Writer> void Serialize(Writer &writer) const;
+  bool is_col_string() { return true; }
+  bool is_col_number() { return false; }
+  std::string rand_value();
 };
 
 struct Generated_Column : public Column {
@@ -125,6 +133,13 @@ struct Generated_Column : public Column {
   ~Generated_Column(){};
   COLUMN_TYPES g_type; // sub type can be blob,int, varchar
   COLUMN_TYPES generate_type() { return g_type; };
+  bool is_col_string() {
+    return g_type == COLUMN_TYPES::CHAR || g_type == COLUMN_TYPES::VARCHAR ||
+           g_type == COLUMN_TYPES::BLOB;
+  }
+  bool is_col_number() {
+    return g_type == COLUMN_TYPES::INT || g_type == COLUMN_TYPES::INTEGER;
+  }
 };
 
 struct Ind_col {
@@ -190,7 +205,6 @@ struct Table {
   bool load_secondary_indexes(Thd1 *thd);
   /* execute table definition, Bulk data and then secondary index */
   bool load(Thd1 *thd);
-  static std::string &prepare_like_string(std::string &&str);
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
@@ -208,6 +222,7 @@ struct Table {
   void SetTableCompression(Thd1 *thd);
   void ModifyColumn(Thd1 *thd);
   void InsertRandomRow(Thd1 *thd);
+  void InsertClause();
   bool InsertBulkRecord(Thd1 *thd);
   void DropColumn(Thd1 *thd);
   void AddColumn(Thd1 *thd);
@@ -217,8 +232,16 @@ struct Table {
   void DeleteRandomRow(Thd1 *thd);
   void UpdateRandomROW(Thd1 *thd);
   void SelectRandomRow(Thd1 *thd);
+  std::string GetRandomPartition();
+  Column *GetRandomColumn();
+  std::string GetWherePrecise();
+  std::string GetWhereBulk();
+  std::string ColumnValues();
+  std::string SelectColumn();
+  std::string SetClause();
   void SelectAllRow(Thd1 *thd);
   void DeleteAllRows(Thd1 *thd);
+  void UpdateAllRows(Thd1 *thd);
   void ColumnRename(Thd1 *thd);
   void IndexRename(Thd1 *thd);
   template <typename Writer> void Serialize(Writer &writer) const;
