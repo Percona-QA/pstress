@@ -151,6 +151,7 @@ struct Option {
     PARTITION_PROB,
     TEMPORARY_PROB,
     IGNORE_ERRORS,
+    IGNORE_DML_CLAUSE,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
