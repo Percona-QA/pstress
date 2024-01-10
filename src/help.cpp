@@ -138,6 +138,11 @@ void add_options() {
   opt->help = "Ignore MySQL errors. example --mysql-ignore-error=2013,1047";
   opt->setString("NONE");
 
+  opt = newOption(Option::INT, Option::IGNORE_DML_CLAUSE,
+                  "ignore-dml-clause-prob");
+  opt->help = "Adding Ignore clause to update delete and insert ";
+  opt->setInt(10);
+
   /* todo set default to all */
   opt = newOption(Option::STRING, Option::ENCRYPTION_TYPE, "encryption-type");
   opt->help =

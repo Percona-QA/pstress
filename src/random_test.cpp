@@ -182,6 +182,14 @@ static int server_version() {
   return sv;
 }
 
+static std::string add_ignore_clause() {
+  int prob = rand_int(100, 1);
+  if (prob < options->at(Option::IGNORE_DML_CLAUSE)->getInt())
+    return " IGNORE ";
+  else
+    return "";
+}
+
 /* return probabality of all options and disable some feature based on user
  * request/ branch/ fork */
 int sum_of_all_options(Thd1 *thd) {
@@ -2510,28 +2518,6 @@ std::string Table::SelectColumn() {
   return select;
 }
 
-void Table::UpdateAllRows(Thd1 *thd) {
-  table_mutex.lock();
-  std::string sql = "UPDATE " + name_ + " SET " + SetClause() + GetWhereBulk();
-  table_mutex.unlock();
-  execute_sql(sql, thd);
-}
-
-void Table::DeleteAllRows(Thd1 *thd) {
-  table_mutex.lock();
-  std::string sql = "DELETE FROM " + name_ + GetWhereBulk();
-  table_mutex.unlock();
-  execute_sql(sql, thd);
-}
-
-void Table::SelectAllRow(Thd1 *thd) {
-  table_mutex.lock();
-  std::string sql =
-      "SELECT " + SelectColumn() + " FROM " + name_ + GetWhereBulk();
-  table_mutex.unlock();
-  execute_sql(sql, thd);
-}
-
 void Table::IndexRename(Thd1 *thd) {
   table_mutex.lock();
   if (indexes_->size() == 0)
@@ -2642,29 +2628,6 @@ Column *Table::GetRandomColumn() {
     }
   }
 
-  /*
-  auto prob = rand_int(100);
-  if (prob <= 90)
-    sql +=
-        columns_->at(where)->name_ + " = " + columns_->at(where)->rand_value();
-  else if (prob <= 92)
-    sql += columns_->at(where)->name_ +
-           " >= " + columns_->at(where)->rand_value() + " AND " +
-           columns_->at(where)->name_ +
-           " >= " + columns_->at(where)->rand_value();
-  else if (prob <= 94)
-    sql += columns_->at(where)->name_ + " IN (" +
-           columns_->at(where)->rand_value() + "," +
-           columns_->at(where)->rand_value() + ")";
-  else if (prob <= 98)
-    sql += columns_->at(where)->name_ + " BETWEEN " +
-           columns_->at(where)->rand_value() + " AND " +
-           columns_->at(where)->rand_value();
-  else
-    sql += columns_->at(where)->name_ + " LIKE " +
-           prepare_like_string(columns_->at(where)->rand_value());
-           */
-
   return col;
 }
 
@@ -2768,7 +2731,8 @@ void Table::UpdateRandomROW(Thd1 *thd) {
 
   std::string sql;
   if (rand_int(100) > 30) {
-    sql = "UPDATE " + name_ + " SET " + SetClause() + GetWherePrecise();
+    sql = "UPDATE " + add_ignore_clause() + name_ + " SET " + SetClause() +
+          GetWherePrecise();
   } else {
     sql = "REPLACE INTO " + name_ + ColumnValues();
   }
@@ -2779,7 +2743,32 @@ void Table::UpdateRandomROW(Thd1 *thd) {
 
 void Table::DeleteRandomRow(Thd1 *thd) {
   table_mutex.lock();
-  std::string sql = "DELETE FROM " + name_ + GetWherePrecise();
+  std::string sql =
+      "DELETE " + add_ignore_clause() + " FROM " + name_ + GetWherePrecise();
+  table_mutex.unlock();
+  execute_sql(sql, thd);
+}
+
+void Table::UpdateAllRows(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql = "UPDATE " + add_ignore_clause() + name_ + " SET " +
+                    SetClause() + GetWhereBulk();
+  table_mutex.unlock();
+  execute_sql(sql, thd);
+}
+
+void Table::DeleteAllRows(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql =
+      "DELETE " + add_ignore_clause() + " FROM " + name_ + GetWhereBulk();
+  table_mutex.unlock();
+  execute_sql(sql, thd);
+}
+
+void Table::SelectAllRow(Thd1 *thd) {
+  table_mutex.lock();
+  std::string sql =
+      "SELECT " + SelectColumn() + " FROM " + name_ + GetWhereBulk();
   table_mutex.unlock();
   execute_sql(sql, thd);
 }
@@ -2982,7 +2971,8 @@ std::string Table::ColumnValues() {
 
 void Table::InsertRandomRow(Thd1 *thd) {
   table_mutex.lock();
-  std::string sql = "INSERT INTO " + name_ + ColumnValues();
+  std::string sql =
+      "INSERT " + add_ignore_clause() + " INTO " + name_ + ColumnValues();
   table_mutex.unlock();
   execute_sql(sql, thd);
 }
@@ -2993,7 +2983,7 @@ void set_mysqld_variable(Thd1 *thd) {
   int rd = rand_int(total_probablity);
   for (auto &opt : *server_options) {
     if (rd <= opt->prob) {
-      std::string sql = "SET ";
+      std::string sql = " SET ";
       sql += rand_int(3) == 0 ? " SESSION " : " GLOBAL ";
       sql += opt->name + "=" + opt->values.at(rand_int(opt->values.size() - 1));
       execute_sql(sql, thd);
