@@ -1283,7 +1283,16 @@ Partition::Partition(std::string n) : Table(n) {
 }
 
 void Table::DropCreate(Thd1 *thd) {
+  int nbo_prob = options->at(Option::DROP_WITH_NBO)->getInt();
+  bool set_session_nbo = false;
+  if (rand_int(100) < nbo_prob) {
+    execute_sql("SET SESSION wsrep_osu_method=NBO ", thd);
+    set_session_nbo = true;
+  }
   execute_sql("DROP TABLE " + name_, thd);
+  if (set_session_nbo) {
+    execute_sql("SET SESSION wsrep_osu_method=DEFAULT ", thd);
+  }
   std::string def = definition();
   if (!execute_sql(def, thd) && tablespace.size() > 0) {
     std::string tbs = " TABLESPACE=" + tablespace + "_rename";

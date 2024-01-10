@@ -152,6 +152,7 @@ struct Option {
     TEMPORARY_PROB,
     IGNORE_ERRORS,
     IGNORE_DML_CLAUSE,
+    DROP_WITH_NBO,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

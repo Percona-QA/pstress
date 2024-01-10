@@ -175,6 +175,11 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* call SET SESSION wsrep_osu_method=NBO  befor drop table */
+  opt = newOption(Option::INT, Option::DROP_WITH_NBO, "drop-with-nbo-prob");
+  opt->help = "call SET SESSION wsrep_osu_method=NBO  befor drop table";
+  opt->setInt(0);
+
   /* Initial Table */
   opt = newOption(Option::INT, Option::TABLES, "tables");
   opt->help = "Number of initial tables";
