@@ -153,6 +153,7 @@ struct Option {
     IGNORE_ERRORS,
     IGNORE_DML_CLAUSE,
     DROP_WITH_NBO,
+    THREAD_PER_TABLE,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

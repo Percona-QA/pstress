@@ -163,6 +163,14 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* each thread to work on single table */
+  opt = newOption(Option::BOOL, Option::THREAD_PER_TABLE, "thread-per-table");
+  opt->help = "Each thread to work on single table . If there is 10 threads "
+              "and 30 tables then pstress will work on on 10 tables and each "
+              "thread will work on one table";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* disable blob,text columns*/
   opt = newOption(Option::BOOL, Option::NO_BLOB, "no-blob");
   opt->help = "Disable blob columns";
@@ -567,7 +575,7 @@ void add_options() {
   opt = newOption(Option::INT, Option::CHECK_TABLE, "check");
   opt->help = "check table, for partition table randomly check either "
               "partition or full table";
-  opt->setInt(5);
+  opt->setInt(1);
   opt->setSQL();
 
   /* Check Table Pre-load */

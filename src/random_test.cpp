@@ -3728,6 +3728,8 @@ bool Thd1::run_some_query() {
 
   int trx_left = 0;
   int current_save_point = 0;
+
+  int pick_table_id = thread_id % all_session_tables->size();
   while (std::chrono::system_clock::now() < end) {
 
 
@@ -3763,8 +3765,12 @@ bool Thd1::run_some_query() {
       trx_left = rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
     }
 
-    auto table =
-        all_session_tables->at(rand_int(all_session_tables->size() - 1));
+
+    if (!options->at(Option::THREAD_PER_TABLE)->getBool()) {
+      pick_table_id = rand_int(all_session_tables->size() - 1);
+    }
+    auto table = all_session_tables->at(pick_table_id);
+
     auto option = pick_some_option();
     ddl_query = options->at(option)->ddl == true ? true : false;
 
