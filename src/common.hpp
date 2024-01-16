@@ -154,6 +154,8 @@ struct Option {
     IGNORE_DML_CLAUSE,
     DROP_WITH_NBO,
     THREAD_PER_TABLE,
+    CALL_FUNCTION,
+    FUNCTION_CONTAINS_DML,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

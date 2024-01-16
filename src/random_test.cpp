@@ -2735,6 +2735,64 @@ void Table::SelectRandomRow(Thd1 *thd) {
   execute_sql(sql, thd);
 }
 
+void Table::CreateFunction(Thd1 *thd) {
+  static std::vector<std::string> function_dmls = []() {
+    std::vector<std::string> v;
+    std::string option_func = opt_string(FUNCTION_CONTAINS_DML);
+    std::transform(option_func.begin(), option_func.end(), option_func.begin(),
+                   ::tolower);
+    std::istringstream iss(option_func);
+    std::string token;
+    while (std::getline(iss, token, ',')) {
+      if (token == "update" &&
+          options->at(Option::NO_UPDATE)->getBool() == false)
+        v.push_back("UPDATE");
+      else if (token == "insert" &&
+               options->at(Option::NO_INSERT)->getBool() == false)
+        v.push_back("INSERT");
+      else if (token == "delete" &&
+               options->at(Option::NO_DELETE)->getBool() == false)
+        v.push_back("DELETE");
+      else
+        std::runtime_error("invalid function dml option");
+    }
+    return v;
+  }();
+  // todo limit insert update delete
+  std::string sql = "DROP FUNCTION IF EXISTS f" + name_;
+  execute_sql(sql, thd);
+
+  assert(function_dmls.size() > 0);
+
+  sql = "CREATE FUNCTION f" + name_ + "() RETURNS INT DETERMINISTIC BEGIN ";
+
+  table_mutex.lock();
+  for (int j = 0; j < rand_int(4, 1); j++) {
+    for (auto &dml : function_dmls) {
+      if (dml == "INSERT")
+        for (int i = 0; i < rand_int(3, 1); i++)
+          sql.append("INSERT INTO " + name_ + ColumnValues() + "; ");
+      else if (dml == "UPDATE")
+        for (int i = 0; i < rand_int(4, 1); i++)
+          sql.append("UPDATE " + add_ignore_clause() + name_ + " SET " +
+                     SetClause() + GetWherePrecise() + "; ");
+      else if (dml == "DELETE")
+        for (int i = 0; i < rand_int(4, 1); i++)
+          sql.append("DELETE " + add_ignore_clause() + " FROM " + name_ +
+                     GetWherePrecise() + "; ");
+    }
+  }
+  table_mutex.unlock();
+
+  sql.append("RETURN 1; ");
+  sql.append("END");
+
+  execute_sql(sql, thd);
+
+  // Call the stored procedure
+  execute_sql("SELECT f" + name_ + "()", thd);
+}
+
 void Table::UpdateRandomROW(Thd1 *thd) {
   table_mutex.lock();
 
@@ -3831,6 +3889,9 @@ bool Thd1::run_some_query() {
       break;
     case Option::UPDATE_ROW_USING_PKEY:
       table->UpdateRandomROW(this);
+      break;
+    case Option::CALL_FUNCTION:
+      table->CreateFunction(this);
       break;
     case Option::UPDATE_ALL_ROWS:
       table->UpdateAllRows(this);

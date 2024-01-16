@@ -138,10 +138,24 @@ void add_options() {
   opt->help = "Ignore MySQL errors. example --mysql-ignore-error=2013,1047";
   opt->setString("NONE");
 
+  opt = newOption(Option::STRING, Option::FUNCTION_CONTAINS_DML,
+                  "function-contains-dml");
+  opt->help =
+      "Function contains DML. It tels what type of  SQL FUNCTION CONTAINS"
+      "--function-contains-dml=update,delete,insert. Even order matters. for "
+      "example if it insert,update then it would first insert and then update "
+      "or";
+  opt->setString("insert,update");
+
   opt = newOption(Option::INT, Option::IGNORE_DML_CLAUSE,
                   "ignore-dml-clause-prob");
   opt->help = "Adding Ignore clause to update delete and insert ";
   opt->setInt(10);
+
+  opt = newOption(Option::INT, Option::CALL_FUNCTION, "call-function-prob");
+  opt->help = "Probability of calling function ";
+  opt->setInt(10);
+  opt->setSQL();
 
   /* todo set default to all */
   opt = newOption(Option::STRING, Option::ENCRYPTION_TYPE, "encryption-type");

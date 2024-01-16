@@ -232,6 +232,7 @@ struct Table {
   void DeleteRandomRow(Thd1 *thd);
   void UpdateRandomROW(Thd1 *thd);
   void SelectRandomRow(Thd1 *thd);
+  void CreateFunction(Thd1 *thd);
   std::string GetRandomPartition();
   Column *GetRandomColumn();
   std::string GetWherePrecise();
