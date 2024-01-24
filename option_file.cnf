@@ -1,0 +1,17 @@
+#N:option=Val1|Val2|Val3;option2=val1|val2
+#format is: probability:option1=val1|val2|val3;option2=val1|val2 delimited by ; and values are delimited by |
+#if there is no value, then it is a boolean option
+100:threads=9|2|3
+100:no-ddl
+100:grammar-sql=0
+30:call-function-prob=30|100|0
+100:function-contains-dml=insert,update,delete|update,delete|insert,delete|insert
+30:columns=4|6|8|10
+100:records=10|100|1000|10000|1000000
+40:thread-per-table
+25:ignore-dml-clause-prob=0
+70:pk-prob=100|20
+10:commit-prob=0|34
+30:trx-size=10|30|100
+2:trx-size=1000
+10:no-insert;no-update;no-delete

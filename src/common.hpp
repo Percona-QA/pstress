@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <getopt.h>
+#include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -152,6 +153,11 @@ struct Option {
     TEMPORARY_PROB,
     IGNORE_ERRORS,
     IGNORE_DML_CLAUSE,
+    DROP_WITH_NBO,
+    THREAD_PER_TABLE,
+    CALL_FUNCTION,
+    FUNCTION_CONTAINS_DML,
+    OPTION_PROB_FILE,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
@@ -164,7 +170,7 @@ struct Option {
   Opt getOption() { return option; };
   const char *getName() { return name.c_str(); };
   bool getBool() { return default_bool; }
-  int getInt() { return default_int; }
+  long int getInt() { return default_int; }
   std::string getString() { return default_value; }
   short getArgs() { return args; }
   void setArgs(short s) { args = s; };
@@ -183,9 +189,7 @@ struct Option {
   void setBool(bool in) {
     default_bool = in;
   }
-  void setInt(std::string n) {
-    default_int = stoi(n);
-  }
+  void setInt(std::string n) { default_int = std::stol(n); }
   void setInt(int n) {
     default_int = n;
   }
@@ -199,7 +203,7 @@ struct Option {
   std::string name;
   std::string help;
   std::string default_value;
-  int default_int; // if default value is integer
+  long int default_int; // if default value is integer
   bool default_bool; // if default value is bool
   bool sql; // true if option is SQL, False if others
   bool ddl; // If SQL is DDL, or false if it is not
@@ -226,8 +230,28 @@ extern const char *binary_fullpath;
 void add_options();
 void add_server_options(std::string str);
 void add_server_options_file(std::string file_name);
+void read_option_prob_file(const std::string &prob_file);
 Option *newOption(Option::Type t, Option::Opt o, std::string s);
 std::set<int> splitStringToIntSet(const std::string &input);
-std::vector<int> splitStringToIntArray(const std::string &input);
+/* convert string to array of ints */
+template <typename T>
+std::vector<T> splitStringToArray(const std::string &input,
+                                  char delimiter = ',') {
+
+  std::vector<T> result;
+  std::string tempValue;
+  std::istringstream iss(input);
+  while (std::getline(iss, tempValue, delimiter)) {
+    T value;
+    std::istringstream tempStream(tempValue);
+    tempStream >> value;
+    if (tempStream.fail()) {
+      std::cerr << "Error converting string to type T" << std::endl;
+      exit(EXIT_FAILURE);
+    }
+    result.push_back(value);
+  }
+  return result;
+}
 
 #endif

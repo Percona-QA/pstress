@@ -18,7 +18,7 @@
 #define CR_SERVER_LOST 2013
 #define CR_WSREP_NOT_PREPARED 1047
 using namespace rapidjson;
-std::mt19937 rng;
+extern std::mt19937 rng;
 
 const std::string TABLE_PREFIX = "tt_";
 const std::string PARTITION_SUFFIX = "_p";
@@ -1283,7 +1283,16 @@ Partition::Partition(std::string n) : Table(n) {
 }
 
 void Table::DropCreate(Thd1 *thd) {
+  int nbo_prob = options->at(Option::DROP_WITH_NBO)->getInt();
+  bool set_session_nbo = false;
+  if (rand_int(100) < nbo_prob) {
+    execute_sql("SET SESSION wsrep_osu_method=NBO ", thd);
+    set_session_nbo = true;
+  }
   execute_sql("DROP TABLE " + name_, thd);
+  if (set_session_nbo) {
+    execute_sql("SET SESSION wsrep_osu_method=DEFAULT ", thd);
+  }
   std::string def = definition();
   if (!execute_sql(def, thd) && tablespace.size() > 0) {
     std::string tbs = " TABLESPACE=" + tablespace + "_rename";
@@ -2726,6 +2735,64 @@ void Table::SelectRandomRow(Thd1 *thd) {
   execute_sql(sql, thd);
 }
 
+void Table::CreateFunction(Thd1 *thd) {
+  static std::vector<std::string> function_dmls = []() {
+    std::vector<std::string> v;
+    std::string option_func = opt_string(FUNCTION_CONTAINS_DML);
+    std::transform(option_func.begin(), option_func.end(), option_func.begin(),
+                   ::tolower);
+    std::istringstream iss(option_func);
+    std::string token;
+    while (std::getline(iss, token, ',')) {
+      if (token == "update" &&
+          options->at(Option::NO_UPDATE)->getBool() == false)
+        v.push_back("UPDATE");
+      else if (token == "insert" &&
+               options->at(Option::NO_INSERT)->getBool() == false)
+        v.push_back("INSERT");
+      else if (token == "delete" &&
+               options->at(Option::NO_DELETE)->getBool() == false)
+        v.push_back("DELETE");
+      else
+        std::runtime_error("invalid function dml option");
+    }
+    return v;
+  }();
+  // todo limit insert update delete
+  std::string sql = "DROP FUNCTION IF EXISTS f" + name_;
+  execute_sql(sql, thd);
+
+  assert(function_dmls.size() > 0);
+
+  sql = "CREATE FUNCTION f" + name_ + "() RETURNS INT DETERMINISTIC BEGIN ";
+
+  table_mutex.lock();
+  for (int j = 0; j < rand_int(4, 1); j++) {
+    for (auto &dml : function_dmls) {
+      if (dml == "INSERT")
+        for (int i = 0; i < rand_int(3, 1); i++)
+          sql.append("INSERT INTO " + name_ + ColumnValues() + "; ");
+      else if (dml == "UPDATE")
+        for (int i = 0; i < rand_int(4, 1); i++)
+          sql.append("UPDATE " + add_ignore_clause() + name_ + " SET " +
+                     SetClause() + GetWherePrecise() + "; ");
+      else if (dml == "DELETE")
+        for (int i = 0; i < rand_int(4, 1); i++)
+          sql.append("DELETE " + add_ignore_clause() + " FROM " + name_ +
+                     GetWherePrecise() + "; ");
+    }
+  }
+  table_mutex.unlock();
+
+  sql.append("RETURN 1; ");
+  sql.append("END");
+
+  execute_sql(sql, thd);
+
+  // Call the stored procedure
+  execute_sql("SELECT f" + name_ + "()", thd);
+}
+
 void Table::UpdateRandomROW(Thd1 *thd) {
   table_mutex.lock();
 
@@ -3719,6 +3786,8 @@ bool Thd1::run_some_query() {
 
   int trx_left = 0;
   int current_save_point = 0;
+
+  int pick_table_id = thread_id % all_session_tables->size();
   while (std::chrono::system_clock::now() < end) {
 
 
@@ -3754,8 +3823,12 @@ bool Thd1::run_some_query() {
       trx_left = rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
     }
 
-    auto table =
-        all_session_tables->at(rand_int(all_session_tables->size() - 1));
+
+    if (!options->at(Option::THREAD_PER_TABLE)->getBool()) {
+      pick_table_id = rand_int(all_session_tables->size() - 1);
+    }
+    auto table = all_session_tables->at(pick_table_id);
+
     auto option = pick_some_option();
     ddl_query = options->at(option)->ddl == true ? true : false;
 
@@ -3816,6 +3889,9 @@ bool Thd1::run_some_query() {
       break;
     case Option::UPDATE_ROW_USING_PKEY:
       table->UpdateRandomROW(this);
+      break;
+    case Option::CALL_FUNCTION:
+      table->CreateFunction(this);
       break;
     case Option::UPDATE_ALL_ROWS:
       table->UpdateAllRows(this);

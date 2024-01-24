@@ -174,7 +174,7 @@ struct Thd1 {
   bool load_metadata();  // load metada of tool in memory
 
   int thread_id;
-  int seed;
+  long int seed;
   std::ofstream &thread_log;
   std::ofstream &ddl_logs;
   std::ofstream &client_log;
@@ -232,6 +232,7 @@ struct Table {
   void DeleteRandomRow(Thd1 *thd);
   void UpdateRandomROW(Thd1 *thd);
   void SelectRandomRow(Thd1 *thd);
+  void CreateFunction(Thd1 *thd);
   std::string GetRandomPartition();
   Column *GetRandomColumn();
   std::string GetWherePrecise();

@@ -113,9 +113,10 @@ int Node::startWork() {
   }
   /* END log replaying */
   workers.resize(myParams.threads);
+  static int thread_id = 0;
 
   for (int i = 0; i < myParams.threads; i++) {
-    workers[i] = std::thread(&Node::workerThread, this, i);
+    workers[i] = std::thread(&Node::workerThread, this, thread_id++);
   }
 
   for (int i = 0; i < myParams.threads; i++) {
