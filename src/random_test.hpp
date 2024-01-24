@@ -174,7 +174,7 @@ struct Thd1 {
   bool load_metadata();  // load metada of tool in memory
 
   int thread_id;
-  int seed;
+  long int seed;
   std::ofstream &thread_log;
   std::ofstream &ddl_logs;
   std::ofstream &client_log;

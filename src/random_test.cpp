@@ -18,7 +18,7 @@
 #define CR_SERVER_LOST 2013
 #define CR_WSREP_NOT_PREPARED 1047
 using namespace rapidjson;
-std::mt19937 rng;
+extern std::mt19937 rng;
 
 const std::string TABLE_PREFIX = "tt_";
 const std::string PARTITION_SUFFIX = "_p";

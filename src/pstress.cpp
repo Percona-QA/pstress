@@ -25,6 +25,7 @@
 /* Global variable to hold pstress build directory path */
 const char *binary_fullpath;
 extern std::atomic<bool> run_query_failed;
+std::mt19937 rng;
 
 void read_section_settings(struct workerParams *wParams, std::string secName,
                            std::string confFile) {
@@ -55,6 +56,7 @@ void create_worker(struct workerParams *Params) {
 
 int main(int argc, char *argv[]) {
 
+  /*set seed for current step*/
   /* Fetching the directory path where the executable is present */
   std::unique_ptr<char> ptr(realpath(argv[0], nullptr));
   binary_fullpath = dirname(ptr.get());
@@ -135,6 +137,9 @@ int main(int argc, char *argv[]) {
       }
     }
   } // while
+  auto initial_seed = opt_int(INITIAL_SEED);
+  initial_seed += options->at(Option::STEP)->getInt();
+  rng = std::mt19937(initial_seed);
 
   /* check if user has asked for help */
   if (options->at(Option::HELP)->getBool() == true) {
@@ -148,12 +153,16 @@ int main(int argc, char *argv[]) {
     exit(0);
   }
 
+  if (!options->at(Option::OPTION_PROB_FILE)->getString().empty()) {
+    read_option_prob_file(options->at(Option::OPTION_PROB_FILE)->getString());
+  }
+
   if (options->at(Option::PQUERY)->getBool()) {
     std::cout << "runnng as pquery" << std::endl;
   }
 
   auto confFile = options->at(Option::CONFIGFILE)->getString();
-  auto ports = splitStringToIntArray(options->at(Option::PORT)->getString());
+  auto ports = splitStringToArray<int>(options->at(Option::PORT)->getString());
   if (confFile.empty() && ports.size() == 1) {
     /*single node and command line */
     workerParams *wParams = new workerParams(ports[0]);
@@ -200,20 +209,6 @@ int main(int argc, char *argv[]) {
     return EXIT_FAILURE;
   else
     return EXIT_SUCCESS;
-}
-/* convert string to array of ints */
-std::vector<int> splitStringToIntArray(const std::string &input) {
-  std::vector<int> result;
-  std::istringstream iss(input);
-  std::string token;
-
-  while (getline(iss, token, ',')) {
-    int value;
-    std::istringstream(token) >> value;
-    result.push_back(value);
-  }
-
-  return result;
 }
 
 std::set<int> splitStringToIntSet(const std::string &input) {
