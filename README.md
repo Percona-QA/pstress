@@ -24,6 +24,8 @@ Driver script (written in BASH which integrates the workload to perform concurre
    *  *-DPERCONASERVER*=**ON** - build pstress with Percona Server
    *  *-DMYSQL*=**ON** - build pstress with MySQL Server
    *  *-DPERCONACLUSTER*=**ON** - build pstress with Percona XtraDB Cluster
+   * add -DSTATIC_LIBRARY=OFF 
+
 4. If you have MySQL | Percona Server | Percona XtraDB Cluster installed to some custom location you may consider setting the additional flags to cmake: *MYSQL_INCLUDE_DIR* and *MYSQL_LIBRARY*. OR, you can set *BASEDIR* variable if you have binary tarball extracted to some custom place for fully automatic library detection (recommended).
 5. The resulting binary will automatically receive an appropriate flavor suffix:
   * *pstress-ms* for MySQL
@@ -34,7 +36,7 @@ Driver script (written in BASH which integrates the workload to perform concurre
 ```
 $ cd pstress
 $ git clean -fd; rm CMakeCache.txt;
-$ cmake . -DPERCONASERVER=ON -DBASEDIR=$HOME/mysql-8.0/bld/install
+$ cmake . -DPERCONASERVER=ON -DSTATIC_LIBRARY=OFF -DBASEDIR=$HOME/mysql-8.0/bld/install
 $ sudo make install # If you want pstress to be installed on the system, otherwise the binary can be found in ./src
 $ ... build your other MySQL flavors/forks here in the same way, modifying the basedir and the servertype (both -D options) ...
 ```
