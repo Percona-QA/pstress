@@ -620,6 +620,12 @@ Column::COLUMN_TYPES Column::col_type(std::string type) {
     return FLOAT;
   else if (type.compare("DOUBLE") == 0)
     return DOUBLE;
+  else if (type.compare("DATE") == 0)
+    return DATE;
+  else if (type.compare("DATETIME") == 0)
+    return DATETIME;
+  else if (type.compare("TIMESTAMP") == 0)
+    return TIMESTAMP;
   else
     throw std::runtime_error("unhandled " + col_type_to_string(type_) +
                              " at line " + std::to_string(__LINE__));
@@ -646,10 +652,44 @@ const std::string Column::col_type_to_string(COLUMN_TYPES type) {
     return "BLOB";
   case GENERATED:
     return "GENERATED";
+  case DATE:
+    return "DATE";
+  case DATETIME:
+    return "DATETIME";
+  case TIMESTAMP:
+    return "TIMESTAMP";
   case COLUMN_MAX:
     break;
   }
   return "FAIL";
+}
+
+static std::string rand_date() {
+  std::ostringstream out;
+  out << std::setfill('0') << std::setw(4) << rand_int(9999, 1000) << "-"
+      << std::setw(2) << rand_int(12, 1) << "-" << std::setw(2)
+      << rand_int(28, 1);
+  return out.str();
+}
+
+static std::string rand_datetime() {
+  std::ostringstream out;
+  out << std::setfill('0') << std::setw(4) << rand_int(9999, 1000) << "-"
+      << std::setw(2) << rand_int(12, 1) << "-" << std::setw(2)
+      << rand_int(28, 1) << " " << std::setw(2) << rand_int(1, 0) << ":"
+      << std::setw(2) << rand_int(1, 0) << ":" << std::setw(2)
+      << rand_int(1, 0);
+  return out.str();
+}
+
+static std::string rand_timestamp() {
+  std::ostringstream out;
+  out << std::setfill('0') << std::setw(4) << rand_int(2037, 1970) << "-"
+      << std::setw(2) << rand_int(12, 1) << "-" << std::setw(2)
+      << rand_int(28, 1) << " " << std::setw(2) << rand_int(1, 0) << ":"
+      << std::setw(2) << rand_int(1, 0) << ":" << std::setw(2)
+      << rand_int(1, 0);
+  return out.str();
 }
 
 /* integer range */
@@ -660,21 +700,15 @@ static std::string rand_value_universal(Column::COLUMN_TYPES type_,
   case (Column::COLUMN_TYPES::INTEGER):
     return std::to_string(
         rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
-    break;
   case (Column::COLUMN_TYPES::INT):
     return std::to_string(
         rand_int(g_integer_range *
                  options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
-    break;
-  case (Column::COLUMN_TYPES::FLOAT): {
+  case (Column::COLUMN_TYPES::FLOAT):
     return rand_float(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
-    break;
-  }
-  case (Column::COLUMN_TYPES::DOUBLE): {
+  case (Column::COLUMN_TYPES::DOUBLE):
     return rand_double(1.0 / g_integer_range *
                        options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
-    break;
-  }
   case Column::COLUMN_TYPES::CHAR:
   case Column::COLUMN_TYPES::VARCHAR:
   case Column::COLUMN_TYPES::BLOB:
@@ -683,6 +717,12 @@ static std::string rand_value_universal(Column::COLUMN_TYPES type_,
   case Column::COLUMN_TYPES::BOOL:
     return (rand_int(1) == 1 ? "true" : "false");
     break;
+  case Column::COLUMN_TYPES::DATE:
+    return "\'" + rand_date() + "\'";
+  case Column::COLUMN_TYPES::DATETIME:
+    return "\'" + rand_datetime() + "\'";
+  case Column::COLUMN_TYPES::TIMESTAMP:
+    return "\'" + rand_timestamp() + "\'";
   case Column::COLUMN_TYPES::GENERATED:
   case Column::COLUMN_TYPES::COLUMN_MAX:
     throw std::runtime_error("unhandled " + Column::col_type_to_string(type_) +
@@ -747,6 +787,15 @@ Column::Column(std::string name, Table *table, COLUMN_TYPES type)
     break;
   case BOOL:
     name_ = "t" + name;
+    break;
+  case DATE:
+    name_ = "dt" + name;
+    break;
+  case DATETIME:
+    name_ = "dtm" + name;
+    break;
+  case TIMESTAMP:
+    name_ = "ts" + name;
     break;
   default:
     throw std::runtime_error("unhandled " + col_type_to_string(type_) +
@@ -857,6 +906,9 @@ Generated_Column::Generated_Column(std::string name, Table *table)
                col->type_ == BOOL || col->type_ == FLOAT ||
                col->type_ == DOUBLE)
         str += " " + col->name_ + "+";
+      else if (col->type_ == DATE || col->type_ == DATETIME ||
+               col->type_ == TIMESTAMP)
+        str += " DATEDIFF(" + rand_date() + "," + col->name_ + ")+";
       else
         throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
                                  " at line " + std::to_string(__LINE__));
@@ -887,6 +939,11 @@ Generated_Column::Generated_Column(std::string name, Table *table)
       case FLOAT:
       case DOUBLE:
         column_size = 10; // max size of int
+        break;
+      case DATE:
+      case DATETIME:
+      case TIMESTAMP:
+        column_size = 19;
         break;
       case BOOL:
         column_size = 2;
@@ -1627,8 +1684,9 @@ void Table::CreateDefaultColumn() {
       /* loop untill we select some column */
       while (col_type == Column::COLUMN_MAX) {
 
-        /* columns are 6:2:2:4:2:2:1 INT:FLOAT:DOUBLE:VARCHAR:CHAR:BLOB:BOOL */
-        auto prob = rand_int(19);
+        /* columns are 6:2:2:4:2:2:1:DATE:DATETIME:TIMESTAMP
+         * INT:FLOAT:DOUBLE:VARCHAR:CHAR:BLOB:BOOL */
+        auto prob = rand_int(22);
 
         /* intial columns can't be generated columns. also 50% of tables last
          * columns are virtuals */
@@ -1650,6 +1708,12 @@ void Table::CreateDefaultColumn() {
           col_type = Column::BLOB;
         else if (prob == 19)
           col_type = Column::BOOL;
+        else if (prob == 20 && !options->at(Option::NO_DATE)->getBool()
+          col_type = Column::DATE;
+        else if (prob == 21 && !options->at(Option::NO_DATETIME)->getBool()
+          col_type = Column::DATETIME;
+        else if (prob == 22 && !options->at(Option::NO_TIMESTAMP)->getBool())
+          col_type = Column::TIMESTAMP;
       }
 
       if (col_type == Column::GENERATED)
@@ -2210,6 +2274,9 @@ void Table::ModifyColumn(Thd1 *thd) {
     case Column::DOUBLE:
     case Column::INT:
     case Column::INTEGER:
+    case Column::DATE:
+    case Column::DATETIME:
+    case Column::TIMESTAMP:
       col = col1;
       length = col->length;
       auto_increment = col->auto_increment;
@@ -2626,6 +2693,9 @@ Column *Table::GetRandomColumn() {
     case Column::CHAR:
     case Column::BLOB:
     case Column::GENERATED:
+    case Column::DATE:
+    case Column::DATETIME:
+    case Column::TIMESTAMP:
       col = columns_->at(col_pos);
       break;
     case Column::INTEGER:
@@ -3485,7 +3555,8 @@ static std::string load_metadata_from_file() {
       if (type.compare("INT") == 0 || type.compare("CHAR") == 0 ||
           type.compare("VARCHAR") == 0 || type.compare("BOOL") == 0 ||
           type.compare("FLOAT") == 0 || type.compare("DOUBLE") == 0 ||
-          type.compare("INTEGER") == 0) {
+          type.compare("INTEGER") == 0 || type.compare("DATE") == 0 ||
+          type.compare("TIME") == 0 || type.compare("TIMESTAMP") == 0) {
         a = new Column(col["name"].GetString(), type, table);
       } else if (type.compare("GENERATED") == 0) {
         auto name = col["name"].GetString();

@@ -158,6 +158,9 @@ struct Option {
     CALL_FUNCTION,
     FUNCTION_CONTAINS_DML,
     OPTION_PROB_FILE,
+    NO_TIMESTAMP,
+    NO_DATE,
+    NO_DATETIME,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
