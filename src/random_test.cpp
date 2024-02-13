@@ -56,6 +56,7 @@ std::atomic<size_t> table_completed(0);
 std::atomic<size_t> check_failures(0);
 std::atomic_flag lock_stream = ATOMIC_FLAG_INIT;
 std::atomic<bool> run_query_failed(false);
+typedef std::vector<std::vector<std::string>> query_result;
 
 /* partition type supported by system */
 std::vector<Partition::PART_TYPE> Partition::supported;
@@ -66,13 +67,56 @@ static void print_and_log(std::string &&str, Thd1 *thd) {
   std::cout << str << std::endl;
   thd->thread_log << str << std::endl;
 }
-
 static MYSQL_ROW mysql_fetch_row_safe(Thd1 *thd) {
   if (!thd->result) {
     thd->thread_log << "mysql_fetch_row called with nullptr arg!";
     return nullptr;
   }
   return mysql_fetch_row(thd->result.get());
+}
+static bool mysql_num_fields_safe(Thd1 *thd, unsigned int req) {
+  if (!thd->result) {
+    thd->thread_log << "mysql_num_fields called with nullptr arg!";
+    return 0;
+  }
+  auto num_fields = mysql_num_fields(thd->result.get());
+  auto ret = req <= num_fields;
+  if (!ret) {
+    thd->thread_log << "Expected at least " << req << " fields but only "
+                    << num_fields << " exist";
+  }
+  return ret;
+}
+
+/* compare the result set of two queries */
+static bool compare_query_result(query_result &r1, query_result &r2) {
+  if (r1.size() != r2.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < r1.size(); i++) {
+    if (r1[i].size() != r2[i].size()) {
+      return false;
+    }
+    for (size_t j = 0; j < r1[i].size(); j++) {
+      if (r1[i][j].compare(r2[i][j]) != 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/* return the string of the option */
+static query_result get_query_result(Thd1 *thd) {
+  std::vector<std::vector<std::string>> result;
+  while (auto row = mysql_fetch_row_safe(thd)) {
+    std::vector<std::string> r;
+    for (unsigned int i = 0; i < mysql_num_fields_safe(thd, 1); i++) {
+      r.push_back(row[i]);
+    }
+    result.push_back(r);
+  }
+  return result;
 }
 
 /* return table pointer of matching table. This is only done during the
@@ -92,19 +136,6 @@ static Table *pick_table(Table::TABLE_TYPES type, int id) {
   return nullptr;
 }
 
-static bool mysql_num_fields_safe(Thd1 *thd, unsigned int req) {
-  if (!thd->result) {
-    thd->thread_log << "mysql_num_fields called with nullptr arg!";
-    return 0;
-  }
-  auto num_fields = mysql_num_fields(thd->result.get());
-  auto ret = req <= num_fields;
-  if (!ret) {
-    thd->thread_log << "Expected at least " << req << " fields but only "
-                    << num_fields << " exist";
-  }
-  return ret;
-}
 
 /* generate random numbers to populate in primary and fk
 @param[in] number_of_records
@@ -1708,9 +1739,9 @@ void Table::CreateDefaultColumn() {
           col_type = Column::BLOB;
         else if (prob == 19)
           col_type = Column::BOOL;
-        else if (prob == 20 && !options->at(Option::NO_DATE)->getBool()
+        else if (prob == 20 && !options->at(Option::NO_DATE)->getBool())
           col_type = Column::DATE;
-        else if (prob == 21 && !options->at(Option::NO_DATETIME)->getBool()
+        else if (prob == 21 && !options->at(Option::NO_DATETIME)->getBool())
           col_type = Column::DATETIME;
         else if (prob == 22 && !options->at(Option::NO_TIMESTAMP)->getBool())
           col_type = Column::TIMESTAMP;
@@ -2070,6 +2101,10 @@ std::string Table::definition(bool with_index) {
       break;
     }
   }
+  if (options->at(Option::SECONDARY_ENGINE)->getString().size() > 0) {
+    def += ", SECONDARY_ENGINE=" +
+           options->at(Option::SECONDARY_ENGINE)->getString();
+  }
   return def;
 }
 
@@ -2105,6 +2140,36 @@ void generate_metadata_for_tables() {
         */
     }
   }
+}
+
+static void compare_between_engine(const std::string &sql, Thd1 *thd) {
+  auto set_default = [&]() {
+    execute_sql(" SET @@SESSION.USE_SECONDARY_ENGINE=DEFAULT ", thd);
+  };
+  /* Get result set with forced  */
+  if (options->at(Option::SECONDARY_ENGINE)->getString().size() > 0)
+    execute_sql(" SET @@SESSION.USE_SECONDARY_ENGINE=FORCED ", thd);
+  if (!execute_sql(sql, thd) || thd->resul == nullptr) {
+    print_and_log("Failed to execute query with forced " + sql, thd);
+    return set_default();
+  };
+  auto res_with_forced = get_query_result(thd);
+
+  /* Get result without forced */
+  if (options->at(Option::SECONDARY_ENGINE)->getString().size() > 0)
+    execute_sql(" SET @@SESSION.USE_SECONDARY_ENGINE=OFF ", thd);
+  if (!execute_sql(sql, thd), thd->resul == nullptr) {
+    print_and_log("Failed to execute query wit off " + sql, thd);
+    return set_default();
+  }
+  auto res_without_forced = get_query_result(thd);
+
+  if (!compare_query_result(res_with_forced, res_without_forced)) {
+    print_and_log("result set mismatch for" + sql, thd);
+    exit(EXIT_FAILURE);
+    return set_default();
+  }
+  set_default();
 }
 
 bool execute_sql(const std::string &sql, Thd1 *thd) {
@@ -2674,7 +2739,7 @@ Column *Table::GetRandomColumn() {
     auto indx = indexes_->at(rand_int(indexes_->size() - 1));
     if (rand_int(100) > 50 && indx->columns_->size() > 0) {
       auto first_col = indx->columns_->at(0)->column;
-      if (first_col->type_ != Column::BOOL)
+      if (first_col->type_ != Column::BOOL && first_col->type_ != Column::FLOAT)
         col = first_col;
     }
   }
@@ -2687,14 +2752,13 @@ Column *Table::GetRandomColumn() {
         col = columns_->at(col_pos);
       break;
     case Column::INT:
-    case Column::FLOAT:
-    case Column::DOUBLE:
     case Column::VARCHAR:
     case Column::CHAR:
     case Column::BLOB:
     case Column::GENERATED:
     case Column::DATE:
     case Column::DATETIME:
+    case Column::DOUBLE:
     case Column::TIMESTAMP:
       col = columns_->at(col_pos);
       break;
@@ -2703,6 +2767,9 @@ Column *Table::GetRandomColumn() {
         col = columns_->at(col_pos);
       break;
     case Column::COLUMN_MAX:
+      break;
+      /* Do not use FLOAT and DOUBLE in where clause */
+    case Column::FLOAT:
       break;
     }
   }
@@ -2802,7 +2869,11 @@ void Table::SelectRandomRow(Thd1 *thd) {
   std::string sql =
       "SELECT " + SelectColumn() + " FROM " + name_ + GetWherePrecise();
   table_mutex.unlock();
-  execute_sql(sql, thd);
+  if (options->at(Option::COMPARE_RESULT)->getBool()) {
+    compare_between_engine(sql, thd);
+  } else {
+    execute_sql(sql, thd);
+  }
 }
 
 void Table::CreateFunction(Thd1 *thd) {
@@ -3556,7 +3627,7 @@ static std::string load_metadata_from_file() {
           type.compare("VARCHAR") == 0 || type.compare("BOOL") == 0 ||
           type.compare("FLOAT") == 0 || type.compare("DOUBLE") == 0 ||
           type.compare("INTEGER") == 0 || type.compare("DATE") == 0 ||
-          type.compare("TIME") == 0 || type.compare("TIMESTAMP") == 0) {
+          type.compare("DATETIME") == 0 || type.compare("TIMESTAMP") == 0) {
         a = new Column(col["name"].GetString(), type, table);
       } else if (type.compare("GENERATED") == 0) {
         auto name = col["name"].GetString();

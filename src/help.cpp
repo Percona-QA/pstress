@@ -222,14 +222,27 @@ void add_options() {
   opt = newOption(Option::BOOL, Option::NO_TIMESTAMP, "no-timestamp");
   opt->help = "Disable timestamp";
   opt->setBool(false);
+  opt->setArgs(no_argument);
 
   opt = newOption(Option::BOOL, Option::NO_DATE, "no-date");
   opt->help = "Disable date";
   opt->setBool(false);
+  opt->setArgs(no_argument);
 
-  opt = newOption(Option::BOOL, Option::NO_TIME, "no-datetime");
+  opt = newOption(Option::BOOL, Option::NO_DATETIME, "no-datetime");
   opt->help = "Disable time";
   opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  opt = newOption(Option::BOOL, Option::COMPARE_RESULT, "compare-result");
+  opt->help =
+      "Compare result of SELECT query with and without secondary ENGINE. User "
+      "is resposible to ensure no change in data during the test. ";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  opt = newOption(Option::STRING, Option::SECONDARY_ENGINE, "secondary-engine");
+  opt->help = "Use secondary engine for some tables";
 
   /* algorithm for alter */
   opt = newOption(Option::STRING, Option::ALGORITHM, "alter-algorithm");
