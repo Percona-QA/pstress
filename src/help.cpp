@@ -219,6 +219,18 @@ void add_options() {
               "processed. For each seed it would pick one option from the ";
   opt->setString("");
 
+  opt = newOption(Option::BOOL, Option::NO_TIMESTAMP, "no-timestamp");
+  opt->help = "Disable timestamp";
+  opt->setBool(false);
+
+  opt = newOption(Option::BOOL, Option::NO_DATE, "no-date");
+  opt->help = "Disable date";
+  opt->setBool(false);
+
+  opt = newOption(Option::BOOL, Option::NO_TIME, "no-datetime");
+  opt->help = "Disable time";
+  opt->setBool(false);
+
   /* algorithm for alter */
   opt = newOption(Option::STRING, Option::ALGORITHM, "alter-algorithm");
   opt->help = "algorithm used in alter table.\n"

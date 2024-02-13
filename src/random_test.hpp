@@ -57,6 +57,9 @@ public:
     BOOL,
     BLOB,
     GENERATED,
+    DATE,
+    DATETIME,
+    TIMESTAMP,
     COLUMN_MAX // should be last
   } type_;
   /* used to create new table/alter table add column*/
