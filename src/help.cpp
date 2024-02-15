@@ -152,6 +152,11 @@ void add_options() {
   opt->help = "Adding Ignore clause to update delete and insert ";
   opt->setInt(10);
 
+  opt = newOption(Option::INT, Option::SLEEP_AFTER_CREATE_TABLE,
+                  "sleep-after-create-table");
+  opt->help = "Sleep after create table";
+  opt->setInt(0);
+
   opt = newOption(Option::INT, Option::CALL_FUNCTION, "call-function-prob");
   opt->help = "Probability of calling function ";
   opt->setInt(10);

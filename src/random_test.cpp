@@ -1232,6 +1232,8 @@ bool Table::load(Thd1 *thd) {
     run_query_failed = true;
     return false;
   }
+  std::this_thread::sleep_for(std::chrono::seconds(
+      options->at(Option::SLEEP_AFTER_CREATE_TABLE)->getInt()));
 
   /* load default data in table */
   if (!options->at(Option::JUST_LOAD_DDL)->getBool()) {
@@ -2149,7 +2151,7 @@ static void compare_between_engine(const std::string &sql, Thd1 *thd) {
   /* Get result set with forced  */
   if (options->at(Option::SECONDARY_ENGINE)->getString().size() > 0)
     execute_sql(" SET @@SESSION.USE_SECONDARY_ENGINE=FORCED ", thd);
-  if (!execute_sql(sql, thd) || thd->resul == nullptr) {
+  if (!execute_sql(sql, thd) || thd->result == nullptr) {
     print_and_log("Failed to execute query with forced " + sql, thd);
     return set_default();
   };
@@ -2158,7 +2160,7 @@ static void compare_between_engine(const std::string &sql, Thd1 *thd) {
   /* Get result without forced */
   if (options->at(Option::SECONDARY_ENGINE)->getString().size() > 0)
     execute_sql(" SET @@SESSION.USE_SECONDARY_ENGINE=OFF ", thd);
-  if (!execute_sql(sql, thd), thd->resul == nullptr) {
+  if (!execute_sql(sql, thd) || thd->result == nullptr) {
     print_and_log("Failed to execute query wit off " + sql, thd);
     return set_default();
   }
@@ -2870,6 +2872,7 @@ void Table::SelectRandomRow(Thd1 *thd) {
       "SELECT " + SelectColumn() + " FROM " + name_ + GetWherePrecise();
   table_mutex.unlock();
   if (options->at(Option::COMPARE_RESULT)->getBool()) {
+    sql += " order by ipkey";
     compare_between_engine(sql, thd);
   } else {
     execute_sql(sql, thd);
@@ -3279,157 +3282,155 @@ void alter_tablespace_rename(Thd1 *thd) {
   }
 }
 
-/* load special sql from a file */
-static std::vector<std::string> load_grammar_sql_from() {
+/* load special sql from a file and return  */
+static std::vector<grammar_tables> load_grammar_sql_from() {
   std::vector<std::string> array;
   auto grammar_file = opt_string(GRAMMAR_FILE);
-  std::string sql, file;
-  if (grammar_file == "grammar.sql")
-    file = std::string(binary_fullpath) + "/" + std::string(grammar_file);
-  else
-    file = grammar_file;
+  {
+    std::string sql, file;
+    if (grammar_file == "grammar.sql")
+      file = std::string(binary_fullpath) + "/" + std::string(grammar_file);
+    else
+      file = grammar_file;
 
-  std::ifstream myfile(file);
-  if (myfile.is_open()) {
-    while (!myfile.eof()) {
-      getline(myfile, sql);
-      /* do not process any blank lines */
-      if (sql.find_first_not_of("\t\n ") != std::string::npos)
-        array.push_back(sql);
-    }
-    myfile.close();
-  } else
-    throw std::runtime_error("unable to open file " + file);
-  return array;
+    std::ifstream myfile(file);
+    if (myfile.is_open()) {
+      while (!myfile.eof()) {
+        getline(myfile, sql);
+        /* do not process any blank lines */
+        if (sql.find_first_not_of("\t\n ") != std::string::npos)
+          array.push_back(sql);
+      }
+      myfile.close();
+    } else
+      throw std::runtime_error("unable to open file " + file);
+  }
+  std::vector<grammar_tables> tables;
+
+  for (auto &sql : array) {
+    /* Parse the grammar SQL and create a table object */
+    std::vector<grammar_table> sql_tables;
+    int tab_sql = 1; // start with 1
+    do {             // search for table
+      std::smatch match;
+      std::string tab_p = "T" + std::to_string(tab_sql++); // table pattern
+
+      if (regex_search(sql, match, std::regex(tab_p))) {
+
+        auto add_columns = [&](grammar_table::sql_col_types type) {
+          int col_sql = 1;
+          do {
+            std::string col_p = tab_p + "_" +
+                                grammar_table::get_col_type(type) + "_" +
+                                std::to_string(col_sql);
+            if (regex_search(sql, match, std::regex(col_p))) {
+              sql_tables.back().column_count.at(type)++;
+              col_sql++;
+            } else {
+              break;
+            }
+          } while (true);
+        };
+
+        sql_tables.emplace_back(tab_p);
+
+        for (auto &type : grammar_table::get_vector_of_col_type()) {
+          add_columns(type);
+        }
+      } else
+        // if no more table found,
+        break;
+    } while (true);
+    tables.emplace_back(sql, sql_tables);
+  }
+  return tables;
 }
 
 /* return preformatted sql */
 static void grammar_sql(std::vector<Table *> *all_tables, Thd1 *thd) {
 
-  static std::vector<std::string> all_sql = load_grammar_sql_from();
-  enum sql_col_types { INT, VARCHAR };
+  static auto all_tables_from_grammar = load_grammar_sql_from();
 
-  if (all_sql.size() == 0)
+  if (all_tables_from_grammar.size() == 0)
     return;
 
-  struct table {
-    table(std::string n, std::vector<std::string> i, std::vector<std::string> v)
-        : name(n), int_col(i), varchar_col(v){};
-    std::string name;
-    std::vector<std::string> int_col;
-    std::vector<std::string> varchar_col;
-  };
+  auto currrent_table =
+      all_tables_from_grammar.at(rand_int(all_tables_from_grammar.size() - 1));
 
-  auto sql = all_sql[rand_int(all_sql.size() - 1)];
+  auto sql = currrent_table.sql;
+  auto &sql_tables = currrent_table.tables;
 
-  /* parse SQL in table */
-  std::vector<std::vector<int>> sql_tables;
-
-  int tab_sql = 1; // number of tables in sql
-  bool table_found;
-
-  do { // search for table
-    std::smatch match;
-    std::string tab_p = "T" + std::to_string(tab_sql); // table pattern
-
-    if (regex_search(sql, match, std::regex(tab_p))) {
-      table_found = true;
-      sql_tables.push_back({0, 0});
-
-      int col_sql = 1;
-      bool column_found;
-
-      do { // search of int column
-        std::string col_p = tab_p + "_INT_" + std::to_string(col_sql);
-        if (regex_search(sql, match, std::regex(col_p))) {
-          column_found = true;
-          sql_tables.at(tab_sql - 1).at(INT)++;
-          col_sql++;
-        } else
-          column_found = false;
-      } while (column_found);
-
-      col_sql = 1;
-      do {
-        std::string col_p = tab_p + "_VARCHAR_" + std::to_string(col_sql);
-        if (regex_search(sql, match, std::regex(col_p))) {
-          column_found = true;
-          sql_tables.at(tab_sql - 1).at(VARCHAR)++;
-          col_sql++;
-        } else
-          column_found = false;
-      } while (column_found);
-    } else
-      table_found = false;
-    tab_sql++;
-  } while (table_found);
-
-  std::vector<table> final_tables;
-
-  /* try at max 100 times */
-  int table_check = 100;
-
-  while (sql_tables.size() > 0 && table_check-- > 0) {
-
-    auto int_columns = sql_tables.back().at(INT);
-    auto varchar_columns = sql_tables.back().at(VARCHAR);
-    std::vector<std::string> int_cols_str, var_cols_str;
-    int column_check = 20;
-    auto table = all_tables->at(rand_int(all_tables->size() - 1));
-    table->table_mutex.lock();
-    auto columns = table->columns_;
-
-    // find columns in table //
+  // Find the real table and columns
+  for (auto &table : sql_tables) {
+    int table_check = 100; // try to find table
     do {
-      auto col = columns->at(rand_int(columns->size() - 1));
+      auto working_table = all_tables->at(rand_int(all_tables->size() - 1));
+      working_table->table_mutex.lock();
+      table.found_name = working_table->name_;
 
-      if (int_columns > 0 && col->type_ == Column::INT) {
-        int_cols_str.push_back(col->name_);
-        int_columns--;
-      }
-      if (varchar_columns > 0 && col->type_ == Column::VARCHAR) {
-        var_cols_str.push_back(col->name_);
-        varchar_columns--;
-      }
+      auto columns = working_table->columns_;
+      int column_check = 20; // max number of times to find column
+      do {
+        auto col = columns->at(rand_int(columns->size() - 1));
+        auto col_type =
+            grammar_table::get_col_type(col->col_type_to_string(col->type_));
 
-      if (int_columns == 0 && varchar_columns == 0) {
-        final_tables.emplace_back(table->name_, int_cols_str, var_cols_str);
-        sql_tables.pop_back();
-      }
-    } while (!(int_columns == 0 && varchar_columns == 0) && column_check-- > 0);
+        // if a valid column is not found in the table
+        if (col_type == grammar_table::MAX)
+          continue;
 
-    table->table_mutex.unlock();
+        if (table.column_count.at(col_type) > 0 &&
+            table.column_count.at(col_type) !=
+                (int)table.columns.at(col_type).size()) {
+          table.columns.at(col_type).emplace_back(col->name_);
+        }
+      } while (column_check-- > 0 &&
+               table.total_column_count() != table.total_column_written());
+
+      working_table->table_mutex.unlock();
+
+      if (table.total_column_count() != table.total_column_written())
+        table.reset_columns();
+
+    } while (table.total_column_count() != table.total_column_written() &&
+             table_check-- > 0);
+
+    if (table.total_column_count() != table.total_column_written()) {
+      std::cout << "NOT ABLE TO FIND any table for SQL in 100 iteration " << sql
+                << std::endl;
+      return;
+    }
   }
 
-  if (sql_tables.size() == 0) {
-
-    for (size_t i = 0; i < final_tables.size(); i++) {
-      auto table = final_tables.at(i);
-      auto table_name = "T" + std::to_string(i + 1);
-
-      /* replace int column */
-      for (size_t j = 0; j < table.int_col.size(); j++)
-        sql = std::regex_replace(
-            sql, std::regex(table_name + "_INT_" + std::to_string(j + 1)),
-            table_name + "." + table.int_col.at(j));
-
-      /* replace varchar column */
-      for (size_t j = 0; j < table.varchar_col.size(); j++)
-        sql = std::regex_replace(
-            sql, std::regex(table_name + "_VARCHAR_" + std::to_string(j + 1)),
-            table_name + "." + table.varchar_col.at(j));
-
-      /* replace table "T1 " => tt_N T1 */
-      sql = std::regex_replace(sql, std::regex(table_name + " "),
-                               table.name + " " + table_name + " ");
-      /* replace table "T1$" => tt_N T1*/
-      sql = std::regex_replace(sql, std::regex(table_name + "$"),
-                               table.name + " " + table_name + "");
+  /* replace the found column and table */
+  for (const auto &table : sql_tables) {
+    auto table_name = table.name;
+    for (size_t i = 0; i < table.columns.size(); i++) {
+      auto col = table.columns.at(i);
+      for (size_t j = 0; j < col.size(); j++) {
+        sql =
+            std::regex_replace(sql,
+                               std::regex(table_name + "_" +
+                                          grammar_table::get_col_type(
+                                              (grammar_table::sql_col_types)i) +
+                                          "_" + std::to_string(j + 1)),
+                               table_name + "." + col.at(j));
+      }
     }
-
-    execute_sql(sql, thd);
-  } else
-    std::cout << "NOT ABLE TO FIND any SQL in special SQL" << std::endl;
+    /* replace table "T1 " => tt_N T1 */
+    sql = std::regex_replace(sql, std::regex(table_name + " "),
+                             table.found_name + " " + table.name + " ");
+    /* replace table "T1$" => tt_N T1*/
+    sql = std::regex_replace(sql, std::regex(table_name + "$"),
+                             table.found_name + " " + table.name + "");
+  }
+  if (options->at(Option::COMPARE_RESULT)->getBool()) {
+    compare_between_engine(sql, thd);
+  } else {
+    if (!execute_sql(sql, thd)) {
+      print_and_log("Grammar SQL failed " + sql, thd);
+    }
+  }
 }
 
 /* save metadata to a file */

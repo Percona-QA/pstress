@@ -473,4 +473,81 @@ void alter_database_encryption(Thd1 *thd);
 void create_in_memory_data();
 void generate_metadata_for_tables();
 void create_database_tablespace(Thd1 *thd);
+/* Grammar table class used for parsing the grammar file */
+struct grammar_table {
+  grammar_table(std::string n)
+      : name(n), column_count(grammar_table::MAX, 0),
+        columns(grammar_table::MAX) {}
+  std::string name;
+  std::string found_name;
+  std::vector<int> column_count;
+  std::vector<std::vector<std::string>> columns;
+  bool table_found = false;
+  enum sql_col_types { INT, VARCHAR, DATETIME, DATE, TIMESTAMP, MAX };
+  static sql_col_types get_col_type(std::string type) {
+    if (type == "INT")
+      return INT;
+    if (type == "VARCHAR")
+      return VARCHAR;
+    if (type == "DATETIME")
+      return DATETIME;
+    if (type == "DATE")
+      return DATE;
+    if (type == "TIMESTAMP")
+      return TIMESTAMP;
+    return MAX;
+  }
+  static std::string get_col_type(sql_col_types type) {
+    switch (type) {
+    case INT:
+      return "INT";
+    case VARCHAR:
+      return "VARCHAR";
+    case DATETIME:
+      return "DATETIME";
+    case DATE:
+      return "DATE";
+    case TIMESTAMP:
+      return "TIMESTAMP";
+    case MAX:
+      break;
+    }
+    return "";
+  }
+  int total_column_count() {
+    int total = 0;
+    for (auto &i : column_count)
+      total += i;
+    return total;
+  }
+  int total_column_written() {
+    int total = 0;
+    for (auto &i : columns)
+      total += i.size();
+    return total;
+  }
+  void reset_columns() {
+    for (auto &i : columns) {
+      i.clear();
+    }
+    found_name = "";
+  }
+
+  static std::vector<sql_col_types> get_vector_of_col_type() {
+    std::vector<sql_col_types> v;
+    v.push_back(INT);
+    v.push_back(VARCHAR);
+    v.push_back(DATETIME);
+    v.push_back(DATE);
+    v.push_back(TIMESTAMP);
+    return v;
+  }
+};
+struct grammar_tables {
+  /* use tables move constructor */
+  grammar_tables(std::string sql_, std::vector<grammar_table> tables_)
+      : sql(sql_), tables(tables_){};
+  std::string sql;
+  std::vector<grammar_table> tables;
+};
 #endif
