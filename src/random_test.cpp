@@ -88,18 +88,46 @@ static bool mysql_num_fields_safe(Thd1 *thd, unsigned int req) {
   return ret;
 }
 
-/* compare the result set of two queries */
-static bool compare_query_result(query_result &r1, query_result &r2) {
-  if (r1.size() != r2.size()) {
+static bool save_query_result_in_file(const query_result &result,
+                                      const std::string &file_name) {
+  auto complete_file_name =
+      options->at(Option::LOGDIR)->getString() + "/" + file_name;
+  std::ofstream file(complete_file_name);
+  if (!file.is_open()) {
+    std::cerr << "Failed to open file " << file_name << std::endl;
     return false;
+  }
+  for (auto &row : result) {
+    for (auto &col : row) {
+      file << col << ",";
+    }
+    file << std::endl;
+  }
+  return true;
+}
+
+/* compare the result set of two queries and return true if successsful else
+ * false and also print the result of queries to a  file */
+static bool compare_query_result(const query_result &r1, const query_result &r2,
+                                 Thd1 *thd) {
+  auto print_query_result = [r1, r2]() {
+    save_query_result_in_file(r1, "failed_query_result_1.csv");
+    save_query_result_in_file(r2, "failed_query_result_2.csv");
+    return false;
+  };
+  if (r1.size() != r2.size()) {
+    print_and_log("Number of rows in result set do not match", thd);
+    return print_query_result();
   }
   for (size_t i = 0; i < r1.size(); i++) {
     if (r1[i].size() != r2[i].size()) {
-      return false;
+      print_and_log("Number of columns in result set do not match", thd);
+      return print_query_result();
     }
     for (size_t j = 0; j < r1[i].size(); j++) {
       if (r1[i][j].compare(r2[i][j]) != 0) {
-        return false;
+        print_and_log("Result set do not match", thd);
+        return print_query_result();
       }
     }
   }
@@ -109,9 +137,14 @@ static bool compare_query_result(query_result &r1, query_result &r2) {
 /* return the string of the option */
 static query_result get_query_result(Thd1 *thd) {
   std::vector<std::vector<std::string>> result;
+  if (thd->result == nullptr) {
+    print_and_log("Result set is null", thd);
+    return result;
+  }
+  auto total_fields = mysql_num_fields(thd->result.get());
   while (auto row = mysql_fetch_row_safe(thd)) {
     std::vector<std::string> r;
-    for (unsigned int i = 0; i < mysql_num_fields_safe(thd, 1); i++) {
+    for (unsigned int i = 0; i < total_fields; i++) {
       r.push_back(row[i]);
     }
     result.push_back(r);
@@ -939,7 +972,7 @@ Generated_Column::Generated_Column(std::string name, Table *table)
         str += " " + col->name_ + "+";
       else if (col->type_ == DATE || col->type_ == DATETIME ||
                col->type_ == TIMESTAMP)
-        str += " DATEDIFF(" + rand_date() + "," + col->name_ + ")+";
+        str += " DATEDIFF('" + rand_date() + "'," + col->name_ + ")+";
       else
         throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
                                  " at line " + std::to_string(__LINE__));
@@ -2166,7 +2199,7 @@ static void compare_between_engine(const std::string &sql, Thd1 *thd) {
   }
   auto res_without_forced = get_query_result(thd);
 
-  if (!compare_query_result(res_with_forced, res_without_forced)) {
+  if (!compare_query_result(res_with_forced, res_without_forced, thd)) {
     print_and_log("result set mismatch for" + sql, thd);
     exit(EXIT_FAILURE);
     return set_default();
