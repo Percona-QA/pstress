@@ -163,6 +163,7 @@ struct Option {
     NO_DATETIME,
     COMPARE_RESULT,
     SECONDARY_ENGINE,
+    SLEEP_AFTER_CREATE_TABLE,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
