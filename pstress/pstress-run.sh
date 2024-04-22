@@ -908,7 +908,7 @@ pstress_test(){
         create_local_config component_keyring_vault
       fi
     fi
-    MYEXTRA=
+    MYEXTRA=${MYEXTRA}
     if [ "${ADD_RANDOM_OPTIONS}" == "" ]; then  # Backwards compatibility for .conf files without this option
        ADD_RANDOM_OPTIONS=0
     fi
