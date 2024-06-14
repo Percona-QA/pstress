@@ -1859,7 +1859,15 @@ std::string Table::definition(bool with_index) {
       for (auto id : *indexes_) {
         def += id->definition() + ", ";
       }
+      if (type == FK) {
+        auto fk = static_cast<FK_table *>(this);
+        def += " FOREIGN KEY (ifk_col) REFERENCES " + fk->parent->name_ +
+               " (ipkey), ";
+        def + " ON UPDATE " + fk->enumToString(fk->on_update) + " ON DELETE " +
+            fk->enumToString(fk->on_delete);
+      }
     }
+
   } else {
     /* only load autoinc */
     if (indexes_->size() > 0) {
@@ -3676,7 +3684,7 @@ bool Thd1::run_some_query() {
     if (trx_left > 0) {
       trx_left--;
       if (trx_left == 0) {
-        if (rand_int(100, 1) > options->at(Option::COMMMIT_PROB)->getInt()) {
+        if (rand_int(100, 1) > options->at(Option::COMMIT_PROB)->getInt()) {
           execute_sql("ROLLBACK", this);
         } else {
           execute_sql("COMMIT", this);

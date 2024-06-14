@@ -733,7 +733,7 @@ void add_options() {
   opt->setInt(10);
 
   /* probability of executing commit */
-  opt = newOption(Option::INT, Option::COMMMIT_PROB, "commit-prob");
+  opt = newOption(Option::INT, Option::COMMIT_PROB, "commit-prob");
   opt->help = "probability of executing commit after a transaction. Else it "
               "would be rollback ";
   opt->setInt(95);
