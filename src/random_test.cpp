@@ -301,8 +301,15 @@ int sum_of_all_options(Thd1 *thd) {
       options->at(Option::NO_PARTITION)->getBool())
     throw std::runtime_error("choose either only partition or no partition");
 
-  if (options->at(Option::ONLY_PARTITION)->getBool())
+  if (options->at(Option::ONLY_PARTITION)->getBool()) {
     options->at(Option::NO_TEMPORARY)->setBool("true");
+    options->at(Option::PARTITION_PROB)->setInt(100);
+  }
+
+  if (options->at(Option::ONLY_TEMPORARY)->getBool()) {
+    options->at(Option::NO_PARTITION)->setBool("true");
+    options->at(Option::TEMPORARY_PROB)->setInt(100);
+  }
 
   /* if select is set as zero, disable all type of selects */
   if (options->at(Option::NO_SELECT)->getBool()) {
