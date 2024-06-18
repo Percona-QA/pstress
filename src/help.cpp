@@ -157,6 +157,11 @@ void add_options() {
   opt->help = "Sleep after create table";
   opt->setInt(0);
 
+  opt = newOption(Option::BOOL, Option::EXACT_COLUMNS, "exact-columns");
+  opt->help = "Exact number of columns in a table";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   opt = newOption(Option::INT, Option::CALL_FUNCTION, "call-function-prob");
   opt->help = "Probability of calling function ";
   opt->setInt(10);
@@ -231,6 +236,11 @@ void add_options() {
 
   opt = newOption(Option::BOOL, Option::NO_DATE, "no-date");
   opt->help = "Disable date";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  opt = newOption(Option::BOOL, Option::NO_BIT, "no-bit");
+  opt->help = "Disable bit";
   opt->setBool(false);
   opt->setArgs(no_argument);
 
