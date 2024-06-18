@@ -56,6 +56,7 @@ public:
     DOUBLE,
     BOOL,
     BLOB,
+    BIT,
     GENERATED,
     DATE,
     DATETIME,

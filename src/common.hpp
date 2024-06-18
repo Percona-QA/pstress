@@ -161,9 +161,11 @@ struct Option {
     NO_TIMESTAMP,
     NO_DATE,
     NO_DATETIME,
+    NO_BIT,
     COMPARE_RESULT,
     SECONDARY_ENGINE,
     SLEEP_AFTER_CREATE_TABLE,
+    EXACT_COLUMNS,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
