@@ -1341,7 +1341,7 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
   return true;
 }
 
-bool FK_table::load_fk_constrain(Thd1 *thd) {
+bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
 
   std::string constraint = name_ + "_" + parent->name_;
   std::string pk;
@@ -1362,7 +1362,8 @@ bool FK_table::load_fk_constrain(Thd1 *thd) {
   if (!execute_sql(sql, thd)) {
     print_and_log("Failed to add fk constraint " + constraint + " on " + name_,
                   thd);
-    run_query_failed = true;
+    if (set_run_query_failed)
+      run_query_failed = true;
     return false;
   }
   return true;
@@ -1456,6 +1457,9 @@ void Table::DropCreate(Thd1 *thd) {
           encryption = 'Y';
         table_mutex.unlock();
       }
+  }
+  if (this->type == Table::TABLE_TYPES::FK) {
+    static_cast<FK_table *>(this)->load_fk_constrain(thd);
   }
 }
 

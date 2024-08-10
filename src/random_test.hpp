@@ -309,7 +309,7 @@ struct FK_table : Table {
   /* current only used for step 1. So we do not store in metadata.
    Used to get distince keys of pkey table */
   Table* parent;
-  bool load_fk_constrain(Thd1 *thd);
+  bool load_fk_constrain(Thd1 *thd, bool set_run_query_failed = true);
 
   void pickRefrence(Table *table) {
     on_delete = getRandomForeignKeyAction(table);
