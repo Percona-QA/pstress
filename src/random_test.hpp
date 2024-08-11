@@ -306,9 +306,6 @@ struct FK_table : Table {
     set_refrence(on_update, on_delete);
   }
 
-  /* current only used for step 1. So we do not store in metadata.
-   Used to get distince keys of pkey table */
-  Table* parent;
   bool load_fk_constrain(Thd1 *thd, bool set_run_query_failed = true);
 
   void pickRefrence(Table *table) {

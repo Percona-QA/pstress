@@ -984,11 +984,12 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     str = " " + col_type_to_string(g_type) + " GENERATED ALWAYS AS (";
     for (auto pos : col_pos) {
       auto col = table->columns_->at(pos);
-      if (col->type_ == VARCHAR || col->type_ == CHAR || col->type_ == BLOB)
+      if (col->type_ == VARCHAR || col->type_ == CHAR || col->type_ == BLOB ||
+          col->type_ == BIT)
         str += " LENGTH(" + col->name_ + ")+";
       else if (col->type_ == INT || col->type_ == INTEGER ||
                col->type_ == BOOL || col->type_ == FLOAT ||
-               col->type_ == DOUBLE || col->type_ == BIT)
+               col->type_ == DOUBLE)
         str += " " + col->name_ + "+";
       else if (col->type_ == DATE || col->type_ == DATETIME ||
                col->type_ == TIMESTAMP)
@@ -1044,13 +1045,27 @@ Generated_Column::Generated_Column(std::string name, Table *table)
                                  " at line " + std::to_string(__LINE__));
       }
       auto current_size = rand_int(max_size, 2);
+
       if (column_size > current_size) {
         actual_size += current_size;
-        gen_sql += "SUBSTRING(" + col->name_ + ",1," +
-                   std::to_string(current_size) + "),";
+        if (col->type_ == BIT) {
+          gen_sql = "lpad(bin(" + col->name_ + " >> (" +
+                    std::to_string(column_size) + " - " +
+                    std::to_string(current_size) + "))," +
+                    std::to_string(current_size) + ",'0'),";
+        } else {
+          gen_sql += "SUBSTRING(" + col->name_ + ",1," +
+                     std::to_string(current_size) + "),";
+        }
+
       } else {
         actual_size += column_size;
-        gen_sql += col->name_ + ",";
+        if (col->type_ == BIT) {
+          gen_sql = "lpad(bin(" + col->name_ + ")," +
+                    std::to_string(column_size) + ",'0'),";
+        } else {
+          gen_sql += col->name_ + ",";
+        }
       }
     }
     gen_sql.pop_back();
@@ -1190,6 +1205,7 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
     writer.String(on_update.c_str(), static_cast<SizeType>(on_update.length()));
     writer.String("on_delete");
     writer.String(on_delete.c_str(), static_cast<SizeType>(on_delete.length()));
+    writer.String("parent");
   }
 
   writer.String("engine");
@@ -1343,19 +1359,12 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
 
 bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
 
-  std::string constraint = name_ + "_" + parent->name_;
-  std::string pk;
-  for (const auto &col : *parent->columns_) {
-    if (col->primary_key == true) {
-      pk = col->name_;
-      break;
-    }
-  }
-  assert(pk.size() > 0);
+  std::string parent = name_.substr(0, name_.length() - 3);
+  std::string constraint = name_ + "_" + parent;
 
   std::string sql = "ALTER TABLE " + name_ + " ADD CONSTRAINT " + constraint +
-                    " FOREIGN KEY (ifk_col) REFERENCES " + parent->name_ +
-                    " (" + pk + ")";
+                    " FOREIGN KEY (ifk_col) REFERENCES " + parent + " (" +
+                    "ipkey" + ")";
   sql += " ON UPDATE " + enumToString(on_update);
   sql += " ON DELETE  " + enumToString(on_delete);
 
@@ -2191,18 +2200,12 @@ void generate_metadata_for_tables() {
             parent_table->has_pk()) {
           auto child_table = Table::table_id(Table::FK, i);
           all_tables->push_back(child_table);
-          static_cast<FK_table *>(child_table)->parent = parent_table;
         }
       }
 
       if (!options->at(Option::NO_PARTITION)->getBool() &&
           options->at(Option::PARTITION_PROB)->getInt() > rand_int(100))
         all_tables->push_back(Table::table_id(Table::PARTITION, i));
-      /*
-      if (!options->at(Option::NO_FK)->getBool() &&
-          options->at(Option::FK_PROB)->getInt() > rand_int(100))
-        all_tables->push_back(Table::table_id(Table::FK, i));
-        */
     }
   }
 }
@@ -3085,12 +3088,21 @@ std::string Table::SetClause() {
   return set_clause + " ";
 }
 
+static int table_initial_record(std::string name) {
+  for (auto &table : *all_tables) {
+    if (table->name_.compare(name) == 0)
+      return table->number_of_initial_records;
+  }
+  assert(false);
+}
+
 bool Table::InsertBulkRecord(Thd1 *thd) {
   bool is_list_partition = false;
 
   // if parent has no records, child can't have records
   if (type == FK) {
-    if (static_cast<FK_table *>(this)->parent->number_of_initial_records == 0)
+    std::string parent = name_.substr(0, name_.length() - 3);
+    if (table_initial_record(parent) == 0)
       number_of_initial_records = 0;
   }
 
