@@ -621,6 +621,8 @@ std::vector<std::string> *random_strs_generator(unsigned long int seed) {
 std::vector<std::string> *random_strs;
 
 int rand_int(int upper, int lower) {
+  if (upper == 0)
+    return 0;
   assert(upper >= lower);
   std::uniform_int_distribution<std::mt19937::result_type> dist(
       lower, upper); // distribution in range [lower, upper]
@@ -1205,7 +1207,6 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
     writer.String(on_update.c_str(), static_cast<SizeType>(on_update.length()));
     writer.String("on_delete");
     writer.String(on_delete.c_str(), static_cast<SizeType>(on_delete.length()));
-    writer.String("parent");
   }
 
   writer.String("engine");
@@ -1468,7 +1469,7 @@ void Table::DropCreate(Thd1 *thd) {
       }
   }
   if (this->type == Table::TABLE_TYPES::FK) {
-    static_cast<FK_table *>(this)->load_fk_constrain(thd);
+    static_cast<FK_table *>(this)->load_fk_constrain(thd, false);
   }
 }
 
@@ -2825,8 +2826,12 @@ Column *Table::GetRandomColumn() {
     }
   }
 
+  int max_tries = 0;
   while (col == nullptr) {
-    auto col_pos = rand_int(columns_->size() - 1);
+    int col_pos = 0;
+    if (columns_->size() > 1)
+      col_pos = rand_int(columns_->size() - 1);
+    col_pos = rand_int(columns_->size() - 1);
     switch (columns_->at(col_pos)->type_) {
     case Column::BOOL:
       if (rand_int(10000) == 1 || only_bool(columns_))
@@ -2852,6 +2857,11 @@ Column *Table::GetRandomColumn() {
       break;
       /* Do not use FLOAT and DOUBLE in where clause */
     case Column::FLOAT:
+      if (max_tries == 50) {
+        col = columns_->at(col_pos);
+        break;
+      }
+      max_tries++;
       break;
     }
   }
@@ -3094,6 +3104,7 @@ static int table_initial_record(std::string name) {
       return table->number_of_initial_records;
   }
   assert(false);
+  return 0;
 }
 
 bool Table::InsertBulkRecord(Thd1 *thd) {
