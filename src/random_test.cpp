@@ -3104,7 +3104,6 @@ static int table_initial_record(std::string name) {
       return table->number_of_initial_records;
   }
   assert(false);
-  return 0;
 }
 
 bool Table::InsertBulkRecord(Thd1 *thd) {
