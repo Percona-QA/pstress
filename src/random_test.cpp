@@ -1361,7 +1361,8 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
 bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
 
   std::string parent = name_.substr(0, name_.length() - 3);
-  std::string constraint = name_ + "_" + parent;
+  std::string constraint =
+      name_ + "_" + parent + std::to_string(rand_int(1000000));
 
   std::string sql = "ALTER TABLE " + name_ + " ADD CONSTRAINT " + constraint +
                     " FOREIGN KEY (ifk_col) REFERENCES " + parent + " (" +
@@ -1444,7 +1445,13 @@ void Table::DropCreate(Thd1 *thd) {
     execute_sql("SET SESSION wsrep_osu_method=NBO ", thd);
     set_session_nbo = true;
   }
-  execute_sql("DROP TABLE " + name_, thd);
+  if (!execute_sql("ALTER  TABLE " + name_ + " RENAME TO " + name_ +
+                       std::to_string(rand_int(1000000)),
+                   thd)) {
+    print_and_log("Failed to drop table " + name_, thd);
+    return;
+  }
+
   if (set_session_nbo) {
     execute_sql("SET SESSION wsrep_osu_method=DEFAULT ", thd);
   }
