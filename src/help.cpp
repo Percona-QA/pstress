@@ -181,6 +181,13 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /* Add new table */
+  opt = newOption(Option::INT, Option::ADD_NEW_TABLE, "add-table");
+  opt->help = "Add new table";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* disable virtual columns*/
   opt = newOption(Option::BOOL, Option::NO_VIRTUAL_COLUMNS, "no-virtual");
   opt->help = "Disable virtual columns";

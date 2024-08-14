@@ -32,23 +32,25 @@ const int version = 2;
 todo allow this option to be configured by user */
 const int g_integer_range = 100;
 
-static bool encrypted_temp_tables = false;
-static bool encrypted_sys_tablelspaces = false;
-static bool keyring_comp_status = false;
-static std::vector<Table *> *all_tables = new std::vector<Table *>;
-static std::vector<std::string> g_undo_tablespace;
-static std::vector<std::string> g_encryption;
-static std::vector<std::string> g_compression = {"none", "zlib", "lz4"};
-static std::vector<std::string> g_row_format;
-static std::vector<std::string> g_tablespace;
-static std::vector<std::string> locks;
-static std::vector<std::string> algorithms;
-static std::vector<int> g_key_block_size;
-static int g_max_columns_length = 30;
-static int g_innodb_page_size;
-static int sum_of_all_opts = 0; // sum of all probablility
+bool encrypted_temp_tables = false;
+bool encrypted_sys_tablelspaces = false;
+bool keyring_comp_status = false;
+std::vector<Table *> *all_tables = new std::vector<Table *>;
+std::vector<std::string> g_undo_tablespace;
+std::vector<std::string> g_encryption;
+std::vector<std::string> g_compression = {"none", "zlib", "lz4"};
+std::vector<std::string> g_row_format;
+std::vector<std::string> g_tablespace;
+std::vector<std::string> locks;
+std::vector<std::string> algorithms;
+std::vector<int> g_key_block_size;
+int g_max_columns_length = 30;
+int g_innodb_page_size;
+int sum_of_all_opts = 0; // sum of all probablility
 std::mutex ddl_logs_write;
-static std::chrono::system_clock::time_point start_time =
+std::mutex all_table_mutex;
+
+std::chrono::system_clock::time_point start_time =
     std::chrono::system_clock::now();
 
 std::atomic<int> table_started(0);
@@ -156,6 +158,7 @@ static query_result get_query_result(Thd1 *thd) {
  * first step or during the prepare, so you would have only tables that are not
  * renamed  */
 static Table *pick_table(Table::TABLE_TYPES type, int id) {
+  std::lock_guard<std::mutex> lock(all_table_mutex);
   std::string name = TABLE_PREFIX + std::to_string(id);
   if (type == Table::FK) {
     name += FK_SUFFIX;
@@ -1296,18 +1299,20 @@ std::string Index::definition() {
   return def;
 }
 
-bool Table::load(Thd1 *thd) {
+bool Table::load(Thd1 *thd, bool bulk_insert,
+                 bool set_global_run_query_failed) {
   thd->ddl_query = true;
   if (!execute_sql(definition(false), thd)) {
     print_and_log("Failed to create table " + name_, thd);
-    run_query_failed = true;
+    if (set_global_run_query_failed)
+      run_query_failed = true;
     return false;
   }
   std::this_thread::sleep_for(std::chrono::seconds(
       options->at(Option::SLEEP_AFTER_CREATE_TABLE)->getInt()));
 
   /* load default data in table */
-  if (!options->at(Option::JUST_LOAD_DDL)->getBool()) {
+  if (!options->at(Option::JUST_LOAD_DDL)->getBool() && bulk_insert) {
 
     thd->ddl_query = false;
     if (!InsertBulkRecord(thd))
@@ -1320,7 +1325,8 @@ bool Table::load(Thd1 *thd) {
   }
 
   if (this->type == Table::TABLE_TYPES::FK) {
-    if (!static_cast<FK_table *>(this)->load_fk_constrain(thd)) {
+    if (!static_cast<FK_table *>(this)->load_fk_constrain(
+            thd, set_global_run_query_failed)) {
       return false;
     }
   }
@@ -1358,11 +1364,27 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
   return true;
 }
 
+/* Create new table without new records */
+static void AddNewTable(Thd1 *thd) {
+  std::unique_lock<std::mutex> lock(all_table_mutex);
+  int table_id = rand_int(options->at(Option::TABLES)->getInt(), 1);
+  lock.unlock();
+  auto table = Table::table_id(Table::FK, table_id, true);
+  if (!table->load(thd, false, false)) {
+    return;
+  }
+  lock.lock();
+  all_tables->push_back(table);
+  lock.unlock();
+  print_and_log("Created new table " + table->name_, thd);
+}
+
 bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
 
-  std::string parent = name_.substr(0, name_.length() - 3);
+  std::string parent = name_.substr(0, name_.find("_", name_.find("_") + 1));
+
   std::string constraint =
-      name_ + "_" + parent + std::to_string(rand_int(1000000));
+      name_ + "_" + parent + std::to_string(rand_int(10000));
 
   std::string sql = "ALTER TABLE " + name_ + " ADD CONSTRAINT " + constraint +
                     " FOREIGN KEY (ifk_col) REFERENCES " + parent + " (" +
@@ -1942,9 +1964,13 @@ void Table::CreateDefaultIndex() {
 }
 
 /* Create new table and pick some attributes */
-Table *Table::table_id(TABLE_TYPES type, int id) {
+Table *Table::table_id(TABLE_TYPES type, int id, bool suffix) {
   Table *table;
   std::string name = TABLE_PREFIX + std::to_string(id);
+  if (suffix) {
+    name += "_" + std::to_string(rand_int(1000000));
+  }
+
   switch (type) {
   case PARTITION:
     table = new Partition(name + PARTITION_SUFFIX);
@@ -2201,7 +2227,6 @@ void generate_metadata_for_tables() {
       if (!options->at(Option::ONLY_PARTITION)->getBool()) {
         auto parent_table = Table::table_id(Table::NORMAL, i);
         all_tables->push_back(parent_table);
-
         /* Create FK table */
         if (!options->at(Option::NO_FK)->getBool() &&
             options->at(Option::FK_PROB)->getInt() > rand_int(100) &&
@@ -3106,6 +3131,7 @@ std::string Table::SetClause() {
 }
 
 static int table_initial_record(std::string name) {
+  std::lock_guard<std::mutex> lock(all_table_mutex);
   for (auto &table : *all_tables) {
     if (table->name_.compare(name) == 0)
       return table->number_of_initial_records;
@@ -3452,8 +3478,8 @@ static std::vector<grammar_tables> load_grammar_sql_from() {
   return tables;
 }
 
-/* return preformatted sql */
-static void grammar_sql(std::vector<Table *> *all_tables, Thd1 *thd) {
+/* return preformatted sql does not work on temporary table */
+static void grammar_sql(Thd1 *thd) {
 
   static auto all_tables_from_grammar = load_grammar_sql_from();
 
@@ -3470,7 +3496,9 @@ static void grammar_sql(std::vector<Table *> *all_tables, Thd1 *thd) {
   for (auto &table : sql_tables) {
     int table_check = 100; // try to find table
     do {
+      std::unique_lock<std::mutex> lock(all_table_mutex);
       auto working_table = all_tables->at(rand_int(all_tables->size() - 1));
+      lock.unlock();
       working_table->table_mutex.lock();
       table.found_name = working_table->name_;
 
@@ -3933,13 +3961,13 @@ bool Thd1::run_some_query() {
                   options->at(Option::TEMPORARY_PROB)->getInt();
 
   /* create temporary table */
-  std::vector<Table *> *all_session_tables = new std::vector<Table *>;
+  std::vector<Table *> *session_temp_tables = new std::vector<Table *>;
   for (int i = 0; i < temp_tables; i++) {
 
     Table *table = Table::table_id(Table::TEMPORARY, i);
     if (!table->load(this))
       return false;
-    all_session_tables->push_back(table);
+    session_temp_tables->push_back(table);
   }
 
   /* prepare is passed, create all tables */
@@ -4026,10 +4054,6 @@ bool Thd1::run_some_query() {
   rng = std::mt19937(set_seed(this));
   thread_log << " value of rand_int(100) " << rand_int(100) << std::endl;
 
-  /* combine session tables with all tables */
-  all_session_tables->insert(all_session_tables->end(), all_tables->begin(),
-                             all_tables->end());
-
   /* freqency of all options per thread */
   int opt_feq[Option::MAX][2] = {{0, 0}};
 
@@ -4038,7 +4062,7 @@ bool Thd1::run_some_query() {
   int trx_left = 0;
   int current_save_point = 0;
 
-  int pick_table_id = thread_id % all_session_tables->size();
+  int pick_table_id = 0;
   while (std::chrono::system_clock::now() < end) {
 
 
@@ -4074,11 +4098,16 @@ bool Thd1::run_some_query() {
       trx_left = rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
     }
 
-
-    if (!options->at(Option::THREAD_PER_TABLE)->getBool()) {
-      pick_table_id = rand_int(all_session_tables->size() - 1);
+    std::unique_lock<std::mutex> lock(all_table_mutex);
+    if (options->at(Option::THREAD_PER_TABLE)->getBool()) {
+      /*todo ensure that all tables are used */
+      pick_table_id = thread_id;
+    } else {
+      pick_table_id = rand_int(all_tables->size() - 1);
     }
-    auto table = all_session_tables->at(pick_table_id);
+    /* todo enable temporary table are disabled */
+    auto table = all_tables->at(pick_table_id);
+    lock.unlock();
 
     auto option = pick_some_option();
     ddl_query = options->at(option)->ddl == true ? true : false;
@@ -4153,6 +4182,9 @@ bool Thd1::run_some_query() {
     case Option::CHECK_TABLE:
       table->Check(this);
       break;
+    case Option::ADD_NEW_TABLE:
+      AddNewTable(this);
+      break;
     case Option::ADD_DROP_PARTITION:
       if (table->type == Table::PARTITION)
         static_cast<Partition *>(table)->AddDrop(this);
@@ -4194,7 +4226,7 @@ bool Thd1::run_some_query() {
       create_alter_drop_undo(this);
       break;
     case Option::GRAMMAR_SQL:
-      grammar_sql(all_session_tables, this);
+      grammar_sql(this);
       break;
 
     default:
@@ -4226,10 +4258,10 @@ bool Thd1::run_some_query() {
   }
 
   /* cleanup session temporary tables tables */
-  for (auto &table : *all_session_tables)
+  for (auto &table : *session_temp_tables)
     if (table->type == Table::TEMPORARY)
       delete table;
 
-  delete all_session_tables;
+  delete session_temp_tables;
   return true;
 }

@@ -203,12 +203,13 @@ struct Table {
   enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, FK } type;
 
   Table(std::string n);
-  static Table *table_id(TABLE_TYPES choice, int id);
+  static Table *table_id(TABLE_TYPES choice, int id, bool suffix = false);
   std::string definition(bool with_index = true);
   /* add secondary indexes */
   bool load_secondary_indexes(Thd1 *thd);
   /* execute table definition, Bulk data and then secondary index */
-  bool load(Thd1 *thd);
+  bool load(Thd1 *thd, bool bulk_insert = true,
+            bool set_global_run_query_failed = true);
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
