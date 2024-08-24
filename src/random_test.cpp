@@ -6,13 +6,13 @@
 #include "random_test.hpp"
 #include "common.hpp"
 #include "node.hpp"
+#include <array>
 #include <iomanip>
+#include <libgen.h>
 #include <regex>
 #include <sstream>
 #include <string>
-#include <libgen.h>
 #include <unistd.h>
-
 
 #define CR_SERVER_GONE_ERROR 2006
 #define CR_SERVER_LOST 2013
@@ -36,6 +36,7 @@ bool encrypted_temp_tables = false;
 bool encrypted_sys_tablelspaces = false;
 bool keyring_comp_status = false;
 std::vector<Table *> *all_tables = new std::vector<Table *>;
+size_t initial_tables = 0;
 std::vector<std::string> g_undo_tablespace;
 std::vector<std::string> g_encryption;
 std::vector<std::string> g_compression = {"none", "zlib", "lz4"};
@@ -47,13 +48,14 @@ std::vector<int> g_key_block_size;
 int g_max_columns_length = 30;
 int g_innodb_page_size;
 int sum_of_all_opts = 0; // sum of all probablility
+std::map<int, Option *> map_options_range;
 std::mutex ddl_logs_write;
 std::mutex all_table_mutex;
 
 std::chrono::system_clock::time_point start_time =
     std::chrono::system_clock::now();
 
-std::atomic<int> table_started(0);
+std::atomic<size_t> table_started(0);
 std::atomic<size_t> table_completed(0);
 std::atomic<size_t> check_failures(0);
 std::atomic_flag lock_stream = ATOMIC_FLAG_INIT;
@@ -505,9 +507,10 @@ int sum_of_all_options(Thd1 *thd) {
       thd->thread_log << opt->getName() << "=>" << opt->getInt() << std::endl;
     else if (opt->getType() == Option::BOOL)
       thd->thread_log << opt->getName() << "=>" << opt->getBool() << std::endl;
-    if (!opt->sql)
+    if (!opt->sql || opt->getInt() == 0)
       continue;
     total += opt->getInt();
+    map_options_range[total] = opt;
   }
 
   if (total == 0)
@@ -517,16 +520,10 @@ int sum_of_all_options(Thd1 *thd) {
 
 /* return some options */
 Option::Opt pick_some_option() {
-  int rd = rand_int(sum_of_all_opts, 1);
-  for (auto &opt : *options) {
-    if (opt == nullptr || !opt->sql)
-      continue;
-    if (rd <= opt->getInt())
-      return opt->getOption();
-    else
-      rd -= opt->getInt();
-  }
-  return Option::MAX;
+  int prob = rand_int(sum_of_all_opts);
+  auto it = map_options_range.lower_bound(prob);
+  assert(it != map_options_range.end());
+  return it->second->getOption();
 }
 
 int sum_of_all_server_options() {
@@ -3940,6 +3937,7 @@ bool Thd1::load_metadata() {
 
   if (options->at(Option::TABLES)->getInt() <= 0)
     throw std::runtime_error("no table to work on \n");
+  initial_tables = all_tables->size();
 
   return 1;
 }
@@ -3975,7 +3973,7 @@ bool Thd1::run_some_query() {
       options->at(Option::STEP)->getInt() == 1) {
     auto current = table_started++;
 
-    while (current <= options->at(Option::TABLES)->getInt()) {
+    while (current <= (size_t)options->at(Option::TABLES)->getInt()) {
       /* first load normal table , then FK and then partition
        FK table uses thd->unique_key vector to pick random FK
        thd->unique_key is populated from primary key */
@@ -3993,7 +3991,7 @@ bool Thd1::run_some_query() {
     }
 
     // wait for all tables to finish loading
-    while (table_completed < all_tables->size()) {
+    while (table_completed < initial_tables) {
       thread_log << "Waiting for all threds to finish initial load "
                  << std::endl;
       std::chrono::seconds dura(1);
@@ -4008,10 +4006,9 @@ bool Thd1::run_some_query() {
     this->unique_keys.resize(0);
 
   } else if (options->at(Option::CHECK_TABLE_PRELOAD)->getBool()) {
-    int number_of_tables = all_tables->size();
     auto current = table_started++;
 
-    while (current < number_of_tables) {
+    while (current < initial_tables) {
       auto table = all_tables->at(current);
       check_tables_partitions_preload(table, this);
       table_completed++;
@@ -4111,6 +4108,10 @@ bool Thd1::run_some_query() {
 
     auto option = pick_some_option();
     ddl_query = options->at(option)->ddl == true ? true : false;
+
+    if (thread_id != 1 && options->at(Option::SINGLE_THREAD_DDL)->getBool() &&
+        ddl_query == true)
+      continue;
 
     switch (option) {
     case Option::DROP_INDEX:

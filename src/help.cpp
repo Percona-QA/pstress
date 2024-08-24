@@ -188,6 +188,11 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  opt = newOption(Option::BOOL, Option::SINGLE_THREAD_DDL, "single-thread-ddl");
+  opt->help = "Single thread DDL. Execute all ddl by a single thread";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* disable virtual columns*/
   opt = newOption(Option::BOOL, Option::NO_VIRTUAL_COLUMNS, "no-virtual");
   opt->help = "Disable virtual columns";

@@ -167,6 +167,7 @@ struct Option {
     SLEEP_AFTER_CREATE_TABLE,
     EXACT_COLUMNS,
     ADD_NEW_TABLE,
+    SINGLE_THREAD_DDL,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
