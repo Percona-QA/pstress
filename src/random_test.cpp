@@ -3432,7 +3432,7 @@ static std::vector<grammar_tables> load_grammar_sql_from() {
       }
       myfile.close();
     } else
-      throw std::runtime_error("unable to open file " + file);
+      std::cout << "Unable to open file " << file << std::endl;
   }
   std::vector<grammar_tables> tables;
 
@@ -4064,6 +4064,14 @@ bool Thd1::run_some_query() {
 
 
     /* check if we need to make sql as part of existing or new trx */
+    auto option = pick_some_option();
+    ddl_query = options->at(option)->ddl == true ? true : false;
+
+    /* if it is ddl query and we are in trx, complete it */
+    if (trx_left != 0 && ddl_query) {
+      trx_left = 1;
+    }
+
     if (trx_left > 0) {
       trx_left--;
       if (trx_left == 0) {
@@ -4090,7 +4098,8 @@ bool Thd1::run_some_query() {
     }
 
     if (trx_left == 0 &&
-        rand_int(1000) < options->at(Option::TRANSATION_PRB_K)->getInt()) {
+        rand_int(1000) < options->at(Option::TRANSATION_PRB_K)->getInt() &&
+        !ddl_query) {
       execute_sql("START TRANSACTION", this);
       trx_left = rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
     }
@@ -4105,9 +4114,6 @@ bool Thd1::run_some_query() {
     /* todo enable temporary table are disabled */
     auto table = all_tables->at(pick_table_id);
     lock.unlock();
-
-    auto option = pick_some_option();
-    ddl_query = options->at(option)->ddl == true ? true : false;
 
     if (thread_id != 1 && options->at(Option::SINGLE_THREAD_DDL)->getBool() &&
         ddl_query == true)

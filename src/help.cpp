@@ -165,6 +165,7 @@ void add_options() {
   opt = newOption(Option::INT, Option::CALL_FUNCTION, "call-function-prob");
   opt->help = "Probability of calling function ";
   opt->setInt(10);
+  opt->setDDL();
   opt->setSQL();
 
   /* todo set default to all */
