@@ -6,7 +6,6 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
-#include <document.h>
 #include <filereadstream.h>
 #include <fstream>
 #include <iostream>
@@ -15,6 +14,7 @@
 #include <mysql.h>
 #include <prettywriter.h>
 #include <random>
+#include <shared_mutex>
 #include <sstream>
 #include <string.h>
 #include <unordered_map>
@@ -37,7 +37,7 @@
 #define opt_bool(a) options->at(Option::a)->getBool();
 #define opt_string(a) options->at(Option::a)->getString()
 
-int rand_int(int upper, int lower = 0);
+int rand_int(long int upper, long int lower = 0);
 std::string rand_float(float upper, float lower = 0);
 std::string rand_double(double upper, double lower = 0);
 std::string rand_string(int upper, int lower = 2);
@@ -61,6 +61,7 @@ public:
     DATE,
     DATETIME,
     TIMESTAMP,
+    TEXT,
     COLUMN_MAX // should be last
   } type_;
   /* used to create new table/alter table add column*/
@@ -99,6 +100,7 @@ public:
   bool primary_key = false;
   bool auto_increment = false;
   bool compressed = false; // percona type compressed
+  bool not_secondary = false;
   std::vector<int> unique_values;
   Table *table_;
   virtual bool is_col_string() {
@@ -113,6 +115,17 @@ struct Blob_Column : public Column {
   Blob_Column(std::string name, Table *table);
   Blob_Column(std::string name, Table *table, std::string sub_type_);
   std::string sub_type; // sub_type can be tiny, medium, large blob
+  std::string clause() { return sub_type; };
+  template <typename Writer> void Serialize(Writer &writer) const;
+  bool is_col_string() { return false; }
+  bool is_col_number() { return false; }
+  std::string rand_value();
+};
+
+struct Text_Column : public Column {
+  Text_Column(std::string name, Table *table);
+  Text_Column(std::string name, Table *table, std::string sub_type_);
+  std::string sub_type; // sub_type can be tiny, medium, large text
   std::string clause() { return sub_type; };
   template <typename Writer> void Serialize(Writer &writer) const;
   bool is_col_string() { return true; }
@@ -139,7 +152,7 @@ struct Generated_Column : public Column {
   COLUMN_TYPES generate_type() { return g_type; };
   bool is_col_string() {
     return g_type == COLUMN_TYPES::CHAR || g_type == COLUMN_TYPES::VARCHAR ||
-           g_type == COLUMN_TYPES::BLOB;
+           g_type == COLUMN_TYPES::BLOB || g_type == COLUMN_TYPES::TEXT;
   }
   bool is_col_number() {
     return g_type == COLUMN_TYPES::INT || g_type == COLUMN_TYPES::INTEGER;
@@ -186,9 +199,9 @@ struct Thd1 {
   std::atomic<unsigned long long> &performed_queries_total;
   std::atomic<unsigned long long> &failed_queries_total;
   std::shared_ptr<MYSQL_RES> result; // result set of sql
-  bool ddl_query = false;     // is the query ddl
-  bool success = false;       // if the sql is successfully executed
-  int max_con_fail_count = 0; // consecutive failed queries
+  bool ddl_query = false;            // is the query ddl
+  bool success = false;              // if the sql is successfully executed
+  int max_con_fail_count = 0;        // consecutive failed queries
 
   /* for loading Bulkdata, Primary key of current table is stored in this vector
    * which  is used for the FK tables  */
@@ -222,21 +235,25 @@ struct Table {
   void Check(Thd1 *thd);
   void Truncate(Thd1 *thd);
   void SetEncryption(Thd1 *thd);
+  void EnforceRebuildInSecondary(Thd1 *thd);
   void SetEncryptionInplace(Thd1 *thd);
   void SetTableCompression(Thd1 *thd);
   void ModifyColumn(Thd1 *thd);
   void InsertRandomRow(Thd1 *thd);
+  void Compare_between_engine(const std::string &sql, Thd1 *thd);
   void InsertClause();
   bool InsertBulkRecord(Thd1 *thd);
   void DropColumn(Thd1 *thd);
   void AddColumn(Thd1 *thd);
+  void ModifyColumnSecondaryEngine(Thd1 *thd);
   void DropIndex(Thd1 *thd);
   void AddIndex(Thd1 *thd);
-  void alter_discard_tablespace(Thd1 *thd);
+  void Alter_discard_tablespace(Thd1 *thd);
   void DeleteRandomRow(Thd1 *thd);
   void UpdateRandomROW(Thd1 *thd);
   void SelectRandomRow(Thd1 *thd);
   void CreateFunction(Thd1 *thd);
+  void SetSecondaryEngine(Thd1 *thd);
   std::string GetRandomPartition();
   Column *GetRandomColumn();
   std::string GetWherePrecise();
@@ -264,7 +281,8 @@ struct Table {
   // std::string data_directory; todo add corressponding code
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
-  std::mutex table_mutex;
+  mutable std::mutex table_mutex;
+  mutable std::shared_mutex dml_mutex;
 
   const std::string get_type() const {
     switch (type) {
@@ -280,7 +298,7 @@ struct Table {
     }
     return "FAIL";
   };
-  bool has_pk () const ;
+  bool has_pk() const;
 
   void set_type(std::string s) {
     if (s.compare("PARTITION") == 0)
@@ -294,11 +312,9 @@ struct Table {
   };
 };
 
-
 /* Fk table */
 struct FK_table : Table {
-  FK_table(std::string n) : Table(n) {
-  };
+  FK_table(std::string n) : Table(n){};
 
   /* conustruct used for load_metadata */
   FK_table(std::string n, std::string on_update, std::string on_delete)
@@ -308,7 +324,7 @@ struct FK_table : Table {
 
   /* current only used for step 1. So we do not store in metadata.
    Used to get distince keys of pkey table */
-  Table* parent;
+  Table *parent;
   bool load_fk_constrain(Thd1 *thd);
 
   void pickRefrence(Table *table) {
@@ -318,10 +334,10 @@ struct FK_table : Table {
 
   enum class ForeignKeyAction {
     RESTRICT,
-    CASCADE,
     SET_NULL,
     NO_ACTION,
-    SET_DEFAULT
+    SET_DEFAULT,
+    CASCADE
   };
   std::string enumToString(ForeignKeyAction value) const {
     switch (value) {
@@ -373,8 +389,12 @@ struct FK_table : Table {
         }
       }
     }
+    /* Grep any value upto cascade */
+    int randomValue = rand_int(static_cast<int>(ForeignKeyAction::CASCADE));
 
-    int randomValue = rand_int(static_cast<int>(ForeignKeyAction::SET_DEFAULT));
+    if (options->at(Option::NO_FK_CASCADE)->getBool()) {
+      randomValue = rand_int(static_cast<int>(ForeignKeyAction::SET_DEFAULT));
+    }
     return static_cast<ForeignKeyAction>(randomValue);
   }
 
@@ -482,12 +502,25 @@ struct grammar_table {
   std::string name;
   std::string found_name;
   std::vector<int> column_count;
-  std::vector<std::vector<std::string>> columns;
+  /* each pair contains random value*/
+  std::vector<std::vector<std::pair<std::string, std::string>>> columns;
   bool table_found = false;
-  enum sql_col_types { INT, VARCHAR, DATETIME, DATE, TIMESTAMP, MAX };
+  enum sql_col_types {
+    INT,
+    CHAR,
+    VARCHAR,
+    DATETIME,
+    DATE,
+    TIMESTAMP,
+    FLOAT,
+    TEXT,
+    MAX
+  };
   static sql_col_types get_col_type(std::string type) {
     if (type == "INT")
       return INT;
+    if (type == "CHAR")
+      return CHAR;
     if (type == "VARCHAR")
       return VARCHAR;
     if (type == "DATETIME")
@@ -496,6 +529,10 @@ struct grammar_table {
       return DATE;
     if (type == "TIMESTAMP")
       return TIMESTAMP;
+    if (type == "FLOAT")
+      return FLOAT;
+    if (type == "TEXT")
+      return TEXT;
     return MAX;
   }
   static std::string get_col_type(sql_col_types type) {
@@ -504,12 +541,18 @@ struct grammar_table {
       return "INT";
     case VARCHAR:
       return "VARCHAR";
+    case CHAR:
+      return "CHAR";
     case DATETIME:
       return "DATETIME";
     case DATE:
       return "DATE";
     case TIMESTAMP:
       return "TIMESTAMP";
+    case FLOAT:
+      return "FLOAT";
+    case TEXT:
+      return "TEXT";
     case MAX:
       break;
     }
@@ -535,13 +578,11 @@ struct grammar_table {
   }
 
   static std::vector<sql_col_types> get_vector_of_col_type() {
-    std::vector<sql_col_types> v;
-    v.push_back(INT);
-    v.push_back(VARCHAR);
-    v.push_back(DATETIME);
-    v.push_back(DATE);
-    v.push_back(TIMESTAMP);
-    return v;
+    std::vector<sql_col_types> all_types;
+    for (int i = 0; i < MAX; i++) {
+      all_types.push_back(static_cast<sql_col_types>(i));
+    }
+    return all_types;
   }
 };
 struct grammar_tables {
