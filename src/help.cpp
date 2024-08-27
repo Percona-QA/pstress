@@ -483,6 +483,13 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /* Alter table Storage Engine to Innodb with different Algorithms */
+  opt = newOption(Option::INT, Option::ALTER_ENGINE, "alter-table-engine");
+  opt->help = "alter table engine";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* Add column */
   opt = newOption(Option::INT, Option::ADD_COLUMN, "add-column");
   opt->help = "alter table add some random column";

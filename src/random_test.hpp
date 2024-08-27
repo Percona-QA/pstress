@@ -197,6 +197,7 @@ struct Table {
   void SetEncryption(Thd1 *thd);
   void SetEncryptionInplace(Thd1 *thd);
   void SetTableCompression(Thd1 *thd);
+  void SetAlterEngine(Thd1 *thd);
   void ModifyColumn(Thd1 *thd);
   void InsertRandomRow(Thd1 *thd);
   bool InsertBulkRecord(Thd1 *thd, size_t number_of_records);
