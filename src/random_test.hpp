@@ -204,7 +204,7 @@ struct Table {
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id, bool suffix = false);
-  std::string definition(bool with_index = true);
+  std::string definition(bool with_index = true, bool with_fk = true);
   /* add secondary indexes */
   bool load_secondary_indexes(Thd1 *thd);
   /* execute table definition, Bulk data and then secondary index */
@@ -308,6 +308,8 @@ struct FK_table : Table {
   }
 
   bool load_fk_constrain(Thd1 *thd, bool set_run_query_failed = true);
+
+  std::string fk_constrain();
 
   void pickRefrence(Table *table) {
     on_delete = getRandomForeignKeyAction(table);

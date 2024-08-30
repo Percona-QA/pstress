@@ -165,8 +165,8 @@ void add_options() {
   opt = newOption(Option::INT, Option::CALL_FUNCTION, "call-function-prob");
   opt->help = "Probability of calling function ";
   opt->setInt(10);
-  opt->setDDL();
   opt->setSQL();
+  opt->setDDL();
 
   /* todo set default to all */
   opt = newOption(Option::STRING, Option::ENCRYPTION_TYPE, "encryption-type");

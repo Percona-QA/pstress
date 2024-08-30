@@ -1365,33 +1365,23 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
 static void AddNewTable(Thd1 *thd) {
   std::unique_lock<std::mutex> lock(all_table_mutex);
   int table_id = rand_int(options->at(Option::TABLES)->getInt(), 1);
-  lock.unlock();
   auto table = Table::table_id(Table::FK, table_id, true);
-  if (!table->load(thd, false, false)) {
-    return;
-  }
-  lock.lock();
   all_tables->push_back(table);
   lock.unlock();
+  if (!execute_sql(table->definition(true, true), thd)) {
+    print_and_log("Failed to create table " + table->name_, thd);
+    return;
+  }
   print_and_log("Created new table " + table->name_, thd);
 }
 
 bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
-
-  std::string parent = name_.substr(0, name_.find("_", name_.find("_") + 1));
-
-  std::string constraint =
-      name_ + "_" + parent + std::to_string(rand_int(10000));
-
-  std::string sql = "ALTER TABLE " + name_ + " ADD CONSTRAINT " + constraint +
-                    " FOREIGN KEY (ifk_col) REFERENCES " + parent + " (" +
-                    "ipkey" + ")";
-  sql += " ON UPDATE " + enumToString(on_update);
-  sql += " ON DELETE  " + enumToString(on_delete);
+  std::string constraint = name_ + "_" + std::to_string(rand_int(100));
+  std::string sql = "ALTER TABLE " + name_ + " ADD  CONSTRAINT " + constraint +
+                    fk_constrain();
 
   if (!execute_sql(sql, thd)) {
-    print_and_log("Failed to add fk constraint " + constraint + " on " + name_,
-                  thd);
+    print_and_log("Failed to add fk constraint on " + name_, thd);
     if (set_run_query_failed)
       run_query_failed = true;
     return false;
@@ -1457,6 +1447,16 @@ Partition::Partition(std::string n) : Table(n) {
   }
 }
 
+std::string FK_table::fk_constrain() {
+  std::string parent = name_.substr(0, name_.find("_", name_.find("_") + 1));
+
+  std::string sql =
+      " FOREIGN KEY (ifk_col) REFERENCES " + parent + " (" + "ipkey" + ")";
+  sql += " ON UPDATE " + enumToString(on_update);
+  sql += " ON DELETE  " + enumToString(on_delete);
+  return sql;
+}
+
 void Table::DropCreate(Thd1 *thd) {
   int nbo_prob = options->at(Option::DROP_WITH_NBO)->getInt();
   bool set_session_nbo = false;
@@ -1464,9 +1464,7 @@ void Table::DropCreate(Thd1 *thd) {
     execute_sql("SET SESSION wsrep_osu_method=NBO ", thd);
     set_session_nbo = true;
   }
-  if (!execute_sql("ALTER  TABLE " + name_ + " RENAME TO " + name_ +
-                       std::to_string(rand_int(1000000)),
-                   thd)) {
+  if (!execute_sql("DROP TABLE " + name_, thd)) {
     print_and_log("Failed to drop table " + name_, thd);
     return;
   }
@@ -1474,7 +1472,7 @@ void Table::DropCreate(Thd1 *thd) {
   if (set_session_nbo) {
     execute_sql("SET SESSION wsrep_osu_method=DEFAULT ", thd);
   }
-  std::string def = definition();
+  std::string def = definition(true, true);
   if (!execute_sql(def, thd) && tablespace.size() > 0) {
     std::string tbs = " TABLESPACE=" + tablespace + "_rename";
 
@@ -1493,9 +1491,6 @@ void Table::DropCreate(Thd1 *thd) {
           encryption = 'Y';
         table_mutex.unlock();
       }
-  }
-  if (this->type == Table::TABLE_TYPES::FK) {
-    static_cast<FK_table *>(this)->load_fk_constrain(thd, false);
   }
 }
 
@@ -2077,7 +2072,7 @@ bool Table::has_pk() const {
 }
 
 /* prepare table definition */
-std::string Table::definition(bool with_index) {
+std::string Table::definition(bool with_index, bool with_fk) {
   std::string def = "CREATE";
   if (type == TEMPORARY)
     def += " TEMPORARY";
@@ -2116,6 +2111,13 @@ std::string Table::definition(bool with_index) {
     /* only load autoinc */
     if (indexes_->size() > 0) {
       def += indexes_->at(auto_inc_index)->definition() + ", ";
+    }
+  }
+
+  if (with_fk) {
+    if (type == FK) {
+      auto fk = static_cast<FK_table *>(this);
+      def += fk->fk_constrain() + ", ";
     }
   }
 
@@ -3432,7 +3434,7 @@ static std::vector<grammar_tables> load_grammar_sql_from() {
       }
       myfile.close();
     } else
-      std::cout << "Unable to open file " << file << std::endl;
+      throw std::runtime_error("unable to open file " + file);
   }
   std::vector<grammar_tables> tables;
 
@@ -4061,45 +4063,44 @@ bool Thd1::run_some_query() {
 
   int pick_table_id = 0;
   while (std::chrono::system_clock::now() < end) {
+      auto option = pick_some_option();
+      ddl_query = options->at(option)->ddl == true ? true : false;
 
+      if (thread_id != 1 && options->at(Option::SINGLE_THREAD_DDL)->getBool() &&
+          ddl_query == true)
+        continue;
 
-    /* check if we need to make sql as part of existing or new trx */
-    auto option = pick_some_option();
-    ddl_query = options->at(option)->ddl == true ? true : false;
+      /* check if we need to make sql as part of existing or new trx */
+      if (trx_left > 0) {
 
-    /* if it is ddl query and we are in trx, complete it */
-    if (trx_left != 0 && ddl_query) {
-      trx_left = 1;
-    }
+        trx_left--;
 
-    if (trx_left > 0) {
-      trx_left--;
-      if (trx_left == 0) {
-        if (rand_int(100, 1) > options->at(Option::COMMMIT_PROB)->getInt()) {
-          execute_sql("ROLLBACK", this);
+        if (trx_left == 0 || ddl_query == true) {
+          if (rand_int(100, 1) > options->at(Option::COMMMIT_PROB)->getInt()) {
+            execute_sql("ROLLBACK", this);
+          } else {
+            execute_sql("COMMIT", this);
+          }
+          current_save_point = 0;
         } else {
-          execute_sql("COMMIT", this);
-        }
-        current_save_point = 0;
-      } else {
-        if (rand_int(1000) < savepoint_prob) {
-          current_save_point++;
-          execute_sql("SAVEPOINT SAVE" + std::to_string(current_save_point),
-                      this);
-        }
+          if (rand_int(1000) < savepoint_prob) {
+            current_save_point++;
+            execute_sql("SAVEPOINT SAVE" + std::to_string(current_save_point),
+                        this);
+          }
 
-        /* 10% chances of rollbacking to savepoint */
-        if (current_save_point > 0 && rand_int(10) == 1) {
-          auto sv = rand_int(current_save_point, 1);
-          execute_sql("ROLLBACK TO SAVEPOINT SAVE" + std::to_string(sv), this);
-          current_save_point = sv - 1;
+          /* 10% chances of rollbacking to savepoint */
+          if (current_save_point > 0 && rand_int(10) == 1) {
+            auto sv = rand_int(current_save_point, 1);
+            execute_sql("ROLLBACK TO SAVEPOINT SAVE" + std::to_string(sv),
+                        this);
+            current_save_point = sv - 1;
+          }
         }
       }
-    }
 
     if (trx_left == 0 &&
-        rand_int(1000) < options->at(Option::TRANSATION_PRB_K)->getInt() &&
-        !ddl_query) {
+        rand_int(1000) < options->at(Option::TRANSATION_PRB_K)->getInt()) {
       execute_sql("START TRANSACTION", this);
       trx_left = rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
     }
@@ -4115,9 +4116,6 @@ bool Thd1::run_some_query() {
     auto table = all_tables->at(pick_table_id);
     lock.unlock();
 
-    if (thread_id != 1 && options->at(Option::SINGLE_THREAD_DDL)->getBool() &&
-        ddl_query == true)
-      continue;
 
     switch (option) {
     case Option::DROP_INDEX:
