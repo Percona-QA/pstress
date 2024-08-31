@@ -80,8 +80,8 @@ void add_options() {
   opt->help = "random number of different general tablespaces ";
 
   /* Number of Undo tablespaces */
-  opt =
-      newOption(Option::INT, Option::NUMBER_OF_UNDO_TABLESPACE, "undo-tbs-count");
+  opt = newOption(Option::INT, Option::NUMBER_OF_UNDO_TABLESPACE,
+                  "undo-tbs-count");
   opt->setInt("3");
   opt->help = "Number of default undo tablespaces ";
 
@@ -113,6 +113,25 @@ void add_options() {
   opt->help = "only run command line ddl. other ddl will be disable";
   opt->setBool(false);
   opt->setArgs(no_argument);
+
+  opt = newOption(Option::BOOL, Option::SECONDARY_AFTER_CREATE,
+                  "secondary-after-create");
+  opt->help = "set secondary engine after table is created";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* select in SECONDARY */
+  opt = newOption(Option::BOOL, Option::SELECT_IN_SECONDARY,
+                  "select-in-secondary");
+  opt->help = "Execute all SELECT in SECONDARY";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* Delay in secondary*/
+  opt =
+      newOption(Option::INT, Option::DELAY_IN_SECONDARY, "delay-in-compare-ms");
+  opt->help = "Add milliseconds of delay before executing the secondary";
+  opt->setInt(0);
 
   /* disable table compression */
   opt = newOption(Option::BOOL, Option::NO_TABLE_COMPRESSION,
@@ -152,15 +171,25 @@ void add_options() {
   opt->help = "Adding Ignore clause to update delete and insert ";
   opt->setInt(10);
 
-  opt = newOption(Option::INT, Option::SLEEP_AFTER_CREATE_TABLE,
-                  "sleep-after-create-table");
+  opt = newOption(Option::BOOL, Option::WAIT_FOR_SYNC, "wait-for-sync");
   opt->help = "Sleep after create table";
-  opt->setInt(0);
+  opt->setBool(0);
+  opt->setArgs(no_argument);
 
   opt = newOption(Option::BOOL, Option::EXACT_COLUMNS, "exact-columns");
   opt->help = "Exact number of columns in a table";
   opt->setBool(false);
   opt->setArgs(no_argument);
+
+  opt = newOption(Option::BOOL, Option::EXACT_INDEXES, "exact-indexes");
+  opt->help = "Exact number of indexes in a table";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  opt = newOption(Option::INT, Option::POSITIVE_INT_PROB, "positive-prob");
+  opt->help =
+      "Probablity of using positive interger for random value in a int column";
+  opt->setInt(70);
 
   opt = newOption(Option::INT, Option::CALL_FUNCTION, "call-function-prob");
   opt->help = "Probability of calling function ";
@@ -338,7 +367,6 @@ void add_options() {
   opt->setArgs(no_argument);
   opt->setBool(false);
 
-
   /* No Partition tables */
   opt = newOption(Option::BOOL, Option::NO_PARTITION, "no-partition-tables");
   opt->help = "do not work on partition tables";
@@ -375,6 +403,12 @@ void add_options() {
       "records in range of 0 to N. Also check --exact-initial-records ";
   opt->setInt(1000);
 
+  /* plain rewrite */
+  opt = newOption(Option::BOOL, Option::PLAIN_REWRITE, "plain-rewrite");
+  opt->help = "Execute rewrite without passing any option";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* Initial Records in table */
   opt = newOption(Option::BOOL, Option::EXACT_INITIAL_RECORDS,
                   "exact-initial-records");
@@ -401,6 +435,163 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /* ENFORCE REWRITE  */
+  opt = newOption(Option::INT, Option::ENFORCE_MERGE, "enforce-merge-prob");
+  opt->help = "ENFORCE MERGE in secondary by calling PRAGMA rewrite. It calls "
+              "rewrite with partial merge";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
+  opt = newOption(Option::INT, Option::REWRITE_ROW_GROUP_MIN_ROWS,
+                  "enforce-row-group-min-rows-prob");
+  opt->help = "row_group_min_rows prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_ROW_GROUP_MAX_BYTES,
+                  "enfroce-row-group-max-bytes-prob");
+  opt->help = "row_group_max_bytes prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_ROW_GROUP_MAX_ROWS,
+                  "enforce-row-group-max-rows-prob");
+  opt->help = "row_group_max_rows prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_DELTA_NUM_ROWS,
+                  "enforce-delta-num-rows-prob");
+  opt->help = "delta_num_rows prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_DELTA_NUM_UNDO,
+                  "enforce-delta-num-undo-prob");
+  opt->help = "delta_num_undo prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_GC, "enforce-gc-prob");
+  opt->help = "gc prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt =
+      newOption(Option::INT, Option::REWRITE_BLOCKING, "enforce-blocking-prob");
+  opt->help = "blocking prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_MAX_ROW_ID_HASH_MAP,
+                  "enforce-max-row-id-hash-map-prob");
+  opt->help = "max_row_id_hash_map prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_FORCE, "enforce-force-prob");
+  opt->help = "force prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_NO_RESIDUAL,
+                  "enforce-no-residual-prob");
+  opt->help = "no_residual prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_MAX_INTERNAL_BLOB_SIZE,
+                  "enforce-max-internal-blob-size-prob");
+  opt->help = "max_internal_blob_size prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_BLOCK_COOKER_ROW_GROUP_MAX_ROWS,
+                  "enforce-block-cooker-row-group-max-rows-prob");
+  opt->help = "block_cooker_row_group_max_rows prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  opt = newOption(Option::INT, Option::REWRITE_PARTIAL, "enforce-partial-prob");
+  opt->help = "partial prob in REWRITE TABLE";
+  opt->setInt(60);
+
+  /* secondary GARBAGE COLLECT */
+  opt = newOption(Option::INT, Option::SECONDARY_GC, "secondary-gc");
+  opt->help = "Execute garbage collect in secondary";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
+  /* probability of null columns */
+  opt = newOption(Option::INT, Option::NULL_PROB, "null-prob-k");
+  opt->help = "Probability that a column would have null value. It is used for "
+              "update, insert, delete and also in where clause";
+  opt->setInt(1);
+
+  /* disable text columns*/
+  opt = newOption(Option::BOOL, Option::NO_TEXT, "no-text");
+  opt->help = "Disable text columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* probability of creating not-secondary columns out of hundred */
+  opt = newOption(Option::INT, Option::NOT_SECONDARY, "column-skip-to-secondary");
+  opt->help = "Probability of creating not secondary columns";
+  opt->setInt(30);
+
+  /* probability of modifying columns with/without NOT SECONDARY clause" */
+  opt = newOption(Option::INT, Option::MODIFY_COLUMN_SECONDARY_ENGINE, "alter-column-secondary-engine");
+  opt->help = "Probability of modifying existing column with NOT SECONDARY clause";
+  /* todo seeing some crash */
+  opt->setInt(0);
+  opt->setSQL();
+  opt->setDDL();
+
+  /* probability of modifying columns with/without NOT SECONDARY clause" */
+  opt = newOption(Option::INT, Option::USING_PK_PROB, "pk-col-in-where");
+  opt->help = "Probability of using pk column in where clause. if table does "
+              "not pk column then first column of index. and if it does not "
+              "have index then any random column";
+  opt->setInt(50);
+
+  /* disable char columns*/
+  opt = newOption(Option::BOOL, Option::NO_CHAR, "no-char");
+  opt->help = "Disable char columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable VARCHAR columns*/
+  opt = newOption(Option::BOOL, Option::NO_VARCHAR, "no-varchar");
+  opt->help = "Disable varchar columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable FLOAT columns*/
+  opt = newOption(Option::BOOL, Option::NO_FLOAT, "no-float");
+  opt->help = "Disable float columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable double columns*/
+  opt = newOption(Option::BOOL, Option::NO_DOUBLE, "no-double");
+  opt->help = "Disable double columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable bool columns*/
+  opt = newOption(Option::BOOL, Option::NO_BOOL, "no-bool");
+  opt->help = "Disable bool columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable integer columns*/
+  opt = newOption(Option::BOOL, Option::NO_INTEGER, "no-integer");
+  opt->help = "Disable integer columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* disable int columns*/
+  opt = newOption(Option::BOOL, Option::NO_INT, "no-int");
+  opt->help = "Disable int  columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* Only int columns  */
+  opt = newOption(Option::BOOL, Option::ONLY_INT, "only-int");
+  opt->help = "Only integer columns";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* modify column */
   opt = newOption(Option::INT, Option::ALTER_COLUMN_MODIFY, "modify-column");
   opt->help = "Alter table column modify";
@@ -426,7 +617,6 @@ void add_options() {
       "compressed row_format, i.e. key block size will not used. \n"
       "none: do not use any encryption";
   opt->setString("all");
-
 
   /* MySQL server option */
   opt = newOption(Option::STRING, Option::MYSQLD_SERVER_OPTION, "mso");
@@ -466,22 +656,32 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  opt = newOption(Option::INT, Option::ALTER_SECONDARY_ENGINE,
+                  "alter-secondary-engine");
+  opt->help = "run secondary-engine sql";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* alter instance rotate innodb system key */
-  opt = newOption(Option::INT, Option::ALTER_ENCRYPTION_KEY, "rotate-encryption-key");
+  opt = newOption(Option::INT, Option::ALTER_ENCRYPTION_KEY,
+                  "rotate-encryption-key");
   opt->help = "Alter instance rotate innodb system key X";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
 
   /* alter instance rotate gcache master key */
-  opt = newOption(Option::INT, Option::ALTER_GCACHE_MASTER_KEY, "rotate-gcache-key");
+  opt = newOption(Option::INT, Option::ALTER_GCACHE_MASTER_KEY,
+                  "rotate-gcache-key");
   opt->help = "Alter instance rotate gcache master key";
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
 
   /* Reload keyring component configuration */
-  opt = newOption(Option::INT, Option::ALTER_INSTANCE_RELOAD_KEYRING, "reload-keyring");
+  opt = newOption(Option::INT, Option::ALTER_INSTANCE_RELOAD_KEYRING,
+                  "reload-keyring");
   opt->help = "Alter instance reload keyring";
   opt->setInt(1);
   opt->setSQL();
@@ -505,7 +705,7 @@ void add_options() {
 
   /*Discard tablespace */
   opt = newOption(Option::INT, Option::ALTER_DISCARD_TABLESPACE,
-		  "alt-discard-tbs");
+                  "alt-discard-tbs");
   opt->help = "Alter table to discard file-per-tablespace";
   opt->setInt(1);
   opt->setSQL();
@@ -529,6 +729,12 @@ void add_options() {
   /* SELECT */
   opt = newOption(Option::BOOL, Option::NO_SELECT, "no-select");
   opt->help = "do not execute any type select on tables";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
+  /* Add no cascade to FK */
+  opt = newOption(Option::BOOL, Option::NO_FK_CASCADE, "no-cascade");
+  opt->help = "Disable to cacading of FK in pstress";
   opt->setBool(false);
   opt->setArgs(no_argument);
 
@@ -567,6 +773,11 @@ void add_options() {
   opt->setInt(8);
   opt->setSQL();
 
+  opt = newOption(Option::BOOL, Option::ONLY_SELECT, "only-select");
+  opt->help = "Disable all other SQL";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   opt = newOption(Option::INT, Option::INSERT_RANDOM_ROW, "insert");
   opt->help = "insert random row";
   opt->setInt(600);
@@ -574,24 +785,24 @@ void add_options() {
 
   /* Update row using pkey */
   opt = newOption(Option::INT, Option::UPDATE_ROW_USING_PKEY, "update-precise");
-  opt->help = "Update row using where clause";
+  opt->help = "Update using where clause";
   opt->setInt(200);
   opt->setSQL();
 
   opt = newOption(Option::INT, Option::UPDATE_ALL_ROWS, "update-bulk");
-  opt->help = "delete all rows of a table";
-  opt->setInt(2);
+  opt->help = "Update bulk of a table";
+  opt->setInt(4);
   opt->setSQL();
 
   /* Delete row using pkey */
   opt = newOption(Option::INT, Option::DELETE_ROW_USING_PKEY, "delete-precise");
-  opt->help = "delete row with where condition";
+  opt->help = "delete where condition";
   opt->setInt(100);
   opt->setSQL();
 
   /* Delete all rows */
   opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-bulk");
-  opt->help = "delete all rows of a table";
+  opt->help = "delete bulk rows of table";
   opt->setInt(1);
   opt->setSQL();
 
@@ -651,6 +862,7 @@ void add_options() {
               "partition or full table";
   opt->setInt(1);
   opt->setSQL();
+  opt->setDDL();
 
   /* Check Table Pre-load */
   opt = newOption(Option::BOOL, Option::CHECK_TABLE_PRELOAD, "check-preload");

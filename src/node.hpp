@@ -9,9 +9,9 @@
 #include <mysql.h>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
 #include <vector>
-#include <sys/stat.h>
 
 /* struct for node setup */
 struct workerParams {
