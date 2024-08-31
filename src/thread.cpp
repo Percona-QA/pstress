@@ -67,11 +67,13 @@ void Node::workerThread(int number) {
                 << std::endl;
     return;
   }
+  /*
 #ifdef MAXPACKET
   if (myParams.maxpacket != MAX_PACKET_DEFAULT) {
     mysql_options(conn, MYSQL_OPT_MAX_ALLOWED_PACKET, &myParams.maxpacket);
   }
 #endif
+*/
   if (mysql_real_connect(conn, myParams.address.c_str(),
                          myParams.username.c_str(), myParams.password.c_str(),
                          myParams.database.c_str(), myParams.port,
@@ -115,8 +117,9 @@ void Node::workerThread(int number) {
     else {
       if (!thd->run_some_query()) {
         std::ostringstream errmsg;
-        errmsg << "Thread " << thd->thread_id
+        errmsg << "Thread with id " << thd->thread_id
                << " failed, check logs for detail message ";
+        throw std::runtime_error("FATAL ERROR. Unable to continue");
         std::cerr << errmsg.str() << std::endl;
         if (general_log.is_open()) {
           general_log << errmsg.str() << std::endl;

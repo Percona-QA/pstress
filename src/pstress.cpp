@@ -17,13 +17,11 @@
 #include "pstress.hpp"
 #include "random_test.hpp"
 #include <INIReader.hpp>
-#include <mysql.h>
-#include <thread>
-#include <string>
 #include <libgen.h> //dirname() uses this
+#include <mysql.h>
+#include <string>
+#include <thread>
 
-/* Global variable to hold pstress build directory path */
-const char *binary_fullpath;
 extern std::atomic<bool> run_query_failed;
 std::mt19937 rng;
 
@@ -40,10 +38,12 @@ void read_section_settings(struct workerParams *wParams, std::string secName,
   wParams->threads = reader.GetInteger(secName, "threads", 10);
   wParams->queries_per_thread =
       reader.GetInteger(secName, "queries-per-thread", 10000);
+  /*
 #ifdef MAXPACKET
   wParams->maxpacket =
       reader.GetInteger(secName, "max-packet-size", MAX_PACKET_DEFAULT);
 #endif
+*/
   wParams->infile = reader.Get(secName, "infile", "pquery.sql");
   wParams->logdir = reader.Get(secName, "logdir", "/tmp");
 }
@@ -56,13 +56,7 @@ void create_worker(struct workerParams *Params) {
 
 int main(int argc, char *argv[]) {
 
-  /*set seed for current step*/
-  /* Fetching the directory path where the executable is present */
-  std::unique_ptr<char> ptr(realpath(argv[0], nullptr));
-  binary_fullpath = dirname(ptr.get());
-
   std::vector<std::thread> nodes;
-  std::ios_base::sync_with_stdio(false);
   add_options();
   int c;
   while (true) {
@@ -168,13 +162,14 @@ int main(int argc, char *argv[]) {
     workerParams *wParams = new workerParams(ports[0]);
     wParams->myName = "node." + std::to_string(ports[0]);
     create_worker(wParams);
+    delete wParams;
   } else if (confFile.empty() && ports.size() > 1) {
     for (auto port : ports) {
       workerParams *wParams = new workerParams(port);
       wParams->myName = "node." + std::to_string(port);
       nodes.push_back(std::thread(create_worker, wParams));
     }
-      /* join all nodes */
+    /* join all nodes */
     for (auto node = nodes.begin(); node != nodes.end(); node++)
       node->join();
   } else {
