@@ -859,12 +859,15 @@ static std::string rand_timestamp() {
 
 /* integer range */
 
-static std::string rand_value_universal(Column::COLUMN_TYPES type_,
-                                        int length) {
-  if (rand_int(1000) <= options->at(Option::NULL_PROB)->getInt()) {
+std::string Column::rand_value_universal() {
+  if (rand_int(1000) <= options->at(Option::NULL_PROB)->getInt() && null) {
     return "NULL";
   }
-  switch (type_) {
+  auto current_type = type_;
+  if (current_type == Column::COLUMN_TYPES::GENERATED) {
+    current_type = static_cast<const Generated_Column *>(this)->generate_type();
+  }
+  switch (current_type) {
   case (Column::COLUMN_TYPES::INTEGER):
     return std::to_string(try_negative(
         rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt())));
@@ -905,35 +908,12 @@ static std::string rand_value_universal(Column::COLUMN_TYPES type_,
 }
 
 /* return random value ofa column*/
-std::string Column::rand_value() { return rand_value_universal(type_, length); }
-
-/* return random value of generated*/
-std::string Generated_Column::rand_value() {
-  return rand_value_universal(g_type, length);
-}
-
-/* return random value of blob */
-std::string Blob_Column::rand_value() {
-  int max_size = length;
-  if (max_size > 1000 && rand_int(10000) != 1)
-    max_size = 1000;
-  return rand_value_universal(type_, max_size);
-}
-
-/* return random value of Text */
-std::string Text_Column::rand_value()
-{
-  int max_size = length;
-  /* for MEDIUMTEXT/LONGTEXT restrict length to 5000 */
-  if (!sub_type.compare("MEDIUMTEXT") || !sub_type.compare("LONGTEXT"))
-    max_size = 5000;
-  return rand_value_universal(type_, max_size);
-}
+std::string Column::rand_value() { return rand_value_universal(); }
 
 /* return table definition */
 std::string Column::definition() {
   std::string def = name_ + " " + clause();
-  if (null)
+  if (!null)
     def += " NOT NULL";
   if (auto_increment)
     def += " AUTO_INCREMENT";
@@ -1002,27 +982,26 @@ Blob_Column::Blob_Column(std::string name, Table *table)
 
   switch (rand_int(4, 1)) {
   case 1:
-    sub_type = "BLOB";
-    name_ = "b" + name;
-    length = rand_int(1000, 100);
-    break;
-  case 2:
-    sub_type = "LONGBLOB";
-    name_ = "lb" + name;
-    length = rand_int(100000, 100);
-    break;
-  case 3:
     sub_type = "TINYBLOB";
     name_ = "tb" + name;
     length = rand_int(255, 100);
     break;
-  case 4:
+  case 2:
+    sub_type = "BLOB";
+    name_ = "b" + name;
+    length = rand_int(1000, 100);
+    break;
+  case 3:
     sub_type = "MEDIUMBLOB";
     name_ = "mb" + name;
-    length = rand_int(10000, 100);
+    length = rand_int(3000, 1000);
+    break;
+  case 4:
+    sub_type = "LONGBLOB";
+    name_ = "lb" + name;
+    length = rand_int(4000, 100);
     break;
   }
-  assert(length >= 2);
 }
 
 Blob_Column::Blob_Column(std::string name, Table *table, std::string sub_type_)
@@ -1041,27 +1020,26 @@ Text_Column::Text_Column(std::string name, Table *table)
 
   switch (rand_int(4, 1)) {
   case 1:
-    sub_type = "MEDIUMTEXT";
-    name_ = "mt" + name;
-    length = rand_int(10000, 100);
-    break;
-  case 2:
     sub_type = "TINYTEXT";
     name_ = "t" + name;
     length = rand_int(255, 100);
     break;
-  case 3:
-    sub_type = "LONGTEXT";
-    name_ = "lt" + name;
-    length = rand_int(100000, 100);
-    break;
-  case 4:
+  case 2:
     sub_type = "TEXT";
     name_ = "t" + name;
-    length = rand_int(1000, 100);
+    length = rand_int(1000, 500);
+    break;
+  case 3:
+    sub_type = "MEDIUMTEXT";
+    name_ = "mt" + name;
+    length = rand_int(3000, 1000);
+    break;
+  case 4:
+    sub_type = "LONGTEXT";
+    name_ = "lt" + name;
+    length = rand_int(4000, 2000);
     break;
   }
-  assert(length >= 2);
 }
 
 Text_Column::Text_Column(std::string name, Table *table, std::string sub_type_)
@@ -1250,6 +1228,9 @@ template <typename Writer> void Column::Serialize(Writer &writer) const {
   writer.String("length");
   writer.Int(length);
 }
+Column::Column(Table *table, COLUMN_TYPES type) : type_(type), table_(table) {
+  null = rand_int(100) < 90 ? true : false;
+};
 
 /* add sub_type metadata */
 template <typename Writer> void Blob_Column::Serialize(Writer &writer) const {
@@ -1428,9 +1409,9 @@ std::string Index::definition() {
     if (idc->column->type_ == Column::BLOB ||
         idc->column->type_ == Column::TEXT ||
         (idc->column->type_ == Column::GENERATED &&
-         (static_cast<Generated_Column *>(idc->column)->generate_type() ==
+         (static_cast<const Generated_Column *>(idc->column)->generate_type() ==
               Column::BLOB ||
-          static_cast<Generated_Column *>(idc->column)->generate_type() ==
+          static_cast<const Generated_Column *>(idc->column)->generate_type() ==
               Column::TEXT)))
       def += "(" + std::to_string(rand_int(g_max_columns_length, 1)) + ")";
 
@@ -1557,7 +1538,7 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
 }
 
 /* Create new table without new records */
-static void AddNewTable(Thd1 *thd) {
+static void AddTable(Thd1 *thd) {
   std::unique_lock<std::mutex> lock(all_table_mutex);
   int table_id = rand_int(options->at(Option::TABLES)->getInt(), 1);
   auto table = Table::table_id(Table::FK, table_id, true);
@@ -1659,7 +1640,9 @@ void Table::DropCreate(Thd1 *thd) {
     execute_sql("SET SESSION wsrep_osu_method=NBO ", thd);
     set_session_nbo = true;
   }
-  if (!execute_sql("DROP TABLE " + name_, thd)) {
+  if (!execute_sql("ALTER TABLE " + name_ + " RENAME TO " + name_ +
+                       std::to_string(rand_int(10000)),
+                   thd)) {
     print_and_log("Failed to drop table " + name_, thd);
     return;
   }
@@ -3309,7 +3292,6 @@ Column *Table::GetRandomColumn() {
         col = first_col;
     }
   }
-<<<<<<< HEAD
 
   int max_tries = 0;
   while (col == nullptr) {
@@ -3329,8 +3311,6 @@ Column *Table::GetRandomColumn() {
     case Column::GENERATED:
     case Column::DATE:
     case Column::DATETIME:
-    case Column::DOUBLE:
-    case Column::FLOAT:
     case Column::TIMESTAMP:
     case Column::TEXT:
     case Column::BIT:
@@ -3342,8 +3322,9 @@ Column *Table::GetRandomColumn() {
       break;
     case Column::COLUMN_MAX:
       break;
-      /* Do not use FLOAT and DOUBLE in where clause */
+      /* Use less Double and float in where clause */
     case Column::FLOAT:
+    case Column::DOUBLE:
       if (max_tries == 50) {
         col = columns_->at(col_pos);
         break;
@@ -3469,11 +3450,13 @@ std::string Table::GetWhereBulk() {
   return sql;
 }
 
-void Table::SelectRandomRow(Thd1 *thd) {
+void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {
   table_mutex.lock();
   std::string where = GetWherePrecise();
-  std::string sql = "SELECT " + SelectColumn() + " FROM " + name_ + where;
   assert(where.size() > 4);
+  std::string sql = "SELECT " + SelectColumn() + " FROM " + name_ + where;
+  if (select_for_update)
+    sql += " FOR UPDATE SKIP LOCKED";
 
   if (options->at(Option::COMPARE_RESULT)->getBool()) {
     sql += " order by";
@@ -3596,10 +3579,12 @@ void Table::DeleteAllRows(Thd1 *thd) {
   execute_sql(sql, thd);
 }
 
-void Table::SelectAllRow(Thd1 *thd) {
+void Table::SelectAllRow(Thd1 *thd, bool select_for_update) {
   table_mutex.lock();
   std::string sql =
       "SELECT " + SelectColumn() + " FROM " + name_ + GetWhereBulk();
+  if (select_for_update)
+    sql += " FOR UPDATE SKIP LOCKED";
   table_mutex.unlock();
   if (options->at(Option::SELECT_IN_SECONDARY)->getBool()) {
     execute_sql("COMMIT", thd);
@@ -3757,7 +3742,7 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
         value += "DEFAULT";
       } else if (column->primary_key) {
         value += std::to_string(thd->unique_keys.at(records));
-      } else if (column->auto_increment == true) {
+      } else if (column->auto_increment == true && column->null) {
         value += "NULL";
       } else if (is_list_partition && column->name_.compare("ip_col") == 0) {
         /* for list partition we insert only maximum possible value
@@ -4742,6 +4727,12 @@ bool Thd1::run_some_query() {
     case Option::SELECT_ROW_USING_PKEY:
       table->SelectRandomRow(this);
       break;
+    case Option::SELECT_FOR_UPDATE:
+      table->SelectRandomRow(this, true);
+      break;
+    case Option::SELECT_FOR_UPDATE_BULK:
+      table->SelectAllRow(this, true);
+      break;
     case Option::INSERT_RANDOM_ROW:
       table->InsertRandomRow(this);
       break;
@@ -4767,7 +4758,7 @@ bool Thd1::run_some_query() {
       table->Check(this);
       break;
     case Option::ADD_NEW_TABLE:
-      AddNewTable(this);
+      AddTable(this);
       break;
     case Option::ADD_DROP_PARTITION:
       if (table->type == Table::PARTITION)
@@ -4810,7 +4801,7 @@ bool Thd1::run_some_query() {
       create_alter_drop_undo(this);
       break;
     case Option::GRAMMAR_SQL:
-      grammar_sql(, this, table);
+      grammar_sql(this, table);
       break;
     case Option::ALTER_SECONDARY_ENGINE:
       table->SetSecondaryEngine(this);

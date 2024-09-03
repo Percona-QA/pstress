@@ -767,6 +767,12 @@ void add_options() {
   opt->setInt(800);
   opt->setSQL();
 
+  opt = newOption(Option::INT, Option::SELECT_FOR_UPDATE,
+                  "select-precise-update");
+  opt->help = "Select table using single for update";
+  opt->setInt(8);
+  opt->setSQL();
+
   opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-bulk");
   opt->help = "select all table data and in case of partition randomly pick "
               "some partition";
@@ -777,6 +783,12 @@ void add_options() {
   opt->help = "Disable all other SQL";
   opt->setBool(false);
   opt->setArgs(no_argument);
+
+  opt = newOption(Option::INT, Option::SELECT_FOR_UPDATE_BULK,
+                  "select-bulk-update");
+  opt->help = "SELECT bulk for update ";
+  opt->setInt(1);
+  opt->setSQL();
 
   opt = newOption(Option::INT, Option::INSERT_RANDOM_ROW, "insert");
   opt->help = "insert random row";

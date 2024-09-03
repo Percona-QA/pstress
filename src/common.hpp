@@ -205,6 +205,8 @@ struct Option {
     POSITIVE_INT_PROB,
     PLAIN_REWRITE,
     USING_PK_PROB,
+    SELECT_FOR_UPDATE,
+    SELECT_FOR_UPDATE_BULK,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
