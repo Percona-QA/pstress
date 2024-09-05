@@ -95,7 +95,7 @@ public:
   virtual ~Column(){};
   std::string name_;
   std::mutex mutex;
-  bool null = false;
+  bool null_val = true;
   int length = 0;
   std::string default_value;
   bool primary_key = false;
