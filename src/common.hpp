@@ -199,10 +199,14 @@ struct Option {
     SECONDARY_GC,
     SELECT_IN_SECONDARY,
     EXACT_COLUMNS,
+    ADD_NEW_TABLE,
+    SINGLE_THREAD_DDL,
     EXACT_INDEXES,
     POSITIVE_INT_PROB,
     PLAIN_REWRITE,
     USING_PK_PROB,
+    SELECT_FOR_UPDATE,
+    SELECT_FOR_UPDATE_BULK,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

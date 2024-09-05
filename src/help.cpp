@@ -195,6 +195,7 @@ void add_options() {
   opt->help = "Probability of calling function ";
   opt->setInt(10);
   opt->setSQL();
+  opt->setDDL();
 
   /* todo set default to all */
   opt = newOption(Option::STRING, Option::ENCRYPTION_TYPE, "encryption-type");
@@ -209,6 +210,18 @@ void add_options() {
   opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
+
+  /* Add new table */
+  opt = newOption(Option::INT, Option::ADD_NEW_TABLE, "add-table");
+  opt->help = "Add new table";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
+  opt = newOption(Option::BOOL, Option::SINGLE_THREAD_DDL, "single-thread-ddl");
+  opt->help = "Single thread DDL. Execute all ddl by a single thread";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
 
   /* disable virtual columns*/
   opt = newOption(Option::BOOL, Option::NO_VIRTUAL_COLUMNS, "no-virtual");
@@ -754,6 +767,12 @@ void add_options() {
   opt->setInt(800);
   opt->setSQL();
 
+  opt = newOption(Option::INT, Option::SELECT_FOR_UPDATE,
+                  "select-precise-update");
+  opt->help = "Select table using single for update";
+  opt->setInt(8);
+  opt->setSQL();
+
   opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-bulk");
   opt->help = "select all table data and in case of partition randomly pick "
               "some partition";
@@ -764,6 +783,12 @@ void add_options() {
   opt->help = "Disable all other SQL";
   opt->setBool(false);
   opt->setArgs(no_argument);
+
+  opt = newOption(Option::INT, Option::SELECT_FOR_UPDATE_BULK,
+                  "select-bulk-update");
+  opt->help = "SELECT bulk for update ";
+  opt->setInt(1);
+  opt->setSQL();
 
   opt = newOption(Option::INT, Option::INSERT_RANDOM_ROW, "insert");
   opt->help = "insert random row";

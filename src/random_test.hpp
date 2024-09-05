@@ -67,14 +67,13 @@ public:
   /* used to create new table/alter table add column*/
   Column(std::string name, Table *table, COLUMN_TYPES type);
 
-  Column(Table *table, COLUMN_TYPES type) : type_(type), table_(table){};
-
+  Column(Table *table, COLUMN_TYPES type);
   Column(std::string name, std::string type, Table *table)
       : type_(col_type(type)), name_(name), table_(table){};
 
   std::string definition();
   /* return random value of that column */
-  virtual std::string rand_value();
+  std::string rand_value();
   /* return string to call type */
   static const std::string col_type_to_string(COLUMN_TYPES type);
   /* return column type from a string */
@@ -82,6 +81,8 @@ public:
   /* used to create_metadata */
   template <typename Writer> void Serialize(Writer &writer) const;
   /* return the clause of column */
+  std::string rand_value_universal();
+
 private:
   virtual std::string clause() {
     std::string str = col_type_to_string(type_);
@@ -119,7 +120,6 @@ struct Blob_Column : public Column {
   template <typename Writer> void Serialize(Writer &writer) const;
   bool is_col_string() { return false; }
   bool is_col_number() { return false; }
-  std::string rand_value();
 };
 
 struct Text_Column : public Column {
@@ -130,7 +130,6 @@ struct Text_Column : public Column {
   template <typename Writer> void Serialize(Writer &writer) const;
   bool is_col_string() { return true; }
   bool is_col_number() { return false; }
-  std::string rand_value();
 };
 
 struct Generated_Column : public Column {
@@ -146,10 +145,9 @@ struct Generated_Column : public Column {
 
   std::string str;
   std::string clause() { return str; };
-  std::string rand_value();
   ~Generated_Column(){};
   COLUMN_TYPES g_type; // sub type can be blob,int, varchar
-  COLUMN_TYPES generate_type() { return g_type; };
+  COLUMN_TYPES generate_type() const { return g_type; };
   bool is_col_string() {
     return g_type == COLUMN_TYPES::CHAR || g_type == COLUMN_TYPES::VARCHAR ||
            g_type == COLUMN_TYPES::BLOB || g_type == COLUMN_TYPES::TEXT;
@@ -216,12 +214,13 @@ struct Table {
   enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, FK } type;
 
   Table(std::string n);
-  static Table *table_id(TABLE_TYPES choice, int id);
-  std::string definition(bool with_index = true);
+  static Table *table_id(TABLE_TYPES choice, int id, bool suffix = false);
+  std::string definition(bool with_index = true, bool with_fk = true);
   /* add secondary indexes */
   bool load_secondary_indexes(Thd1 *thd);
   /* execute table definition, Bulk data and then secondary index */
-  bool load(Thd1 *thd);
+  bool load(Thd1 *thd, bool bulk_insert = true,
+            bool set_global_run_query_failed = true);
   /* methods to create table of choice */
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
@@ -251,7 +250,8 @@ struct Table {
   void Alter_discard_tablespace(Thd1 *thd);
   void DeleteRandomRow(Thd1 *thd);
   void UpdateRandomROW(Thd1 *thd);
-  void SelectRandomRow(Thd1 *thd);
+  void SelectRandomRow(Thd1 *thd, bool select_for_update = false);
+  void SelectAllRow(Thd1 *thd, bool select_for_update = false);
   void CreateFunction(Thd1 *thd);
   void SetSecondaryEngine(Thd1 *thd);
   std::string GetRandomPartition();
@@ -261,7 +261,6 @@ struct Table {
   std::string ColumnValues();
   std::string SelectColumn();
   std::string SetClause();
-  void SelectAllRow(Thd1 *thd);
   void DeleteAllRows(Thd1 *thd);
   void UpdateAllRows(Thd1 *thd);
   void ColumnRename(Thd1 *thd);
@@ -322,10 +321,9 @@ struct FK_table : Table {
     set_refrence(on_update, on_delete);
   }
 
-  /* current only used for step 1. So we do not store in metadata.
-   Used to get distince keys of pkey table */
-  Table *parent;
-  bool load_fk_constrain(Thd1 *thd);
+  bool load_fk_constrain(Thd1 *thd, bool set_run_query_failed = true);
+
+  std::string fk_constrain();
 
   void pickRefrence(Table *table) {
     on_delete = getRandomForeignKeyAction(table);
