@@ -28,12 +28,6 @@ const std::string PARTITION_SUFFIX = "_p";
 const std::string FK_SUFFIX = "_fk";
 const std::string TEMP_SUFFIX = "_t";
 const int version = 2;
-/* range for random number int, integers, floats and double.
- more the value, less randomness.
- for example if it is 1. then there is very high chance of executing
- successful DML.
-todo allow this option to be configured by user */
-const int g_integer_range = 100;
 
 bool encrypted_temp_tables = false;
 bool encrypted_sys_tablelspaces = false;
@@ -213,8 +207,17 @@ static std::vector<int> generateUniqueRandomNumbers(int number_of_records) {
 
   std::unordered_set<int> unique_keys_set(number_of_records);
 
-  int max_size =
-      g_integer_range * options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
+  int max_size = options->at(Option::UNIQUE_RANGE)->getInt() *
+                 options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
+
+  /* return a range */
+  if (rand_int(100) < 10 ||
+      (options->at(Option::UNIQUE_RANGE)->getInt() == 1 &&
+       options->at(Option::POSITIVE_INT_PROB)->getInt() == 1000)) {
+    std::vector<int> vec(max_size);
+    std::iota(vec.begin(), vec.end(), 1);
+    return vec;
+  }
 
   while (unique_keys_set.size() < static_cast<size_t>(number_of_records)) {
     unique_keys_set.insert(try_negative(rand_int(max_size, 1)));
@@ -433,7 +436,6 @@ int sum_of_all_options(Thd1 *thd) {
     options->at(Option::NO_ENCRYPTION)->setBool(true);
     options->at(Option::NO_PARTITION)->setBool(true);
     options->at(Option::NO_TEMPORARY)->setBool(true);
-    options->at(Option::NO_VIRTUAL_COLUMNS)->setBool(true);
     options->at(Option::NO_TABLESPACE)->setBool(true);
     if (options->at(Option::PRIMARY_KEY)->getInt() < 100)
       options->at(Option::NO_AUTO_INC)->setBool(true);
@@ -468,6 +470,8 @@ int sum_of_all_options(Thd1 *thd) {
     /* if select is set as zero, disable all type of selects */
     options->at(Option::SELECT_ALL_ROW)->setInt(0);
     options->at(Option::SELECT_ROW_USING_PKEY)->setInt(0);
+    options->at(Option::SELECT_FOR_UPDATE)->setInt(0);
+    options->at(Option::SELECT_FOR_UPDATE_BULK)->setInt(0);
     options->at(Option::GRAMMAR_SQL)->setInt(0);
   }
 
@@ -860,9 +864,17 @@ static std::string rand_timestamp() {
 /* integer range */
 
 std::string Column::rand_value_universal() {
-  if (rand_int(1000) <= options->at(Option::NULL_PROB)->getInt() && null) {
-    return "NULL";
+  bool should_return_null =
+      rand_int(1000) <= options->at(Option::NULL_PROB)->getInt() && null_val;
+
+  if (should_return_null) {
+    // If the field is a primary key and does not auto-increment, we cannot
+    // return NULL
+    if (!(primary_key && !auto_increment)) {
+      return "NULL";
+    }
   }
+
   auto current_type = type_;
   if (current_type == Column::COLUMN_TYPES::GENERATED) {
     current_type = static_cast<const Generated_Column *>(this)->generate_type();
@@ -873,12 +885,12 @@ std::string Column::rand_value_universal() {
         rand_int(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt())));
   case (Column::COLUMN_TYPES::INT):
     return std::to_string(try_negative(
-        rand_int(g_integer_range *
+        rand_int(options->at(Option::UNIQUE_RANGE)->getInt() *
                  options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt())));
   case (Column::COLUMN_TYPES::FLOAT):
     return rand_float(options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
   case (Column::COLUMN_TYPES::DOUBLE):
-    return rand_double(1.0 / g_integer_range *
+    return rand_double(1.0 / options->at(Option::UNIQUE_RANGE)->getInt() *
                        options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt());
   case Column::COLUMN_TYPES::CHAR:
   case Column::COLUMN_TYPES::VARCHAR:
@@ -913,7 +925,7 @@ std::string Column::rand_value() { return rand_value_universal(); }
 /* return table definition */
 std::string Column::definition() {
   std::string def = name_ + " " + clause();
-  if (!null)
+  if (!null_val)
     def += " NOT NULL";
   if (auto_increment)
     def += " AUTO_INCREMENT";
@@ -1061,21 +1073,19 @@ Generated_Column::Generated_Column(std::string name, Table *table,
 Generated_Column::Generated_Column(std::string name, Table *table)
     : Column(table, Column::GENERATED) {
   name_ = "g" + name;
-  auto blob_supported = !options->at(Option::NO_BLOB)->getBool();
-  auto text_supported = !options->at(Option::NO_TEXT)->getBool();
   g_type = COLUMN_MAX;
   /* Generated columns are 4:2:2:1 (INT:VARCHAR:CHAR:BLOB) */
   while (g_type == COLUMN_MAX) {
     auto x = rand_int(9, 1);
     if (x <= 4 || options->at(Option::ONLY_INT)->getBool())
       g_type = INT;
-    else if (x <= 6)
+    else if (x <= 6 && !options->at(Option::NO_VARCHAR)->getBool())
       g_type = VARCHAR;
-    else if (x <= 8)
+    else if (x <= 8 && !options->at(Option::NO_CHAR)->getBool())
       g_type = CHAR;
-    else if (blob_supported && x == 9) {
+    else if (x == 9 && !options->at(Option::NO_BLOB)->getBool()) {
       g_type = BLOB;
-    } else if (text_supported && x == 10) {
+    } else if (x == 10 && !options->at(Option::NO_TEXT)->getBool()) {
       g_type = TEXT;
     }
   }
@@ -1086,6 +1096,8 @@ Generated_Column::Generated_Column(std::string name, Table *table)
 
   /*number of columns in generated columns */
   size_t columns = rand_int(.6 * table->columns_->size()) + 1;
+  if (columns > 4)
+    columns = 2;
 
   std::vector<size_t> col_pos; // position of columns
   while (col_pos.size() < columns) {
@@ -1100,11 +1112,11 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     for (auto pos : col_pos) {
       auto col = table->columns_->at(pos);
       if (col->type_ == VARCHAR || col->type_ == CHAR || col->type_ == BLOB ||
-          col->type_ == TEXT)
+          col->type_ == TEXT || col->type_ == BIT)
         str += " LENGTH(" + col->name_ + ")+";
       else if (col->type_ == INT || col->type_ == INTEGER ||
                col->type_ == BOOL || col->type_ == FLOAT ||
-               col->type_ == DOUBLE || col->type_ == BIT) {
+               col->type_ == DOUBLE) {
         if (rand_int(2) == 1) {
           str += " (" + col->name_ + "-" + "100)" + "+";
         } else {
@@ -1205,7 +1217,8 @@ Generated_Column::Generated_Column(std::string name, Table *table)
   }
   str += ")";
 
-  if (rand_int(2) == 1 || compressed)
+  if (rand_int(2) == 1 || compressed ||
+      options->at(Option::SECONDARY_ENGINE)->getString() != "")
     str += " STORED";
 }
 
@@ -1215,8 +1228,8 @@ template <typename Writer> void Column::Serialize(Writer &writer) const {
   writer.String("type");
   std::string typ = col_type_to_string(type_);
   writer.String(typ.c_str(), static_cast<SizeType>(typ.length()));
-  writer.String("null");
-  writer.Bool(null);
+  writer.String("null_val");
+  writer.Bool(null_val);
   writer.String("primary_key");
   writer.Bool(primary_key);
   writer.String("compressed");
@@ -1228,9 +1241,9 @@ template <typename Writer> void Column::Serialize(Writer &writer) const {
   writer.String("length");
   writer.Int(length);
 }
-Column::Column(Table *table, COLUMN_TYPES type) : type_(type), table_(table) {
-  null = rand_int(100) < 90 ? true : false;
-};
+
+/* used by generated,blob, text column */
+Column::Column(Table *table, COLUMN_TYPES type) : type_(type), table_(table) {}
 
 /* add sub_type metadata */
 template <typename Writer> void Blob_Column::Serialize(Writer &writer) const {
@@ -1583,8 +1596,9 @@ Partition::Partition(std::string n) : Table(n) {
     auto number_of_records =
         options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
     for (int i = 0; i < number_of_part; i++) {
-      positions.emplace_back("p",
-                             rand_int(g_integer_range * number_of_records));
+      positions.emplace_back(
+          "p", rand_int(options->at(Option::UNIQUE_RANGE)->getInt() *
+                        number_of_records));
     }
     std::sort(positions.begin(), positions.end(), Partition::compareRange);
     for (int i = 0; i < number_of_part; i++) {
@@ -2043,6 +2057,9 @@ void Table::CreateDefaultColumn() {
       if (secondary && secondary_col_count > 0) {
         col->not_secondary = true;
         secondary_col_count--;
+      }
+      if (rand_int(100, 1) < 30 && col->type_ != Column::GENERATED) {
+        col->null_val = false;
       }
     }
     AddInternalColumn(col);
@@ -3455,8 +3472,6 @@ void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {
   std::string where = GetWherePrecise();
   assert(where.size() > 4);
   std::string sql = "SELECT " + SelectColumn() + " FROM " + name_ + where;
-  if (select_for_update)
-    sql += " FOR UPDATE SKIP LOCKED";
 
   if (options->at(Option::COMPARE_RESULT)->getBool()) {
     sql += " order by";
@@ -3465,6 +3480,10 @@ void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {
     }
     sql.pop_back();
   }
+  if (select_for_update &&
+      not options->at(Option::SELECT_IN_SECONDARY)->getBool())
+    sql += " FOR UPDATE SKIP LOCKED";
+
   table_mutex.unlock();
   if (options->at(Option::COMPARE_RESULT)->getBool()) {
     Compare_between_engine(sql, thd);
@@ -3583,7 +3602,8 @@ void Table::SelectAllRow(Thd1 *thd, bool select_for_update) {
   table_mutex.lock();
   std::string sql =
       "SELECT " + SelectColumn() + " FROM " + name_ + GetWhereBulk();
-  if (select_for_update)
+  if (select_for_update &&
+      not options->at(Option::SELECT_IN_SECONDARY)->getBool())
     sql += " FOR UPDATE SKIP LOCKED";
   table_mutex.unlock();
   if (options->at(Option::SELECT_IN_SECONDARY)->getBool()) {
@@ -3623,6 +3643,7 @@ static int table_initial_record(std::string name) {
       return table->number_of_initial_records;
   }
   assert(false);
+  return 0;
 }
 
 bool Table::InsertBulkRecord(Thd1 *thd) {
@@ -3715,7 +3736,7 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
   prepare_sql += "INTO " + name_ + " (";
 
   assert(number_of_initial_records <=
-         (g_integer_range *
+         (options->at(Option::UNIQUE_RANGE)->getInt() *
           options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt()));
 
   for (const auto &column : *columns_) {
@@ -3742,7 +3763,7 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
         value += "DEFAULT";
       } else if (column->primary_key) {
         value += std::to_string(thd->unique_keys.at(records));
-      } else if (column->auto_increment == true && column->null) {
+      } else if (column->auto_increment == true) {
         value += "NULL";
       } else if (is_list_partition && column->name_.compare("ip_col") == 0) {
         /* for list partition we insert only maximum possible value
@@ -4294,7 +4315,7 @@ static std::string load_metadata_from_file() {
       } else
         throw std::runtime_error("unhandled column type");
 
-      a->null = col["null"].GetBool();
+      a->null_val = col["null_val"].GetBool();
       a->auto_increment = col["auto_increment"].GetBool();
       a->length = col["length"].GetInt(),
       a->primary_key = col["primary_key"].GetBool();
@@ -4361,7 +4382,10 @@ void create_database_tablespace(Thd1 *thd) {
 
   std::string sql =
       "DROP DATABASE IF EXISTS " + options->at(Option::DATABASE)->getString();
-  execute_sql(sql, thd);
+  if (!execute_sql(sql, thd)) {
+    print_and_log("Failed to drop database", thd);
+    exit(EXIT_FAILURE);
+  }
 
   if (options->at(Option::SECONDARY_ENGINE)->getString() != "") {
     ensure_no_table_in_secondary(thd);
