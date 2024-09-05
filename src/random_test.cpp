@@ -1980,7 +1980,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
 void Table::SetEncryption(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " ENCRYPTION = '";
   std::string enc = g_encryption[rand_int(g_encryption.size() - 1)];
-  sql += enc + "'";
+  sql += enc + "'" + "," + pick_algorithm_lock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
     encryption = enc;
@@ -1992,12 +1992,17 @@ void Table::SetEncryption(Thd1 *thd) {
 void Table::SetTableCompression(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " COMPRESSION= '";
   std::string comp = g_compression[rand_int(g_compression.size() - 1)];
-  sql += comp + "'";
+  sql += comp + "'" + "," + pick_algorithm_lock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
     compression = comp;
     table_mutex.unlock();
   }
+}
+
+void Table::SetAlterEngine(Thd1 *thd) {
+  std::string sql = "ALTER TABLE " + name_ + " ENGINE=InnoDB," + pick_algorithm_lock();
+  execute_sql(sql, thd);
 }
 
 // todo pick relevent table//
@@ -3592,6 +3597,9 @@ bool Thd1::run_some_query() {
       break;
     case Option::ALTER_TABLE_ENCRYPTION:
       table->SetEncryption(this);
+      break;
+    case Option::ALTER_ENGINE:
+      table->SetAlterEngine(this);
       break;
     case Option::ALTER_TABLE_COMPRESSION:
       table->SetTableCompression(this);
