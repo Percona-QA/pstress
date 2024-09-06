@@ -1989,8 +1989,7 @@ void Table::CreateDefaultColumn() {
       name = "pkey";
       col = new Column{name, this, type};
       col->primary_key = true;
-      /* 75% of primary key tables are autoinc */
-      if (rand_int(100) < 25) {
+      if (rand_int(100) < options->at(Option::PK_COLUMN_AUTOINC)->getInt()) {
         col->auto_increment = true;
         has_auto_increment = true;
       }
@@ -2058,7 +2057,8 @@ void Table::CreateDefaultColumn() {
         col->not_secondary = true;
         secondary_col_count--;
       }
-      if (rand_int(100, 1) < 30 && col->type_ != Column::GENERATED) {
+      if (rand_int(100, 1) < 30 && col->type_ != Column::GENERATED &&
+          this->type != TABLE_TYPES::FK) {
         col->null_val = false;
       }
     }

@@ -57,6 +57,7 @@ struct Option {
     TABLES,
     INDEXES,
     UNIQUE_INDEX_PROB_K,
+    UNIQUE_RANGE,
     ALGORITHM,
     LOCK,
     COLUMNS,
@@ -207,6 +208,7 @@ struct Option {
     USING_PK_PROB,
     SELECT_FOR_UPDATE,
     SELECT_FOR_UPDATE_BULK,
+    PK_COLUMN_AUTOINC,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

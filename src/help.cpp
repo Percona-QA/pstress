@@ -512,11 +512,18 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
-  /* probability of null columns */
+  /* probability of null value in a column */
   opt = newOption(Option::INT, Option::NULL_PROB, "null-prob-k");
   opt->help = "Probability that a column would have null value. It is used for "
               "update, insert, delete and also in where clause";
   opt->setInt(1);
+
+  /* probability of null  columns */
+  opt = newOption(Option::INT, Option::UNIQUE_RANGE, "range");
+  opt->help = "range for random number int, integers, floats and double.  more "
+              "the value. Default to 100. If target is success insert the "
+              "choose a high value. If it is update/delete choose low value  ";
+  opt->setInt(100);
 
   /* disable text columns*/
   opt = newOption(Option::BOOL, Option::NO_TEXT, "no-text");
@@ -789,6 +796,10 @@ void add_options() {
   opt->help = "SELECT bulk for update ";
   opt->setInt(1);
   opt->setSQL();
+
+  opt = newOption(Option::INT, Option::PK_COLUMN_AUTOINC, "pk-auto-inc-prob");
+  opt->help = "Probability of primary key column being auto increment";
+  opt->setInt(75);
 
   opt = newOption(Option::INT, Option::INSERT_RANDOM_ROW, "insert");
   opt->help = "insert random row";
