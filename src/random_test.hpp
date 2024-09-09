@@ -289,8 +289,6 @@ struct Table {
       table_mutex.lock();
     else
       table_mutex.lock_shared();
-
-    table_mutex.lock();
   };
   void unlock_table_mutex() const {
     /* if option no ddl then do not unlock mutex */
