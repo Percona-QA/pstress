@@ -280,7 +280,24 @@ struct Table {
   // std::string data_directory; todo add corressponding code
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
-  mutable std::mutex table_mutex;
+  mutable std::shared_mutex table_mutex;
+  void lock_table_mutex(bool ddl_query) const {
+    /* if option no ddl then do not lock mutex */
+    if (options->at(Option::NO_DDL)->getBool())
+      return;
+    if (ddl_query)
+      table_mutex.lock();
+    else
+      table_mutex.lock_shared();
+
+    table_mutex.lock();
+  };
+  void unlock_table_mutex() const {
+    /* if option no ddl then do not unlock mutex */
+    if (options->at(Option::NO_DDL)->getBool())
+      return;
+    table_mutex.unlock();
+  };
   mutable std::shared_mutex dml_mutex;
 
   const std::string get_type() const {
