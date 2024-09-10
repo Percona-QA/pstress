@@ -3402,18 +3402,9 @@ std::string Table::GetWherePrecise() {
     return where + " = " + rand_value;
   }
 
-  if (col->is_col_string() && rand_int(100) == 1) {
-    return where + " LIKE " + "\'" + rand_string(10, 3) + "%\'";
-  }
-
   if (col->type_ == Column::BLOB && rand_int(100) == 1) {
     return randPartition + " WHERE instr( " + col->name_ + ",_binary\'" +
            rand_string(10, 3) + "%\')";
-  }
-
-  if (col->is_col_number() && rand_int(100) < 3) {
-    auto lower_value = std::to_string(std::stoi(rand_value) - rand_int(100, 3));
-    return where + " BETWEEN " + lower_value + " AND " + rand_value;
   }
 
   std::string second_rand_value = col->rand_value();
@@ -3429,42 +3420,67 @@ std::string Table::GetWherePrecise() {
     return where + " IN (" + rand_value + ", " + second_rand_value + ")";
   }
 
-  if (rand_int(100) == 1 && col->type_ != Column::BIT) {
-    return where + " BETWEEN " + rand_value + " AND " + second_rand_value;
-  }
-
   return where + " = " + rand_value;
 }
 
 std::string Table::GetWhereBulk() {
   auto col = GetRandomColumn();
-  std::string sql;
-  if (rand_int(100) < 70) {
-    sql += GetRandomPartition();
+  std::string randPartition = GetRandomPartition();
+  std::string where = randPartition + " WHERE " + col->name_;
+  std::string rand_value = col->rand_value();
+
+  if (rand_value == "NULL") {
+    return where + " IS " + (rand_int(1000) == 1 ? "NOT NULL" : "NULL");
   }
 
-  if ((col->is_col_number() || col->type_ == Column::DOUBLE ||
-       col->type_ == Column::DOUBLE) &&
-      rand_int(100) < 90) {
-    int prob = rand_int(100);
-    if (prob < 90)
-      sql += " WHERE " + col->name_ + " >= " + col->rand_value() + " AND " +
-             col->name_ + " <= " + col->rand_value();
-    else if (prob < 95)
-      sql += " WHERE " + col->name_ + " <= " + col->rand_value();
-    else
-      sql += " WHERE " + col->name_ + " >= " + col->rand_value();
+  if (col->is_col_number() && rand_int(100) < 40) {
+    auto lower_value = std::to_string(std::stoi(rand_value) - rand_int(100, 3));
+    return where + " BETWEEN " + lower_value + " AND " + rand_value;
+  }
 
-    return sql;
+  if (col->is_col_can_be_compared()) {
+    if (rand_int(100) == 1) {
+      return where + " >= " + rand_value;
+    }
+    if (rand_int(100) == 1) {
+      return where + " <= " + rand_value;
+    }
+
+    auto second_rand_value = col->rand_value();
+
+    if (second_rand_value == "NULL") {
+      return where + " >= " + rand_value + " AND " + col->name_ +
+             " IS NOT NULL";
+    }
+
+    if (rand_int(100) < 20) {
+      return where + " >= " + rand_value + " AND " + col->name_ +
+             " <= " + second_rand_value;
+    }
+    if (rand_int(100) < 1) {
+      return where + " <= " + rand_value + " AND " + col->name_ +
+             " >= " + second_rand_value;
+    }
+  }
+
+  if (col->is_col_string() && rand_int(100) < 20) {
+    return where + " LIKE " + "\'" + rand_string(10, 3) + "%\'";
   }
 
   if (col->is_col_string() && rand_int(100) < 90) {
-
-    sql += " WHERE " + col->name_ + " NOT BETWEEN " + col->rand_value() +
-           " and " + col->rand_value();
+    auto second_rand_value = col->rand_value();
+    if (second_rand_value == "NULL") {
+      return where + " = " + rand_value + " OR " + col->name_ + " IS NULL";
+    }
+    if (rand_int(100) < 80) {
+      return where + " BETWEEN " + rand_value + " AND " + second_rand_value;
+    } else {
+      return where + " NOT BETWEEN " + col->rand_value() + " and " +
+             col->rand_value();
+    }
   }
 
-  return sql;
+  return where + " = " + col->rand_value();
 }
 
 void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {

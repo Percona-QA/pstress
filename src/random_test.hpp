@@ -50,18 +50,18 @@ public:
              PARTITION */
     INTEGER,
     INT,
-    CHAR,
-    VARCHAR,
     FLOAT,
     DOUBLE,
     BOOL,
-    BLOB,
-    BIT,
-    GENERATED,
     DATE,
     DATETIME,
     TIMESTAMP,
+    BIT,
+    BLOB,
+    CHAR,
+    VARCHAR,
     TEXT,
+    GENERATED,
     COLUMN_MAX // should be last
   } type_;
   /* used to create new table/alter table add column*/
@@ -109,6 +109,12 @@ public:
   }
   virtual bool is_col_number() {
     return type_ == COLUMN_TYPES::INT || type_ == COLUMN_TYPES::INTEGER;
+  }
+  bool is_col_can_be_compared() {
+    return type_ == COLUMN_TYPES::INT || type_ == COLUMN_TYPES::INTEGER ||
+           type_ == COLUMN_TYPES::FLOAT || type_ == COLUMN_TYPES::DOUBLE ||
+           type_ == COLUMN_TYPES::DATE || type_ == COLUMN_TYPES::DATETIME ||
+           type_ == COLUMN_TYPES::TIMESTAMP;
   }
 };
 
