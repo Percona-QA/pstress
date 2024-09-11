@@ -214,7 +214,7 @@ static std::vector<int> generateUniqueRandomNumbers(int number_of_records) {
   if (rand_int(100) < 10 ||
       (options->at(Option::UNIQUE_RANGE)->getInt() == 1 &&
        options->at(Option::POSITIVE_INT_PROB)->getInt() == 1000)) {
-    std::vector<int> vec(max_size);
+    std::vector<int> vec(number_of_records);
     std::iota(vec.begin(), vec.end(), 1);
     return vec;
   }
@@ -1676,22 +1676,22 @@ void Table::DropCreate(Thd1 *thd) {
     if (!execute_sql(def + tbs, thd))
       if (!no_encryption && (execute_sql(def + encrypt_sql, thd) ||
                              execute_sql(def + encrypt_sql + tbs, thd))) {
-        table_mutex.lock();
+        lock_table_mutex(thd->ddl_query);
         if (encryption.compare("Y") == 0)
           encryption = 'N';
         else if (encryption.compare("N") == 0)
           encryption = 'Y';
-        table_mutex.unlock();
+        unlock_table_mutex();
       }
   }
 }
 
 void Table::Optimize(Thd1 *thd) {
   if (type == PARTITION && rand_int(4) == 1) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
-    table_mutex.unlock();
+    unlock_table_mutex();
     execute_sql("ALTER TABLE " + name_ + " OPTIMIZE PARTITION p" +
                     std::to_string(partition),
                 thd);
@@ -1701,10 +1701,10 @@ void Table::Optimize(Thd1 *thd) {
 
 void Table::Check(Thd1 *thd) {
   if (type == PARTITION && rand_int(4) == 1) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
-    table_mutex.unlock();
+    unlock_table_mutex();
     get_check_result("ALTER TABLE " + name_ + " CHECK PARTITION p" +
                          std::to_string(partition),
                      thd);
@@ -1714,10 +1714,10 @@ void Table::Check(Thd1 *thd) {
 
 void Table::Analyze(Thd1 *thd) {
   if (type == PARTITION && rand_int(4) == 1) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     int partition =
         rand_int(static_cast<Partition *>(this)->number_of_part - 1);
-    table_mutex.unlock();
+    unlock_table_mutex();
     execute_sql("ALTER TABLE " + name_ + " ANALYZE PARTITION p" +
                     std::to_string(partition),
                 thd);
@@ -1728,7 +1728,7 @@ void Table::Analyze(Thd1 *thd) {
 void Table::Truncate(Thd1 *thd) {
   /* 99% truncate the some partition */
   if (type == PARTITION && rand_int(100) > 1) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     std::string part_name;
     auto part_table = static_cast<Partition *>(this);
     assert(part_table->number_of_part > 0);
@@ -1743,7 +1743,7 @@ void Table::Truncate(Thd1 *thd) {
       part_name =
           part_table->lists.at(rand_int(part_table->lists.size() - 1)).name;
     }
-    table_mutex.unlock();
+    unlock_table_mutex();
     execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
                     ", TRUNCATE PARTITION " + part_name,
                 thd);
@@ -1764,32 +1764,32 @@ void Partition::AddDrop(Thd1 *thd) {
       if (execute_sql("ALTER TABLE " + name_ + " ADD PARTITION PARTITIONS " +
                           std::to_string(new_partition),
                       thd)) {
-        table_mutex.lock();
+        lock_table_mutex(thd->ddl_query);
         number_of_part += new_partition;
-        table_mutex.unlock();
+        unlock_table_mutex();
       }
     } else {
       if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
                           ", COALESCE PARTITION " +
                           std::to_string(new_partition),
                       thd)) {
-        table_mutex.lock();
+        lock_table_mutex(thd->ddl_query);
         number_of_part -= new_partition;
-        table_mutex.unlock();
+        unlock_table_mutex();
       }
     }
   } else if (part_type == RANGE) {
     /* drop partition, else add partition */
     if (rand_int(1) == 1) {
-      table_mutex.lock();
+      lock_table_mutex(thd->ddl_query);
       if (positions.size()) {
         auto par = positions.at(rand_int(positions.size() - 1));
         auto part_name = par.name;
-        table_mutex.unlock();
+        unlock_table_mutex();
         if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
                             ", DROP PARTITION " + part_name,
                         thd)) {
-          table_mutex.lock();
+          lock_table_mutex(thd->ddl_query);
           number_of_part--;
           for (auto i = positions.begin(); i != positions.end(); i++) {
             if (i->name.compare(part_name) == 0) {
@@ -1797,13 +1797,13 @@ void Partition::AddDrop(Thd1 *thd) {
               break;
             }
           }
-          table_mutex.unlock();
+          unlock_table_mutex();
         }
       } else
-        table_mutex.unlock();
+        unlock_table_mutex();
     } else {
       /* add partition */
-      table_mutex.lock();
+      lock_table_mutex(thd->ddl_query);
       int first;
       int second;
       std::string par_name;
@@ -1812,7 +1812,7 @@ void Partition::AddDrop(Thd1 *thd) {
           size_t pst = rand_int(positions.size() - 1, 1);
 
           if (positions.at(pst).range - positions.at(pst - 1).range <= 2) {
-            table_mutex.unlock();
+            unlock_table_mutex();
             return;
           }
           auto par = positions.at(pst);
@@ -1832,10 +1832,10 @@ void Partition::AddDrop(Thd1 *thd) {
                           "a VALUES LESS THAN " + "(" + std::to_string(first) +
                           "), PARTITION " + par_name + "b VALUES LESS THAN (" +
                           std::to_string(second) + "))";
-        table_mutex.unlock();
+        unlock_table_mutex();
 
         if (execute_sql(sql, thd)) {
-          table_mutex.lock();
+          lock_table_mutex(thd->ddl_query);
           for (auto i = positions.begin(); i != positions.end(); i++) {
             if (i->name.compare(par_name) == 0) {
               positions.erase(i);
@@ -1847,24 +1847,24 @@ void Partition::AddDrop(Thd1 *thd) {
           std::sort(positions.begin(), positions.end(),
                     Partition::compareRange);
           number_of_part++;
-          table_mutex.unlock();
+          unlock_table_mutex();
         }
       } else
-        table_mutex.unlock();
+        unlock_table_mutex();
     }
   } else if (part_type == LIST) {
 
     /* drop partition or add partition */
     if (rand_int(1) == 0) {
-      table_mutex.lock();
+      lock_table_mutex(thd->ddl_query);
       assert(lists.size() > 0);
       auto par = lists.at(rand_int(lists.size() - 1));
       auto part_name = par.name;
-      table_mutex.unlock();
+      unlock_table_mutex();
       if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
                           ", DROP PARTITION " + part_name,
                       thd)) {
-        table_mutex.lock();
+        lock_table_mutex(thd->ddl_query);
         number_of_part--;
         for (auto i = lists.begin(); i != lists.end(); i++) {
           if (i->name.compare(part_name) == 0) {
@@ -1874,7 +1874,7 @@ void Partition::AddDrop(Thd1 *thd) {
             break;
           }
         }
-        table_mutex.unlock();
+        unlock_table_mutex();
       }
 
     } else {
@@ -1885,9 +1885,9 @@ void Partition::AddDrop(Thd1 *thd) {
 
       if (number_of_records_in_partition == 0)
         number_of_records_in_partition = 1;
-      table_mutex.lock();
+      lock_table_mutex(thd->ddl_query);
       if (number_of_records_in_partition > total_left_list.size()) {
-        table_mutex.unlock();
+        unlock_table_mutex();
         return;
       } else {
         std::vector<int> temp_list;
@@ -1901,7 +1901,7 @@ void Partition::AddDrop(Thd1 *thd) {
           if (flag == false)
             temp_list.push_back(curr);
         }
-        table_mutex.unlock();
+        unlock_table_mutex();
         std::string new_part_name = "p" + std::to_string(rand_int(1000, 100));
         std::string sql = "ALTER TABLE " + name_ +
                           " ADD PARTITION (PARTITION " + new_part_name +
@@ -1913,7 +1913,7 @@ void Partition::AddDrop(Thd1 *thd) {
         }
         sql += "))";
         if (execute_sql(sql, thd)) {
-          table_mutex.lock();
+          lock_table_mutex(thd->ddl_query);
           number_of_part++;
           lists.emplace_back(new_part_name);
           for (auto l : temp_list) {
@@ -1922,7 +1922,7 @@ void Partition::AddDrop(Thd1 *thd) {
                 std::remove(total_left_list.begin(), total_left_list.end(), l),
                 total_left_list.end());
           }
-          table_mutex.unlock();
+          unlock_table_mutex();
         }
       }
     }
@@ -1989,8 +1989,7 @@ void Table::CreateDefaultColumn() {
       name = "pkey";
       col = new Column{name, this, type};
       col->primary_key = true;
-      /* 75% of primary key tables are autoinc */
-      if (rand_int(100) < 25) {
+      if (rand_int(100) < options->at(Option::PK_COLUMN_AUTOINC)->getInt()) {
         col->auto_increment = true;
         has_auto_increment = true;
       }
@@ -2058,7 +2057,8 @@ void Table::CreateDefaultColumn() {
         col->not_secondary = true;
         secondary_col_count--;
       }
-      if (rand_int(100, 1) < 30 && col->type_ != Column::GENERATED) {
+      if (rand_int(100, 1) < 30 && col->type_ != Column::GENERATED &&
+          this->type != TABLE_TYPES::FK) {
         col->null_val = false;
       }
     }
@@ -2804,9 +2804,9 @@ void Table::SetEncryption(Thd1 *thd) {
   std::string enc = g_encryption[rand_int(g_encryption.size() - 1)];
   sql += enc + "'";
   if (execute_sql(sql, thd)) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     encryption = enc;
-    table_mutex.unlock();
+    unlock_table_mutex();
   }
 }
 
@@ -2818,9 +2818,9 @@ void Table::SetTableCompression(Thd1 *thd) {
   std::string comp = g_compression[rand_int(g_compression.size() - 1)];
   sql += comp + "'";
   if (execute_sql(sql, thd)) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     compression = comp;
-    table_mutex.unlock();
+    unlock_table_mutex();
   }
 }
 
@@ -2899,11 +2899,11 @@ void Table::ModifyColumn(Thd1 *thd) {
 
 /* alter table drop column */
 void Table::DropColumn(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
 
   /* do not drop last column */
   if (columns_->size() == 1) {
-    table_mutex.unlock();
+    unlock_table_mutex();
     return;
   }
   auto ps = rand_int(columns_->size() - 1); // position
@@ -2912,17 +2912,17 @@ void Table::DropColumn(Thd1 *thd) {
 
   if (rand_int(100, 1) <= options->at(Option::PRIMARY_KEY)->getInt() &&
       name.find("pkey") != std::string::npos) {
-    table_mutex.unlock();
+    unlock_table_mutex();
     return;
   }
 
   std::string sql = "ALTER TABLE " + name_ + " DROP COLUMN " + name + ",";
 
   sql += pick_algorithm_lock();
-  table_mutex.unlock();
+  unlock_table_mutex();
 
   if (execute_sql(sql, thd)) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
 
     std::vector<int> indexes_to_drop;
     for (auto id = indexes_->begin(); id != indexes_->end(); id++) {
@@ -2961,7 +2961,7 @@ void Table::DropColumn(Thd1 *thd) {
         break;
       }
     }
-    table_mutex.unlock();
+    unlock_table_mutex();
   }
 }
 
@@ -2975,7 +2975,7 @@ void Table::AddColumn(Thd1 *thd) {
   auto use_virtual = true;
 
   // lock table to create definition
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
 
   if (options->at(Option::NO_VIRTUAL_COLUMNS)->getBool() ||
       (columns_->size() == 1 && columns_->at(0)->auto_increment == true)) {
@@ -3055,10 +3055,10 @@ void Table::AddColumn(Thd1 *thd) {
 
   sql += algorithm_lock;
 
-  table_mutex.unlock();
+  unlock_table_mutex();
 
   if (execute_sql(sql, thd)) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     auto add_new_column =
         true; // check if there is already a column with this name
     for (auto col : *columns_) {
@@ -3071,7 +3071,7 @@ void Table::AddColumn(Thd1 *thd) {
     else
       delete tc;
 
-    table_mutex.unlock();
+    unlock_table_mutex();
   } else
     delete tc;
 }
@@ -3104,15 +3104,15 @@ void Table::ModifyColumnSecondaryEngine(Thd1 *thd) {
 
 /* randomly drop some index of table */
 void Table::DropIndex(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   if (indexes_ != nullptr && indexes_->size() > 0) {
     auto index = indexes_->at(rand_int(indexes_->size() - 1));
     auto name = index->name_;
     std::string sql = "ALTER TABLE " + name_ + " DROP INDEX " + name + ",";
     sql += pick_algorithm_lock();
-    table_mutex.unlock();
+    unlock_table_mutex();
     if (execute_sql(sql, thd)) {
-      table_mutex.lock();
+      lock_table_mutex(thd->ddl_query);
       for (size_t i = 0; i < indexes_->size(); i++) {
         auto ix = indexes_->at(i);
         if (ix->name_.compare(name) == 0) {
@@ -3122,10 +3122,10 @@ void Table::DropIndex(Thd1 *thd) {
           break;
         }
       }
-      table_mutex.unlock();
+      unlock_table_mutex();
     }
   } else {
-    table_mutex.unlock();
+    unlock_table_mutex();
     thd->thread_log << "no index to drop " + name_ << std::endl;
   }
 }
@@ -3136,7 +3136,7 @@ void Table::AddIndex(Thd1 *thd) {
   Index *id = new Index(name_ + std::to_string(i));
 
   static size_t max_columns = opt_int(INDEX_COLUMNS);
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
 
   /* number of columns to be added */
   int no_of_columns = rand_int(
@@ -3175,10 +3175,10 @@ void Table::AddIndex(Thd1 *thd) {
 
   std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition() + ",";
   sql += pick_algorithm_lock();
-  table_mutex.unlock();
+  unlock_table_mutex();
 
   if (execute_sql(sql, thd)) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     auto do_not_add = false; // check if there is already a index with this name
     for (auto ind : *indexes_) {
       if (ind->name_.compare(id->name_) == 0)
@@ -3189,7 +3189,7 @@ void Table::AddIndex(Thd1 *thd) {
     else
       delete id;
 
-    table_mutex.unlock();
+    unlock_table_mutex();
   } else {
     delete id;
   }
@@ -3210,7 +3210,7 @@ std::string Table::SelectColumn() {
 }
 
 void Table::SetSecondaryEngine(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   std::string second_engine = "NULL";
   if (rand_int(1) == 0) {
     second_engine = options->at(Option::SECONDARY_ENGINE)->getString();
@@ -3222,13 +3222,13 @@ void Table::SetSecondaryEngine(Thd1 *thd) {
   if (second_engine == options->at(Option::SECONDARY_ENGINE)->getString() &&
       options->at(Option::WAIT_FOR_SYNC)->getBool())
     wait_till_sync(name_, thd);
-  table_mutex.unlock();
+  unlock_table_mutex();
 }
 
 void Table::IndexRename(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   if (indexes_->size() == 0)
-    table_mutex.unlock();
+    unlock_table_mutex();
   else {
     auto ps = rand_int(indexes_->size() - 1);
     auto name = indexes_->at(ps)->name_;
@@ -3243,20 +3243,20 @@ void Table::IndexRename(Thd1 *thd) {
     std::string sql = "ALTER TABLE " + name_ + " RENAME INDEX " + name +
                       " To " + new_name + ",";
     sql += pick_algorithm_lock();
-    table_mutex.unlock();
+    unlock_table_mutex();
     if (execute_sql(sql, thd)) {
-      table_mutex.lock();
+      lock_table_mutex(thd->ddl_query);
       for (auto &ind : *indexes_) {
         if (ind->name_.compare(name) == 0)
           ind->name_ = new_name;
       }
-      table_mutex.unlock();
+      unlock_table_mutex();
     }
   }
 }
 
 void Table::ColumnRename(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   auto ps = rand_int(columns_->size() - 1);
   auto name = columns_->at(ps)->name_;
   /* ALTER column to _rename or back to orignal_name */
@@ -3269,14 +3269,14 @@ void Table::ColumnRename(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " RENAME COLUMN " + name + " To " +
                     new_name + ",";
   sql += pick_algorithm_lock();
-  table_mutex.unlock();
+  unlock_table_mutex();
   if (execute_sql(sql, thd)) {
-    table_mutex.lock();
+    lock_table_mutex(thd->ddl_query);
     for (auto &col : *columns_) {
       if (col->name_.compare(name) == 0)
         col->name_ = new_name;
     }
-    table_mutex.unlock();
+    unlock_table_mutex();
   }
 }
 
@@ -3402,18 +3402,9 @@ std::string Table::GetWherePrecise() {
     return where + " = " + rand_value;
   }
 
-  if (col->is_col_string() && rand_int(100) == 1) {
-    return where + " LIKE " + "\'" + rand_string(10, 3) + "%\'";
-  }
-
   if (col->type_ == Column::BLOB && rand_int(100) == 1) {
     return randPartition + " WHERE instr( " + col->name_ + ",_binary\'" +
            rand_string(10, 3) + "%\')";
-  }
-
-  if (col->is_col_number() && rand_int(100) < 3) {
-    auto lower_value = std::to_string(std::stoi(rand_value) - rand_int(100, 3));
-    return where + " BETWEEN " + lower_value + " AND " + rand_value;
   }
 
   std::string second_rand_value = col->rand_value();
@@ -3429,46 +3420,71 @@ std::string Table::GetWherePrecise() {
     return where + " IN (" + rand_value + ", " + second_rand_value + ")";
   }
 
-  if (rand_int(100) == 1 && col->type_ != Column::BIT) {
-    return where + " BETWEEN " + rand_value + " AND " + second_rand_value;
-  }
-
   return where + " = " + rand_value;
 }
 
 std::string Table::GetWhereBulk() {
   auto col = GetRandomColumn();
-  std::string sql;
-  if (rand_int(100) < 70) {
-    sql += GetRandomPartition();
+  std::string randPartition = GetRandomPartition();
+  std::string where = randPartition + " WHERE " + col->name_;
+  std::string rand_value = col->rand_value();
+
+  if (rand_value == "NULL") {
+    return where + " IS " + (rand_int(1000) == 1 ? "NOT NULL" : "NULL");
   }
 
-  if ((col->is_col_number() || col->type_ == Column::DOUBLE ||
-       col->type_ == Column::DOUBLE) &&
-      rand_int(100) < 90) {
-    int prob = rand_int(100);
-    if (prob < 90)
-      sql += " WHERE " + col->name_ + " >= " + col->rand_value() + " AND " +
-             col->name_ + " <= " + col->rand_value();
-    else if (prob < 95)
-      sql += " WHERE " + col->name_ + " <= " + col->rand_value();
-    else
-      sql += " WHERE " + col->name_ + " >= " + col->rand_value();
+  if (col->is_col_number() && rand_int(100) < 40) {
+    auto lower_value = std::to_string(std::stoi(rand_value) - rand_int(100, 3));
+    return where + " BETWEEN " + lower_value + " AND " + rand_value;
+  }
 
-    return sql;
+  if (col->is_col_can_be_compared()) {
+    if (rand_int(100) == 1) {
+      return where + " >= " + rand_value;
+    }
+    if (rand_int(100) == 1) {
+      return where + " <= " + rand_value;
+    }
+
+    auto second_rand_value = col->rand_value();
+
+    if (second_rand_value == "NULL") {
+      return where + " >= " + rand_value + " AND " + col->name_ +
+             " IS NOT NULL";
+    }
+
+    if (rand_int(100) < 20) {
+      return where + " >= " + rand_value + " AND " + col->name_ +
+             " <= " + second_rand_value;
+    }
+    if (rand_int(100) < 1) {
+      return where + " <= " + rand_value + " AND " + col->name_ +
+             " >= " + second_rand_value;
+    }
+  }
+
+  if (col->is_col_string() && rand_int(100) < 20) {
+    return where + " LIKE " + "\'" + rand_string(10, 3) + "%\'";
   }
 
   if (col->is_col_string() && rand_int(100) < 90) {
-
-    sql += " WHERE " + col->name_ + " NOT BETWEEN " + col->rand_value() +
-           " and " + col->rand_value();
+    auto second_rand_value = col->rand_value();
+    if (second_rand_value == "NULL") {
+      return where + " = " + rand_value + " OR " + col->name_ + " IS NULL";
+    }
+    if (rand_int(100) < 80) {
+      return where + " BETWEEN " + rand_value + " AND " + second_rand_value;
+    } else {
+      return where + " NOT BETWEEN " + col->rand_value() + " and " +
+             col->rand_value();
+    }
   }
 
-  return sql;
+  return where + " = " + col->rand_value();
 }
 
 void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   std::string where = GetWherePrecise();
   assert(where.size() > 4);
   std::string sql = "SELECT " + SelectColumn() + " FROM " + name_ + where;
@@ -3481,10 +3497,10 @@ void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {
     sql.pop_back();
   }
   if (select_for_update &&
-      not options->at(Option::SELECT_IN_SECONDARY)->getBool())
+      options->at(Option::SECONDARY_ENGINE)->getString() == "")
     sql += " FOR UPDATE SKIP LOCKED";
 
-  table_mutex.unlock();
+  unlock_table_mutex();
   if (options->at(Option::COMPARE_RESULT)->getBool()) {
     Compare_between_engine(sql, thd);
   } else {
@@ -3526,7 +3542,7 @@ void Table::CreateFunction(Thd1 *thd) {
 
   sql = "CREATE FUNCTION f" + name_ + "() RETURNS INT DETERMINISTIC BEGIN ";
 
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   for (int j = 0; j < rand_int(4, 1); j++) {
     for (auto &dml : function_dmls) {
       if (dml == "INSERT")
@@ -3542,7 +3558,7 @@ void Table::CreateFunction(Thd1 *thd) {
                      GetWherePrecise() + "; ");
     }
   }
-  table_mutex.unlock();
+  unlock_table_mutex();
 
   sql.append("RETURN 1; ");
   sql.append("END");
@@ -3554,7 +3570,7 @@ void Table::CreateFunction(Thd1 *thd) {
 }
 
 void Table::UpdateRandomROW(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
 
   std::string sql;
   if (rand_int(100) >= 30 ||
@@ -3565,47 +3581,47 @@ void Table::UpdateRandomROW(Thd1 *thd) {
     sql = "REPLACE INTO " + name_ + ColumnValues();
   }
 
-  table_mutex.unlock();
+  unlock_table_mutex();
 
-  std::shared_lock lock(dml_mutex);
+  std::shared_lock<std::shared_mutex> lock(dml_mutex);
   execute_sql(sql, thd);
 }
 
 void Table::DeleteRandomRow(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   std::string sql =
       "DELETE " + add_ignore_clause() + " FROM " + name_ + GetWherePrecise();
-  table_mutex.unlock();
+  unlock_table_mutex();
   std::shared_lock lock(dml_mutex);
   execute_sql(sql, thd);
 }
 
 void Table::UpdateAllRows(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   std::string sql = "UPDATE " + add_ignore_clause() + name_ + " SET " +
                     SetClause() + GetWhereBulk();
-  table_mutex.unlock();
+  unlock_table_mutex();
   std::shared_lock lock(dml_mutex);
   execute_sql(sql, thd);
 }
 
 void Table::DeleteAllRows(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   std::string sql =
       "DELETE " + add_ignore_clause() + " FROM " + name_ + GetWhereBulk();
-  table_mutex.unlock();
+  unlock_table_mutex();
   std::shared_lock lock(dml_mutex);
   execute_sql(sql, thd);
 }
 
 void Table::SelectAllRow(Thd1 *thd, bool select_for_update) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   std::string sql =
       "SELECT " + SelectColumn() + " FROM " + name_ + GetWhereBulk();
   if (select_for_update &&
-      not options->at(Option::SELECT_IN_SECONDARY)->getBool())
+      options->at(Option::SECONDARY_ENGINE)->getString() == "")
     sql += " FOR UPDATE SKIP LOCKED";
-  table_mutex.unlock();
+  unlock_table_mutex();
   if (options->at(Option::SELECT_IN_SECONDARY)->getBool()) {
     execute_sql("COMMIT", thd);
   }
@@ -3820,10 +3836,10 @@ std::string Table::ColumnValues() {
 }
 
 void Table::InsertRandomRow(Thd1 *thd) {
-  table_mutex.lock();
+  lock_table_mutex(thd->ddl_query);
   std::string sql =
       "INSERT " + add_ignore_clause() + " INTO " + name_ + ColumnValues();
-  table_mutex.unlock();
+  unlock_table_mutex();
 
   std::shared_lock lock(dml_mutex);
   execute_sql(sql, thd);
@@ -4016,7 +4032,7 @@ static void grammar_sql(Thd1 *thd, Table *enforce_table) {
         working_table = enforce_table;
         table_check = 0;
       }
-      working_table->table_mutex.lock();
+      working_table->lock_table_mutex(thd->ddl_query);
       table.found_name = working_table->name_;
 
       auto columns = working_table->columns_;
@@ -4043,7 +4059,7 @@ static void grammar_sql(Thd1 *thd, Table *enforce_table) {
       } while (column_check-- > 0 &&
                table.total_column_count() != table.total_column_written());
 
-      working_table->table_mutex.unlock();
+      working_table->unlock_table_mutex();
 
       if (table.total_column_count() != table.total_column_written())
         table.reset_columns();
