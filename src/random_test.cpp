@@ -431,6 +431,7 @@ int sum_of_all_options(Thd1 *thd) {
     options->at(Option::MODIFY_COLUMN_SECONDARY_ENGINE)->setInt(0);
     options->at(Option::WAIT_FOR_SYNC)->setBool(false);
     options->at(Option::SECONDARY_AFTER_CREATE)->setBool(false);
+    options->at(Option::NOT_SECONDARY)->setInt(0);
   } else {
     /* disable some of options for secondary engine */
     options->at(Option::NO_ENCRYPTION)->setBool(true);
@@ -1555,12 +1556,14 @@ static void AddTable(Thd1 *thd) {
   std::unique_lock<std::mutex> lock(all_table_mutex);
   int table_id = rand_int(options->at(Option::TABLES)->getInt(), 1);
   auto table = Table::table_id(Table::FK, table_id, true);
-  all_tables->push_back(table);
   lock.unlock();
   if (!execute_sql(table->definition(true, true), thd)) {
     print_and_log("Failed to create table " + table->name_, thd);
     return;
   }
+  lock.lock();
+  all_tables->push_back(table);
+  lock.unlock();
   print_and_log("Created new table " + table->name_, thd);
 }
 
@@ -1960,6 +1963,7 @@ void Table::CreateDefaultColumn() {
     else
       type = Column::INT;
     auto col = new Column{name, this, type};
+    col->null_val = false;
     AddInternalColumn(col);
   }
 
@@ -3457,7 +3461,7 @@ std::string Table::GetWhereBulk() {
       return where + " >= " + rand_value + " AND " + col->name_ +
              " <= " + second_rand_value;
     }
-    if (rand_int(100) < 1) {
+    if (rand_int(100) < 10) {
       return where + " <= " + rand_value + " AND " + col->name_ +
              " >= " + second_rand_value;
     }
@@ -3478,6 +3482,10 @@ std::string Table::GetWhereBulk() {
       return where + " NOT BETWEEN " + col->rand_value() + " and " +
              col->rand_value();
     }
+  }
+
+  if (rand_int(100) == 1) {
+    return "";
   }
 
   return where + " = " + col->rand_value();
@@ -3902,6 +3910,13 @@ void alter_database_encryption(Thd1 *thd) {
   execute_sql(sql, thd);
 }
 
+void alter_database_collation(Thd1 *thd) {
+  std::string sql = "ALTER DATABASE " +
+    options->at(Option::DATABASE)->getString() + " DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE ";
+  sql += (rand_int(1) == 0 ? "utf8mb4_0900_ai_ci" : "utf8mb4_general_ci");
+  execute_sql(sql, thd);
+}
+
 /* create,alter,drop undo tablespace */
 static void create_alter_drop_undo(Thd1 *thd) {
   if (g_undo_tablespace.size() == 0)
@@ -4309,9 +4324,9 @@ static std::string load_metadata_from_file() {
       Column *a;
       std::string type = col["type"].GetString();
 
-      const std::array<std::string, 11> column_types = {
+      const std::array<std::string, 11> column_types{{
           "INT",     "CHAR", "VARCHAR",  "BOOL",      "FLOAT", "DOUBLE",
-          "INTEGER", "DATE", "DATETIME", "TIMESTAMP", "BIT"};
+          "INTEGER", "DATE", "DATETIME", "TIMESTAMP", "BIT"}};
       auto isValidType =
           std::find(column_types.begin(), column_types.end(), type);
 
@@ -4532,7 +4547,9 @@ bool Thd1::run_some_query() {
   std::vector<Table::TABLE_TYPES> tableTypes = {Table::NORMAL, Table::FK,
                                                 Table::PARTITION};
   execute_sql("SET collation_connection = utf8mb4_0900_bin", this);
-  execute_sql("SET SESSION sql_generate_invisible_primary_key = TRUE", this);
+  if (options->at(Option::SECONDARY_ENGINE)->getString() != "") {
+    execute_sql("SET SESSION sql_generate_invisible_primary_key = TRUE", this);
+  }
   execute_sql("USE " + options->at(Option::DATABASE)->getString(), this);
 
   /* first create temporary tables metadata if requried */
@@ -4836,6 +4853,9 @@ bool Thd1::run_some_query() {
       break;
     case Option::ALTER_DATABASE_ENCRYPTION:
       alter_database_encryption(this);
+      break;
+    case Option::ALTER_DATABASE_COLLATION:
+      alter_database_collation(this);
       break;
     case Option::UNDO_SQL:
       create_alter_drop_undo(this);

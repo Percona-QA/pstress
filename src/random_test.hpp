@@ -510,6 +510,7 @@ void alter_tablespace_rename(Thd1 *thd);
 void set_mysqld_variable(Thd1 *thd);
 void add_server_options(std::string str);
 void alter_database_encryption(Thd1 *thd);
+void alter_database_collation(Thd1 *thd);
 void create_in_memory_data();
 void generate_metadata_for_tables();
 void create_database_tablespace(Thd1 *thd);

@@ -725,6 +725,13 @@ void add_options() {
   opt->setSQL();
   opt->setDDL();
 
+  /*Database collation */
+  opt = newOption(Option::INT, Option::ALTER_DATABASE_COLLATION, "alt-db-col");
+  opt->help = "Alter Database collation probability";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
+
   /* Tablespace Rename */
   opt =
       newOption(Option::INT, Option::ALTER_TABLESPACE_RENAME, "alt-tbs-rename");
@@ -794,7 +801,7 @@ void add_options() {
   opt = newOption(Option::INT, Option::SELECT_FOR_UPDATE_BULK,
                   "select-bulk-update");
   opt->help = "SELECT bulk for update ";
-  opt->setInt(1);
+  opt->setInt(20);
   opt->setSQL();
 
   opt = newOption(Option::INT, Option::PK_COLUMN_AUTOINC, "pk-auto-inc-prob");
@@ -814,7 +821,7 @@ void add_options() {
 
   opt = newOption(Option::INT, Option::UPDATE_ALL_ROWS, "update-bulk");
   opt->help = "Update bulk of a table";
-  opt->setInt(4);
+  opt->setInt(10);
   opt->setSQL();
 
   /* Delete row using pkey */
@@ -826,7 +833,7 @@ void add_options() {
   /* Delete all rows */
   opt = newOption(Option::INT, Option::DELETE_ALL_ROW, "delete-bulk");
   opt->help = "delete bulk rows of table";
-  opt->setInt(1);
+  opt->setInt(8);
   opt->setSQL();
 
   /* Drop column */
