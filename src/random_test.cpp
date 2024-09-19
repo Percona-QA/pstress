@@ -305,6 +305,73 @@ int sum_of_all_options(Thd1 *thd) {
     g_innodb_page_size /= 1024;
   }
 
+  if (options->at(Option::COLUMN_TYPES)->getString() != "all") {
+    auto types = options->at(Option::COLUMN_TYPES)->getString();
+    std::transform(types.begin(), types.end(), types.begin(), ::toupper);
+    std::vector<std::string> column_types;
+    std::stringstream ss(types);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+      column_types.push_back(token);
+    }
+    if (std::find(column_types.begin(), column_types.end(), "INTEGER") ==
+        column_types.end())
+      options->at(Option::NO_INTEGER)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "INT") ==
+        column_types.end())
+      options->at(Option::NO_INT)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "FLOAT") ==
+        column_types.end())
+      options->at(Option::NO_FLOAT)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "DOUBE") ==
+        column_types.end())
+      options->at(Option::NO_DOUBLE)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "BOOL") ==
+        column_types.end())
+      options->at(Option::NO_BOOL)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "DATE") ==
+        column_types.end())
+      options->at(Option::NO_DATE)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "DATETIME") ==
+        column_types.end())
+      options->at(Option::NO_DATETIME)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "TIMESTAMP") ==
+        column_types.end())
+      options->at(Option::NO_TIMESTAMP)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "BIT") ==
+        column_types.end())
+      options->at(Option::NO_BIT)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "BLOB") ==
+        column_types.end())
+      options->at(Option::NO_BLOB)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "CHAR") ==
+        column_types.end())
+      options->at(Option::NO_CHAR)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "VARCHAR") ==
+        column_types.end())
+      options->at(Option::NO_VARCHAR)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "TEXT") ==
+        column_types.end())
+      options->at(Option::NO_TEXT)->setBool(true);
+
+    if (std::find(column_types.begin(), column_types.end(), "GENERATED") ==
+        column_types.end())
+      options->at(Option::NO_VIRTUAL_COLUMNS)->setBool(true);
+
+  }
+
   /*check which all partition type supported */
   auto part_supp = opt_string(PARTITION_SUPPORTED);
   if (part_supp.compare("all") == 0) {
@@ -1078,7 +1145,7 @@ Generated_Column::Generated_Column(std::string name, Table *table)
   /* Generated columns are 4:2:2:1 (INT:VARCHAR:CHAR:BLOB) */
   while (g_type == COLUMN_MAX) {
     auto x = rand_int(9, 1);
-    if (x <= 4 || options->at(Option::ONLY_INT)->getBool())
+    if (x <= 4 && !options->at(Option::NO_INT)->getBool())
       g_type = INT;
     else if (x <= 6 && !options->at(Option::NO_VARCHAR)->getBool())
       g_type = VARCHAR;
@@ -1475,7 +1542,6 @@ bool Table::load(Thd1 *thd, bool bulk_insert,
                  bool set_global_run_query_failed) {
   thd->ddl_query = true;
   if (!execute_sql(definition(false), thd)) {
-    print_and_log("Failed to create table " + name_, thd);
     if (set_global_run_query_failed)
       run_query_failed = true;
     return false;
@@ -1553,12 +1619,18 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
 
 /* Create new table without new records */
 static void AddTable(Thd1 *thd) {
+  Table *table = nullptr;
   std::unique_lock<std::mutex> lock(all_table_mutex);
   int table_id = rand_int(options->at(Option::TABLES)->getInt(), 1);
-  auto table = Table::table_id(Table::FK, table_id, true);
+
+  if (!options->at(Option::NO_FK)->getBool() &&
+      options->at(Option::FK_PROB)->getInt() > rand_int(100)) {
+    table = Table::table_id(Table::FK, table_id, true);
+  } else {
+    table = Table::table_id(Table::NORMAL, table_id, true);
+  }
   lock.unlock();
   if (!execute_sql(table->definition(true, true), thd)) {
-    print_and_log("Failed to create table " + table->name_, thd);
     return;
   }
   lock.lock();
@@ -1657,10 +1729,7 @@ void Table::DropCreate(Thd1 *thd) {
     execute_sql("SET SESSION wsrep_osu_method=NBO ", thd);
     set_session_nbo = true;
   }
-  if (!execute_sql("ALTER TABLE " + name_ + " RENAME TO " + name_ +
-                       std::to_string(rand_int(10000)),
-                   thd)) {
-    print_and_log("Failed to drop table " + name_, thd);
+  if (!execute_sql("DROP TABLE " + name_, thd)) {
     return;
   }
 
@@ -1988,7 +2057,8 @@ void Table::CreateDefaultColumn() {
     /*  if we need to create primary column */
 
     /* First column can be primary */
-    if (i == 0 && rand_int(100) <= options->at(Option::PRIMARY_KEY)->getInt()) {
+    if (i == 0 &&
+        rand_int(100, 1) <= options->at(Option::PRIMARY_KEY)->getInt()) {
       type = Column::INT;
       name = "pkey";
       col = new Column{name, this, type};
@@ -2012,8 +2082,7 @@ void Table::CreateDefaultColumn() {
         if (!options->at(Option::NO_VIRTUAL_COLUMNS)->getBool() &&
             i >= (.8 * max_columns) && rand_int(1) == 1)
           col_type = Column::GENERATED;
-        else if ((!options->at(Option::NO_INT)->getBool() && prob < 5) ||
-                 options->at(Option::ONLY_INT)->getBool())
+        else if ((!options->at(Option::NO_INT)->getBool() && prob < 5))
           col_type = Column::INT;
         else if (!options->at(Option::NO_INTEGER)->getBool() && prob < 6)
           col_type = Column::INTEGER;
@@ -2990,8 +3059,7 @@ void Table::AddColumn(Thd1 *thd) {
 
     if (use_virtual && prob == 1)
       col_type = Column::GENERATED;
-    else if ((!options->at(Option::NO_INT)->getBool() && prob < 5) ||
-             options->at(Option::ONLY_INT)->getBool())
+    else if ((!options->at(Option::NO_INT)->getBool() && prob < 5))
       col_type = Column::INT;
     else if (!options->at(Option::NO_INTEGER)->getBool() && prob < 6)
       col_type = Column::INTEGER;
@@ -3491,6 +3559,15 @@ std::string Table::GetWhereBulk() {
   return where + " = " + col->rand_value();
 }
 
+static void Sleepfor() {
+  volatile double result = 0.0; // volatile to prevent optimization
+  for (long long i = 0; i < 150000; ++i) {     // 1 billion iterations
+    result += std::sin(i) * std::cos(i);       // some expensive math operations
+  }
+
+  return;
+}
+
 void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {
   lock_table_mutex(thd->ddl_query);
   std::string where = GetWherePrecise();
@@ -3967,7 +4044,8 @@ static std::vector<grammar_tables> load_grammar_sql_from(Thd1 *thd) {
     while (!myfile.eof()) {
       std::string sql;
       getline(myfile, sql);
-      /* remove white spaces */
+      /* remove white spaces or ; at the end */
+      sql = std::regex_replace(sql, std::regex(R"(\s+$)"), "");
       if (sql.find_first_not_of(" \t") == std::string::npos)
         continue;
       sql = sql.substr(sql.find_first_not_of(" \t"));
@@ -4101,8 +4179,9 @@ static void grammar_sql(Thd1 *thd, Table *enforce_table) {
             std::regex(
                 table_name + "_" +
                 grammar_table::get_col_type((grammar_table::sql_col_types)i) +
-                "_" + std::to_string(j + 1) + "=RAND"),
-            table_name + "." + col.at(j).first + "=" + col.at(j).second);
+                "_" + std::to_string(j + 1) + R"((=|!=|<>|>=|<=|>|<)RAND)"),
+            table_name + "." + col.at(j).first + " $1 " + col.at(j).second);
+
         sql =
             std::regex_replace(sql,
                                std::regex(table_name + "_" +
@@ -4112,12 +4191,10 @@ static void grammar_sql(Thd1 *thd, Table *enforce_table) {
                                table_name + "." + col.at(j).first);
       }
     }
-    /* replace table "T1 " => tt_N T1 */
-    sql = std::regex_replace(sql, std::regex(table_name + " "),
-                             table.found_name + " " + table.name + " ");
-    /* replace table "T1$" => tt_N T1*/
-    sql = std::regex_replace(sql, std::regex(table_name + "$"),
-                             table.found_name + " " + table.name + "");
+    /* Replace table_name when followed by space, closing parenthesis, or end of
+     * line */
+    sql = std::regex_replace(sql, std::regex(table_name + R"((\s|\)|$))"),
+                             table.found_name + " " + table.name + "$1");
   }
   /* replace RAND_INT */
   sql = std::regex_replace(sql, std::regex("RAND_INT"),
@@ -4641,7 +4718,8 @@ bool Thd1::run_some_query() {
         << ". Check thread logs for details \n ";
     }
     s << "Starting random load in " << options->at(Option::THREADS)->getInt()
-      << " threads.\n";
+      << " threads. Gtid before strarting LOAD "
+      << mysql_read_single_value("select @@global.gtid_executed", this) << "\n";
     std::cout << s.str();
     this->ddl_logs << s.str();
   }
@@ -4783,6 +4861,9 @@ bool Thd1::run_some_query() {
       break;
     case Option::SELECT_ROW_USING_PKEY:
       table->SelectRandomRow(this);
+      break;
+    case Option::THROTTLE_SLEEP:
+      Sleepfor();
       break;
     case Option::SELECT_FOR_UPDATE:
       table->SelectRandomRow(this, true);

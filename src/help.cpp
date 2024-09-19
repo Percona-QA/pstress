@@ -309,6 +309,12 @@ void add_options() {
               "seperated without space";
   opt->setString("all");
 
+  opt = newOption(Option::STRING, Option::COLUMN_TYPES, "column-types");
+  opt->help = "Column types to be used in the table. Pass options comma "
+              "seperated without space example --column-type=int,date. It will "
+              "create table with only int and date";
+  opt->setString("all");
+
   /* lock for alter */
   opt = newOption(Option::STRING, Option::LOCK, "alter-lock");
   opt->help = "lock mechanism used in alter table.\n "
@@ -593,12 +599,6 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
-  /* Only int columns  */
-  opt = newOption(Option::BOOL, Option::ONLY_INT, "only-int");
-  opt->help = "Only integer columns";
-  opt->setBool(false);
-  opt->setArgs(no_argument);
-
   /* modify column */
   opt = newOption(Option::INT, Option::ALTER_COLUMN_MODIFY, "modify-column");
   opt->help = "Alter table column modify";
@@ -779,6 +779,11 @@ void add_options() {
   opt = newOption(Option::INT, Option::SELECT_ROW_USING_PKEY, "select-precise");
   opt->help = "Select table using single row";
   opt->setInt(800);
+  opt->setSQL();
+
+  opt = newOption(Option::INT, Option::THROTTLE_SLEEP, "throttle");
+  opt->help = "slowing the thread";
+  opt->setInt(0);
   opt->setSQL();
 
   opt = newOption(Option::INT, Option::SELECT_FOR_UPDATE,

@@ -192,7 +192,6 @@ struct Option {
     NO_BOOL,
     NO_INTEGER,
     NO_INT,
-    ONLY_INT,
     NO_BIT,
     NULL_PROB,
     SECONDARY_AFTER_CREATE,
@@ -209,6 +208,8 @@ struct Option {
     SELECT_FOR_UPDATE,
     SELECT_FOR_UPDATE_BULK,
     PK_COLUMN_AUTOINC,
+    THROTTLE_SLEEP,
+    COLUMN_TYPES,
     ALTER_DATABASE_COLLATION,
     MAX
   } option;
