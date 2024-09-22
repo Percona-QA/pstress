@@ -1636,7 +1636,6 @@ static void AddTable(Thd1 *thd) {
   lock.lock();
   all_tables->push_back(table);
   lock.unlock();
-  print_and_log("Created new table " + table->name_, thd);
 }
 
 bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
@@ -4604,6 +4603,7 @@ bool Thd1::load_metadata() {
 
   if (options->at(Option::STEP)->getInt() > 1 &&
       !options->at(Option::PREPARE)->getBool()) {
+    execute_sql("XA COMMIT " + std::to_string(thread_id), this);
     auto file = load_metadata_from_file();
     std::cout << "metadata loaded from " << file << std::endl;
   } else {
@@ -4763,13 +4763,25 @@ bool Thd1::run_some_query() {
         trx_left--;
 
         if (trx_left == 0 || ddl_query == true) {
-          if (rand_int(100, 1) > options->at(Option::COMMMIT_PROB)->getInt()) {
-            execute_sql("ROLLBACK", this);
+          if (trx == NON_XA) {
+            if (rand_int(100, 1) >
+                options->at(Option::COMMMIT_PROB)->getInt()) {
+              execute_sql("ROLLBACK", this);
+            } else {
+              execute_sql("COMMIT", this);
+            }
+            current_save_point = 0;
           } else {
-            execute_sql("COMMIT", this);
+            execute_sql("XA END " + get_xid(), this);
+            execute_sql("XA PREPARE " + get_xid(), this);
+            if (rand_int(100, 1) >
+                options->at(Option::COMMMIT_PROB)->getInt()) {
+              execute_sql("XA ROLLBACK " + get_xid(), this);
+            } else {
+              execute_sql("XA COMMIT " + get_xid(), this);
+            }
           }
-          current_save_point = 0;
-        } else {
+        } else if (trx == NON_XA) {
           if (rand_int(1000) < savepoint_prob) {
             current_save_point++;
             execute_sql("SAVEPOINT SAVE" + std::to_string(current_save_point),
@@ -4786,11 +4798,20 @@ bool Thd1::run_some_query() {
         }
       }
 
-    if (trx_left == 0 &&
-        rand_int(1000) < options->at(Option::TRANSATION_PRB_K)->getInt()) {
-      execute_sql("START TRANSACTION", this);
-      trx_left = rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
-    }
+      if (trx_left == 0) {
+        if (rand_int(1000) < options->at(Option::TRANSATION_PRB_K)->getInt()) {
+          execute_sql("START TRANSACTION", this);
+          trx_left =
+              rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
+          trx = NON_XA;
+        } else if (rand_int(1000) <
+                   options->at(Option::XA_TRANSACTION)->getInt()) {
+          execute_sql("XA START " + get_xid(), this);
+          trx_left =
+              rand_int(options->at(Option::TRANSACTIONS_SIZE)->getInt(), 1);
+          trx = XA;
+        }
+      }
 
     std::unique_lock<std::mutex> lock(all_table_mutex);
     if (options->at(Option::THREAD_PER_TABLE)->getBool()) {

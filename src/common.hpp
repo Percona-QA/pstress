@@ -211,6 +211,7 @@ struct Option {
     THROTTLE_SLEEP,
     COLUMN_TYPES,
     ALTER_DATABASE_COLLATION,
+    XA_TRANSACTION,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

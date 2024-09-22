@@ -1080,6 +1080,12 @@ void add_options() {
   opt->help = "probability(out of 1000) of combining sql as single trx";
   opt->setInt(1);
 
+  /* XA TRansaction */
+  opt = newOption(Option::INT, Option::XA_TRANSACTION, "xa-trx-prob-k");
+  opt->help = "Probablity of running XA transaction. Trx size option control "
+              "the size of XA transaction";
+  opt->setInt(1);
+
   /* tranasaction size */
   opt = newOption(Option::INT, Option::TRANSACTIONS_SIZE, "trx-size");
   opt->help = "average size of each trx";
