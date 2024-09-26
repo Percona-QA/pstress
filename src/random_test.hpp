@@ -349,7 +349,7 @@ struct FK_table : Table {
 
   bool load_fk_constrain(Thd1 *thd, bool set_run_query_failed = true);
 
-  std::string fk_constrain();
+  std::string fk_constrain(bool add_fk = false);
 
   void pickRefrence(Table *table) {
     on_delete = getRandomForeignKeyAction(table);

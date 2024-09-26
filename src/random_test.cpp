@@ -1622,20 +1622,23 @@ static void AddTable(Thd1 *thd) {
   Table *table = nullptr;
   std::unique_lock<std::mutex> lock(all_table_mutex);
   int table_id = rand_int(options->at(Option::TABLES)->getInt(), 1);
+  table = Table::table_id(Table::FK, table_id, true);
 
+  /*
   if (!options->at(Option::NO_FK)->getBool() &&
       options->at(Option::FK_PROB)->getInt() > rand_int(100)) {
     table = Table::table_id(Table::FK, table_id, true);
   } else {
     table = Table::table_id(Table::NORMAL, table_id, true);
   }
+  */
   lock.unlock();
   if (!execute_sql(table->definition(true, true), thd)) {
     return;
   }
-  lock.lock();
-  all_tables->push_back(table);
-  lock.unlock();
+  // lock.lock();
+  // all_tables->push_back(table);
+  // lock.unlock();
 }
 
 bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
@@ -1711,8 +1714,10 @@ Partition::Partition(std::string n) : Table(n) {
   }
 }
 
-std::string FK_table::fk_constrain() {
+std::string FK_table::fk_constrain(bool add_fk) {
   std::string parent = name_.substr(0, name_.find("_", name_.find("_") + 1));
+  if (add_fk)
+    parent += "_fk";
 
   std::string sql =
       " FOREIGN KEY (ifk_col) REFERENCES " + parent + " (" + "ipkey" + ")";
@@ -2398,7 +2403,7 @@ std::string Table::definition(bool with_index, bool with_fk) {
   if (with_fk) {
     if (type == FK) {
       auto fk = static_cast<FK_table *>(this);
-      def += fk->fk_constrain() + ", ";
+      def += fk->fk_constrain(true) + ", ";
     }
   }
 
@@ -4623,7 +4628,6 @@ bool Thd1::load_metadata() {
 bool Thd1::run_some_query() {
   std::vector<Table::TABLE_TYPES> tableTypes = {Table::NORMAL, Table::FK,
                                                 Table::PARTITION};
-  execute_sql("SET collation_connection = utf8mb4_0900_bin", this);
   if (options->at(Option::SECONDARY_ENGINE)->getString() != "") {
     execute_sql("SET SESSION sql_generate_invisible_primary_key = TRUE", this);
   }
