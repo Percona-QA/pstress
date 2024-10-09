@@ -118,9 +118,9 @@ void Node::workerThread(int number) {
       if (!thd->run_some_query()) {
         std::ostringstream errmsg;
         errmsg << "Thread with id " << thd->thread_id
-               << " failed, check logs for detail message ";
-        throw std::runtime_error("FATAL ERROR. Unable to continue");
+               << " failed, check logs  in " << myParams.logdir << "/*sql";
         std::cerr << errmsg.str() << std::endl;
+        exit(EXIT_FAILURE);
         if (general_log.is_open()) {
           general_log << errmsg.str() << std::endl;
         }

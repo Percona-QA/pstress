@@ -81,18 +81,28 @@ static std::string lower_case_secondary() {
   return secondary();
 }
 
-static void print_and_log(std::string &&str, Thd1 *thd) {
+/* print_error print mysql error to console */
+static void print_and_log(std::string &&str, Thd1 *thd = nullptr,
+                          bool print_error = false) {
   const int max_print = 300;
   static std::atomic<int> print_so_far = 0;
   print_so_far++;
+  std::stringstream ss;
+  ss << "Thread " << (thd ? thd->thread_id : 0) << " : " << str;
+  if (print_error) {
+    ss << "error: " << mysql_error(thd->conn);
+  }
   std::lock_guard<std::mutex> lock(ddl_logs_write);
-  std::cout << str << std::endl;
-  if (print_so_far > max_print) {
+  std::cout << ss.str() << std::endl;
+  if (print_so_far > max_print &&
+      options->at(Option::KILL_TRANSACTION)->getInt() == 0) {
     std::cout << "more than " << max_print << " error on console Exiting"
               << std::endl;
     exit(EXIT_FAILURE);
   }
-  thd->thread_log << str << std::endl;
+  if (thd == nullptr)
+    return;
+  thd->thread_log << ss.str() << std::endl;
 }
 static MYSQL_ROW mysql_fetch_row_safe(Thd1 *thd) {
   if (!thd->result) {
@@ -114,6 +124,7 @@ static bool mysql_num_fields_safe(Thd1 *thd, unsigned int req) {
   }
   return ret;
 }
+
 
 static bool save_query_result_in_file(const query_result &result,
                                       const std::string &file_name) {
@@ -180,6 +191,39 @@ static query_result get_query_result(Thd1 *thd) {
     result.push_back(r);
   }
   return result;
+}
+
+static void kill_query(Thd1 *thd) {
+
+  auto on_exit = std::shared_ptr<void>(nullptr, [&](...) {
+    if (options->at(Option::SELECT_IN_SECONDARY)->getBool()) {
+      execute_sql("SET @@SESSION.USE_SECONDARY_ENGINE=FORCED", thd);
+    }
+  });
+
+  if (options->at(Option::SELECT_IN_SECONDARY)->getBool()) {
+    execute_sql("SET @@SESSION.USE_SECONDARY_ENGINE=OFF", thd);
+  }
+  unsigned long current_thread_id = mysql_thread_id(thd->conn);
+  std::string query =
+      "select ID from information_schema.processlist where user='";
+  query += options->at(Option::USER)->getString() + "'";
+  /* the Sleep is added so it doesn't kill a query which is about to kill */
+  query += " and command not like  '%Sleep%' and id != " +
+           std::to_string(current_thread_id);
+  if (!execute_sql(query, thd)) {
+    return;
+  }
+  auto result = get_query_result(thd);
+  if (result.empty()) {
+    return;
+  }
+  auto id = result[rand_int(result.size() - 1)][0];
+  query = "kill " + id;
+  if (!execute_sql(query, thd)) {
+    return;
+  }
+  return;
 }
 
 /* return table pointer of matching table. This is only done during the
@@ -372,6 +416,7 @@ int sum_of_all_options(Thd1 *thd) {
 
   }
 
+
   /*check which all partition type supported */
   auto part_supp = opt_string(PARTITION_SUPPORTED);
   if (part_supp.compare("all") == 0) {
@@ -393,10 +438,11 @@ int sum_of_all_options(Thd1 *thd) {
   }
 
   if (options->at(Option::MAX_PARTITIONS)->getInt() < 1 ||
-      options->at(Option::MAX_PARTITIONS)->getInt() > 8192)
-    throw std::runtime_error(
+      options->at(Option::MAX_PARTITIONS)->getInt() > 8192) {
+    print_and_log(
         "invalid range for --max-partition. Choose between 1 and 8192");
-  ;
+    exit(EXIT_FAILURE);
+  };
 
   /* for 5.7 disable some features */
   if (server_version() < 80000) {
@@ -505,6 +551,7 @@ int sum_of_all_options(Thd1 *thd) {
     options->at(Option::NO_PARTITION)->setBool(true);
     options->at(Option::NO_TEMPORARY)->setBool(true);
     options->at(Option::NO_TABLESPACE)->setBool(true);
+    options->at(Option::XA_TRANSACTION)->setInt(0);
     if (options->at(Option::PRIMARY_KEY)->getInt() < 100)
       options->at(Option::NO_AUTO_INC)->setBool(true);
     opt_int_set(UNDO_SQL, 0);
@@ -520,12 +567,16 @@ int sum_of_all_options(Thd1 *thd) {
   }
 
   if (options->at(Option::ONLY_PARTITION)->getBool() &&
-      options->at(Option::ONLY_TEMPORARY)->getBool())
-    throw std::runtime_error("choose either only partition or only temporary ");
+      options->at(Option::ONLY_TEMPORARY)->getBool()) {
+    print_and_log("choose either only partition or only temporary ");
+    exit(EXIT_FAILURE);
+  }
 
   if (options->at(Option::ONLY_PARTITION)->getBool() &&
-      options->at(Option::NO_PARTITION)->getBool())
-    throw std::runtime_error("choose either only partition or no partition");
+      options->at(Option::NO_PARTITION)->getBool()) {
+    print_and_log("choose either only partition or no partition");
+    exit(EXIT_FAILURE);
+  }
 
   if (options->at(Option::ONLY_PARTITION)->getBool())
     options->at(Option::NO_TEMPORARY)->setBool("true");
@@ -643,8 +694,10 @@ int sum_of_all_options(Thd1 *thd) {
     }
   }
 
-  if (only_cl_ddl && no_ddl)
-    throw std::runtime_error("noddl && only-cl-ddl can't be passed together");
+  if (only_cl_ddl && no_ddl) {
+    print_and_log("noddl && only-cl-ddl can't be passed together", thd);
+    exit(EXIT_FAILURE);
+  }
 
   /* if no ddl is set disable all ddl */
   if (no_ddl) {
@@ -652,6 +705,11 @@ int sum_of_all_options(Thd1 *thd) {
       if (opt != nullptr && opt->sql && opt->ddl)
         opt->setInt(0);
     }
+  }
+
+  /* if kill query is set retry to all */
+  if (options->at(Option::KILL_TRANSACTION)->getInt() > 0) {
+    options->at(Option::IGNORE_ERRORS)->setString("all");
   }
 
   int total = 0;
@@ -668,8 +726,10 @@ int sum_of_all_options(Thd1 *thd) {
     opt_range_map[total] = opt;
   }
 
-  if (total == 0)
-    throw std::runtime_error("no option selected");
+  if (total == 0) {
+    print_and_log("no option selected", nullptr);
+    exit(EXIT_FAILURE);
+  }
   return total;
 }
 
@@ -859,9 +919,11 @@ Column::COLUMN_TYPES Column::col_type(std::string type) {
     return TEXT;
   else if (type.compare("BIT") == 0)
     return BIT;
-  else
-    throw std::runtime_error("unhandled " + col_type_to_string(type_) +
-                             " at line " + std::to_string(__LINE__));
+  else {
+    print_and_log("unhandled " + col_type_to_string(type_) + " at line " +
+                  std::to_string(__LINE__));
+    exit(EXIT_FAILURE);
+  }
 }
 
 /* return string from a column type */
@@ -980,9 +1042,11 @@ std::string Column::rand_value_universal() {
     return "\'" + rand_timestamp() + "\'";
     break;
   case Column::COLUMN_TYPES::GENERATED:
-  case Column::COLUMN_TYPES::COLUMN_MAX:
-    throw std::runtime_error("unhandled " + Column::col_type_to_string(type_) +
-                             " at line " + std::to_string(__LINE__));
+  case Column::COLUMN_TYPES::COLUMN_MAX: {
+    print_and_log("unhandled " + Column::col_type_to_string(type_) +
+                  " at line " + std::to_string(__LINE__));
+    exit(EXIT_FAILURE);
+  }
   }
   return "";
 }
@@ -1047,8 +1111,9 @@ Column::Column(std::string name, Table *table, COLUMN_TYPES type)
     length = rand_int(64, 5);
     break;
   default:
-    throw std::runtime_error("unhandled " + col_type_to_string(type_) +
-                             " at line " + std::to_string(__LINE__));
+    print_and_log("unhandled " + col_type_to_string(type_) + " at line " +
+                  std::to_string(__LINE__));
+    exit(EXIT_FAILURE);
   }
 }
 
@@ -1193,9 +1258,11 @@ Generated_Column::Generated_Column(std::string name, Table *table)
       } else if (col->type_ == DATE || col->type_ == DATETIME ||
                  col->type_ == TIMESTAMP)
         str += " DATEDIFF('" + rand_date() + "'," + col->name_ + ")+";
-      else
-        throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
-                                 " at line " + std::to_string(__LINE__));
+      else {
+        print_and_log("unhandled " + col_type_to_string(col->type_) +
+                      " at line " + std::to_string(__LINE__));
+        exit(EXIT_FAILURE);
+      }
     }
     str.pop_back();
   } else if (g_type == VARCHAR || g_type == CHAR || g_type == BLOB ||
@@ -1242,8 +1309,10 @@ Generated_Column::Generated_Column(std::string name, Table *table)
         break;
       case COLUMN_MAX:
       case GENERATED:
-        throw std::runtime_error("unhandled " + col_type_to_string(col->type_) +
-                                 " at line " + std::to_string(__LINE__));
+        print_and_log("unhandled " + col_type_to_string(col->type_) +
+                      " at line " + std::to_string(__LINE__));
+        exit(EXIT_FAILURE);
+        break;
       }
       auto current_size = rand_int(max_size, 2);
 
@@ -1280,8 +1349,9 @@ Generated_Column::Generated_Column(std::string name, Table *table)
     assert(length >= 2);
 
   } else {
-    throw std::runtime_error("unhandled " + col_type_to_string(g_type) +
-                             " at line " + std::to_string(__LINE__));
+    print_and_log("unhandled " + col_type_to_string(g_type) + " at line " +
+                  std::to_string(__LINE__));
+    exit(EXIT_FAILURE);
   }
   str += ")";
 
@@ -1527,7 +1597,7 @@ static void wait_till_sync(const std::string &name, Thd1 *thd) {
       break;
     }
     std::this_thread::sleep_for(std::chrono::seconds(5));
-    if (counter == max_wait) {
+    if (counter > max_wait) {
       print_and_log("Table " + name + " not synced to secondary in 600 seconds",
                     thd);
     }
@@ -1542,8 +1612,10 @@ bool Table::load(Thd1 *thd, bool bulk_insert,
                  bool set_global_run_query_failed) {
   thd->ddl_query = true;
   if (!execute_sql(definition(false), thd)) {
-    if (set_global_run_query_failed)
+    if (set_global_run_query_failed) {
+      print_and_log("Failed to create table " + name_, thd, true);
       run_query_failed = true;
+    }
     return false;
   }
 
@@ -1564,7 +1636,8 @@ bool Table::load(Thd1 *thd, bool bulk_insert,
     if (!execute_sql("ALTER TABLE " + name_ + " SECONDARY_ENGINE=" +
                          options->at(Option::SECONDARY_ENGINE)->getString(),
                      thd)) {
-      print_and_log("Failed to set secondary engine for table " + name_, thd);
+      print_and_log("Failed to set secondary engine for table " + name_, thd,
+                    true);
       return false;
     }
     if (options->at(Option::WAIT_FOR_SYNC)->getBool()) {
@@ -1608,7 +1681,8 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
       continue;
     std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition();
     if (!execute_sql(sql, thd)) {
-      print_and_log("Failed to add index " + id->name_ + " on " + name_, thd);
+      print_and_log("Failed to add index " + id->name_ + " on " + name_, thd,
+                    true);
       run_query_failed = true;
       return false;
     }
@@ -1647,7 +1721,7 @@ bool FK_table::load_fk_constrain(Thd1 *thd, bool set_run_query_failed) {
                     fk_constrain();
 
   if (!execute_sql(sql, thd)) {
-    print_and_log("Failed to add fk constraint on " + name_, thd);
+    print_and_log("Failed to add fk constraint on " + name_, thd, true);
     if (set_run_query_failed)
       run_query_failed = true;
     return false;
@@ -2040,19 +2114,9 @@ void Table::CreateDefaultColumn() {
     AddInternalColumn(col);
   }
 
-  /* create normal column */
-  static auto max_col = opt_int(COLUMNS);
-  auto secondary = opt_int(NOT_SECONDARY);
-
-  int max_columns;
-  if (options->at(Option::EXACT_COLUMNS)->getBool()) {
-    max_columns = max_col;
-  } else {
-    max_columns = rand_int(max_col, 1);
-  }
-
-  /* define no# of columns to be declared as not secondary */
-  int secondary_col_count = (secondary * max_columns) / 100;
+  int max_columns = options->at(Option::EXACT_COLUMNS)->getBool()
+                        ? options->at(Option::COLUMNS)->getInt()
+                        : rand_int(options->at(Option::COLUMNS)->getInt(), 1);
 
   for (int i = 0; i < max_columns; i++) {
     std::string name;
@@ -2130,9 +2194,8 @@ void Table::CreateDefaultColumn() {
         has_auto_increment = true;
       }
       /* set not secondary clause */
-      if (secondary && secondary_col_count > 0) {
+      if (options->at(Option::NOT_SECONDARY)->getInt() > rand_int(100)) {
         col->not_secondary = true;
-        secondary_col_count--;
       }
       if (rand_int(100, 1) < 30 && col->type_ != Column::GENERATED &&
           this->type != TABLE_TYPES::FK) {
@@ -2259,11 +2322,12 @@ Table *Table::table_id(TABLE_TYPES type, int id, bool suffix) {
   case TEMPORARY:
     table = new Temporary_table(name + TEMP_SUFFIX);
     break;
-  default:
-    throw std::runtime_error("Unhandle Table type");
   case FK:
     table = new FK_table(name + FK_SUFFIX);
     break;
+  default:
+    print_and_log("Invalid table type");
+    exit(EXIT_FAILURE);
   }
 
   table->type = type;
@@ -2364,8 +2428,7 @@ std::string Table::definition(bool with_index, bool with_fk) {
     def += " TEMPORARY";
   def += " TABLE " + name_ + " (";
 
-  if (columns_->size() == 0)
-    throw std::runtime_error("no column in table " + name_);
+  assert(columns_->size() > 0);
 
   /* add columns */
   for (auto col : *columns_) {
@@ -2567,8 +2630,14 @@ void Table::Compare_between_engine(const std::string &sql, Thd1 *thd) {
     execute_sql("SET @@SESSION.USE_SECONDARY_ENGINE=OFF", thd);
   }
 
+  {
+    execute_sql("SET @@SESSION.USE_SECONDARY_ENGINE=FORCED ", thd);
+    execute_sql(sql, thd);
+    execute_sql("SET @@SESSION.USE_SECONDARY_ENGINE=OFF ", thd);
+  }
+
   if (!execute_sql(sql, thd)) {
-    print_and_log("Failed in MySQL:" + sql + mysql_error(thd->conn), thd);
+    print_and_log("Failed in MySQL:" + sql, thd, true);
     unlock();
     return set_default();
   }
@@ -2586,7 +2655,7 @@ void Table::Compare_between_engine(const std::string &sql, Thd1 *thd) {
   }
   auto run_sql = [sql, thd, set_default]() {
     if (!execute_sql(sql, thd)) {
-      print_and_log("Failed in Secondary:" + sql + mysql_error(thd->conn), thd);
+      print_and_log("Failed in Secondary:" + sql, thd, true);
       return set_default();
     }
   };
@@ -2662,7 +2731,6 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
       if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
           mysql_errno(thd->conn) == CR_SERVER_LOST ||
           mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
-        sleep(5);
         thd->tryreconnet();
       }
 
@@ -2670,8 +2738,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
                mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED ||
                mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
                mysql_errno(thd->conn) == CR_SECONDARY_NOT_READY) {
-      auto error = mysql_error(thd->conn);
-      print_and_log("Fatal: " + std::string(error) + " " + sql, thd);
+      print_and_log("Fatal: " + sql, thd, true);
       run_query_failed = true;
     }
   } else {
@@ -2887,7 +2954,6 @@ void Table::SetEncryption(Thd1 *thd) {
   }
 }
 
-// todo pick relevant table //
 void Table::SetTableCompression(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " COMPRESSION= '";
   if (g_compression.size() == 0)
@@ -2901,7 +2967,6 @@ void Table::SetTableCompression(Thd1 *thd) {
   }
 }
 
-// todo pick relevent table//
 void Table::ModifyColumn(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " MODIFY COLUMN ";
   Column *col = nullptr;
@@ -2935,7 +3000,7 @@ void Table::ModifyColumn(Thd1 *thd) {
       compressed = col->compressed;
       col->mutex.lock(); // lock column so no one can modify it //
       break;
-      /* todo no support for BOOL INT so far */
+      /* todo no support for BOOL  far */
     case Column::BOOL:
     case Column::COLUMN_MAX:
       break;
@@ -3153,28 +3218,24 @@ void Table::AddColumn(Thd1 *thd) {
 }
 
 void Table::ModifyColumnSecondaryEngine(Thd1 *thd) {
-  auto col_count = columns_->size();
-  auto secondary_col_count =
-      options->at(Option::MODIFY_COLUMN_SECONDARY_ENGINE)->getInt();
-  auto max_secondary_col_count = (col_count * secondary_col_count) / 100;
-  for (auto &col : *columns_) {
-    if (max_secondary_col_count < 1)
-      break;
-    std::string sql = "ALTER TABLE " + name_ + " MODIFY COLUMN ";
-    auto old_value = col->not_secondary;
-    col->mutex.lock(); // lock column so no one can modify it //
-    if (col->not_secondary == true)
-      col->not_secondary = false;
-    else
-      col->not_secondary = true;
-    sql += " " + col->definition() + "," + pick_algorithm_lock();
-
-    /* if not successful rollback */
-    if (!execute_sql(sql, thd)) {
-      col->not_secondary = old_value;
+  std::string sql = "ALTER TABLE " + name_ + " MODIFY COLUMN ";
+  lock_table_mutex(thd->ddl_query);
+  auto col = columns_->at(rand_int(columns_->size() - 1));
+  auto col_name = col->name_;
+  auto old_value = col->not_secondary;
+  col->not_secondary = !col->not_secondary;
+  sql += " " + col->definition() + "," + pick_algorithm_lock();
+  unlock_table_mutex();
+  if (!execute_sql(sql, thd)) {
+    /* find the existing column with name and revert the changes */
+    lock_table_mutex(thd->ddl_query);
+    for (auto col : *columns_) {
+      if (col->name_.compare(col_name) == 0) {
+        col->not_secondary = old_value;
+        break;
+      }
     }
-    col->mutex.unlock();
-    max_secondary_col_count--;
+    unlock_table_mutex();
   }
 }
 
@@ -3272,10 +3333,12 @@ void Table::AddIndex(Thd1 *thd) {
 }
 
 std::string Table::SelectColumn() {
+  /* Table is already locked no need to take lock */
   std::string select;
   select = columns_->at(rand_int(columns_->size() - 1))->name_;
   if (rand_int(100) < 20) {
     for (const auto &col : *columns_) {
+      /* we do not select non_secondary as select can be in secondary engine */
       if (col->not_secondary)
         continue;
       if (rand_int(100) < 50)
@@ -3576,14 +3639,11 @@ void Table::SelectRandomRow(Thd1 *thd, bool select_for_update) {
   lock_table_mutex(thd->ddl_query);
   std::string where = GetWherePrecise();
   assert(where.size() > 4);
-  std::string sql = "SELECT " + SelectColumn() + " FROM " + name_ + where;
+  auto select_column = SelectColumn();
+  std::string sql = "SELECT " + select_column + " FROM " + name_ + where;
 
   if (options->at(Option::COMPARE_RESULT)->getBool()) {
-    sql += " order by";
-    for (const auto &column : *columns_) {
-      sql += " " + column->name_ + ",";
-    }
-    sql.pop_back();
+    sql += " order by " + select_column;
   }
   if (select_for_update &&
       options->at(Option::SECONDARY_ENGINE)->getString() == "")
@@ -3888,7 +3948,7 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
     records++;
     if (values.size() > 1024 * 1024 || number_of_initial_records == records) {
       if (!execute_sql(prepare_sql + values, thd)) {
-        print_and_log("Bulk insert failed for table  " + name_, thd);
+        print_and_log("Bulk insert failed for table  " + name_, thd, true);
         run_query_failed = true;
         return false;
       }
@@ -4044,23 +4104,25 @@ static std::vector<grammar_tables> load_grammar_sql_from(Thd1 *thd) {
   auto file = opt_string(GRAMMAR_FILE);
 
   std::ifstream myfile(file);
-  if (myfile.is_open()) {
-    while (!myfile.eof()) {
-      std::string sql;
-      getline(myfile, sql);
-      /* remove white spaces or ; at the end */
-      sql = std::regex_replace(sql, std::regex(R"(\s+$)"), "");
-      if (sql.find_first_not_of(" \t") == std::string::npos)
-        continue;
-      sql = sql.substr(sql.find_first_not_of(" \t"));
-      if (sql.empty() || sql[0] == '#')
-        continue;
-      statments.push_back(sql);
-    }
-    myfile.close();
-  } else {
+  if (!myfile.is_open()) {
     print_and_log("Unable to find grammar file " + file, thd);
+    return tables;
   }
+
+  /* Push it into vector */
+  while (!myfile.eof()) {
+    std::string sql;
+    getline(myfile, sql);
+    /* remove white spaces or ; at the end */
+    sql = std::regex_replace(sql, std::regex(R"(\s+$)"), "");
+    if (sql.find_first_not_of(" \t") == std::string::npos)
+      continue;
+    sql = sql.substr(sql.find_first_not_of(" \t"));
+    if (sql.empty() || sql[0] == '#')
+      continue;
+    statments.push_back(sql);
+  }
+  myfile.close();
 
   for (auto &sql : statments) {
     /* Parse the grammar SQL and create a table object */
@@ -4207,7 +4269,7 @@ static void grammar_sql(Thd1 *thd, Table *enforce_table) {
     enforce_table->Compare_between_engine(sql, thd);
   } else {
     if (!execute_sql(sql, thd)) {
-      print_and_log("Grammar SQL failed " + sql, thd);
+      print_and_log("Grammar SQL failed " + sql, thd, true);
     }
   }
 }
@@ -4237,8 +4299,10 @@ void save_metadata_to_file() {
   std::ofstream of(file);
   of << sb.GetString();
 
-  if (!of.good())
-    throw std::runtime_error("can't write the JSON string to the file!");
+  if (!of.good()) {
+    print_and_log("can't write the JSON string to the file!", nullptr);
+    exit(EXIT_FAILURE);
+  }
 }
 
 /* create in memory data about tablespaces, row_format, key_block size and undo
@@ -4328,8 +4392,10 @@ static std::string load_metadata_from_file() {
   auto file = path + "/step_" + std::to_string(previous_step) + ".dll";
   FILE *fp = fopen(file.c_str(), "r");
 
-  if (fp == nullptr)
-    throw std::runtime_error("unable to open file " + file);
+  if (fp == nullptr) {
+    print_and_log("Unable to find metadata file " + file, nullptr);
+    exit(EXIT_FAILURE);
+  }
 
   char readBuffer[65536];
   FileReadStream is(fp, readBuffer, sizeof(readBuffer));
@@ -4337,11 +4403,13 @@ static std::string load_metadata_from_file() {
   d.ParseStream(is);
   auto v = d["version"].GetInt();
 
-  if (d["version"].GetInt() != version)
-    throw std::runtime_error("version mismatch between " + file +
-                             " and codebase " + " file::version is " +
-                             std::to_string(v) + " code::version is " +
-                             std::to_string(version));
+  if (d["version"].GetInt() != version) {
+    print_and_log("version mismatch between " + file + " and codebase " +
+                      " file::version is " + std::to_string(v) +
+                      " code::version is " + std::to_string(version),
+                  nullptr);
+    exit(EXIT_FAILURE);
+  }
 
   for (auto &tab : d["tables"].GetArray()) {
     Table *table;
@@ -4375,8 +4443,10 @@ static std::string load_metadata_from_file() {
       std::string on_update = tab["on_update"].GetString();
       std::string on_delete = tab["on_delete"].GetString();
       table = new FK_table(name, on_update, on_delete);
-    } else
-      throw std::runtime_error("Unhandle Table type " + table_type);
+    } else {
+      print_and_log("Unhandle Table type " + table_type, nullptr);
+      exit(EXIT_FAILURE);
+    }
 
     table->set_type(table_type);
 
@@ -4424,8 +4494,10 @@ static std::string load_metadata_from_file() {
       } else if (type.compare("TEXT") == 0) {
         auto sub_type = col["sub_type"].GetString();
         a = new Text_Column(col["name"].GetString(), table, sub_type);
-      } else
-        throw std::runtime_error("unhandled column type");
+      } else {
+        print_and_log("unhandled column type " + type, nullptr);
+        exit(EXIT_FAILURE);
+      }
 
       a->null_val = col["null_val"].GetBool();
       a->auto_increment = col["auto_increment"].GetBool();
@@ -4495,25 +4567,35 @@ void create_database_tablespace(Thd1 *thd) {
   std::string sql =
       "DROP DATABASE IF EXISTS " + options->at(Option::DATABASE)->getString();
   if (!execute_sql(sql, thd)) {
-    print_and_log("Failed to drop database", thd);
+    std::stringstream ss;
+    print_and_log("Failed to drop database", thd, true);
     exit(EXIT_FAILURE);
-  }
-
-  if (options->at(Option::SECONDARY_ENGINE)->getString() != "") {
-    ensure_no_table_in_secondary(thd);
   }
 
   sql = "CREATE DATABASE IF NOT EXISTS " +
         options->at(Option::DATABASE)->getString();
   execute_sql(sql, thd);
 
+  if (options->at(Option::SECONDARY_ENGINE)->getString() != "") {
+    ensure_no_table_in_secondary(thd);
+    execute_sql("CREATE TABLE " + options->at(Option::DATABASE)->getString() +
+                    ".t1(i int  primary key) SECONDARY_ENGINE=" +
+                    options->at(Option::SECONDARY_ENGINE)->getString(),
+                thd);
+    execute_sql("insert into " + options->at(Option::DATABASE)->getString() +
+                    ".t1 values(1)",
+                thd);
+  }
+
+
   for (auto &tab : g_tablespace) {
     if (tab.compare("innodb_system") == 0)
       continue;
-
+    /* If left over from previous run */
+    execute_sql("ALTER TABLESPACE " + tab + "_rename rename to " + tab, thd);
+    execute_sql("DROP TABLESPACE " + tab, thd);
     std::string sql =
         "CREATE TABLESPACE " + tab + " ADD DATAFILE '" + tab + ".ibd' ";
-
     if (g_innodb_page_size <= INNODB_16K_PAGE_SIZE) {
       sql += " FILE_BLOCK_SIZE " + tab.substr(3, 3);
     }
@@ -4526,14 +4608,10 @@ void create_database_tablespace(Thd1 *thd) {
         sql += " ENCRYPTION='N'";
     }
 
-    /* first try to rename tablespace back */
-    if (server_version() >= 80000)
-      execute_sql("ALTER TABLESPACE " + tab + "_rename rename to " + tab, thd);
-
-    execute_sql("DROP TABLESPACE " + tab, thd);
-
-    if (!execute_sql(sql, thd))
-      throw std::runtime_error("error in " + sql);
+    if (!execute_sql(sql, thd)) {
+      print_and_log("Failed to create tablespace " + tab, thd, true);
+      exit(EXIT_FAILURE);
+    }
   }
 
   if (server_version() >= 80000) {
@@ -4608,7 +4686,8 @@ bool Thd1::load_metadata() {
 
   if (options->at(Option::STEP)->getInt() > 1 &&
       !options->at(Option::PREPARE)->getBool()) {
-    execute_sql("XA COMMIT " + std::to_string(thread_id), this);
+    if (options->at(Option::XA_TRANSACTION)->getInt() != 0)
+      execute_sql("XA COMMIT " + std::to_string(thread_id), this);
     auto file = load_metadata_from_file();
     std::cout << "metadata loaded from " << file << std::endl;
   } else {
@@ -4617,8 +4696,10 @@ bool Thd1::load_metadata() {
     std::cout << "metadata created randomly" << std::endl;
   }
 
-  if (options->at(Option::TABLES)->getInt() <= 0)
-    throw std::runtime_error("no table to work on \n");
+  if (options->at(Option::TABLES)->getInt() <= 0) {
+    print_and_log("no table to work on \n");
+    exit(EXIT_FAILURE);
+  }
   initial_tables = all_tables->size();
 
   return 1;
@@ -4972,8 +5053,13 @@ bool Thd1::run_some_query() {
     case Option::ALTER_SECONDARY_ENGINE:
       table->SetSecondaryEngine(this);
       break;
+    case Option::KILL_TRANSACTION:
+      kill_query(this);
+      break;
     default:
-      throw std::runtime_error("invalid options");
+      print_and_log("Unhandled option " + options->at(option)->help, this);
+      exit(EXIT_FAILURE);
+      break;
     }
 
     options->at(option)->total_queries++;

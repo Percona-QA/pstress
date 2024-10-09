@@ -153,7 +153,7 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
-  opt = newOption(Option::STRING, Option::IGNORE_ERRORS, "mysql-ignore-errors");
+  opt = newOption(Option::STRING, Option::IGNORE_ERRORS, "retry-errors");
   opt->help = "Ignore MySQL errors. example --mysql-ignore-error=2013,1047";
   opt->setString("NONE");
 
@@ -540,13 +540,12 @@ void add_options() {
   /* probability of creating not-secondary columns out of hundred */
   opt = newOption(Option::INT, Option::NOT_SECONDARY, "column-skip-to-secondary");
   opt->help = "Probability of creating not secondary columns";
-  opt->setInt(30);
+  opt->setInt(20);
 
   /* probability of modifying columns with/without NOT SECONDARY clause" */
   opt = newOption(Option::INT, Option::MODIFY_COLUMN_SECONDARY_ENGINE, "alter-column-secondary-engine");
   opt->help = "Probability of modifying existing column with NOT SECONDARY clause";
-  /* todo seeing some crash */
-  opt->setInt(0);
+  opt->setInt(1);
   opt->setSQL();
   opt->setDDL();
 
@@ -972,7 +971,15 @@ void add_options() {
   /* Socket */
   opt = newOption(Option::STRING, Option::SOCKET, "socket");
   opt->help = "Socket file to use";
-  opt->setString("/tmp/socket.sock");
+
+  {
+    /* grep from env */
+    const char *socket_env = getenv("SOCKET");
+    if (socket_env) {
+      opt->setString(socket_env);
+    } else
+      opt->setString("/tmp/socket.sock");
+  }
 
   /*config file */
   opt = newOption(Option::STRING, Option::CONFIGFILE, "config-file");
@@ -1085,6 +1092,13 @@ void add_options() {
   opt->help = "Probablity of running XA transaction. Trx size option control "
               "the size of XA transaction";
   opt->setInt(1);
+
+  /* Probablity of killing running transaction */
+  opt = newOption(Option::INT, Option::KILL_TRANSACTION, "kill-trx-prob-k");
+  opt->help = "Probablity of killing running transaction";
+  opt->setInt(1);
+  opt->setSQL();
+  opt->setDDL();
 
   /* tranasaction size */
   opt = newOption(Option::INT, Option::TRANSACTIONS_SIZE, "trx-size");
