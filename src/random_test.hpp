@@ -196,6 +196,7 @@ struct Thd1 {
 
   int thread_id;
   long int seed;
+  enum trx_type { XA, NON_XA } trx;
   std::ofstream &thread_log;
   std::ofstream &ddl_logs;
   std::ofstream &client_log;
@@ -211,6 +212,10 @@ struct Thd1 {
    * which  is used for the FK tables  */
   std::vector<int> unique_keys;
   int query_number = 0;
+  std::string get_xid() {
+    std::string xid = "\'xid" + std::to_string(thread_id) + "\'";
+    return xid;
+  }
   struct workerParams *myParam;
   bool tryreconnet();
 };
@@ -221,7 +226,7 @@ struct Table {
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id, bool suffix = false);
-  std::string definition(bool with_index = true, bool with_fk = true);
+  std::string definition(bool with_index = true, bool with_fk = false);
   /* add secondary indexes */
   bool load_secondary_indexes(Thd1 *thd);
   /* execute table definition, Bulk data and then secondary index */
@@ -344,7 +349,7 @@ struct FK_table : Table {
 
   bool load_fk_constrain(Thd1 *thd, bool set_run_query_failed = true);
 
-  std::string fk_constrain();
+  std::string fk_constrain(bool add_fk = false);
 
   void pickRefrence(Table *table) {
     on_delete = getRandomForeignKeyAction(table);
