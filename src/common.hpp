@@ -99,6 +99,7 @@ struct Option {
     DELETE_ROW_USING_PKEY,
     INVALID_OPTION = 63,
     LOG_ALL_QUERIES = 'A',
+    LOG_N_QUERIES,
     PQUERY = 'k',
     DATABASE = 'd',
     ADDRESS = 'a',

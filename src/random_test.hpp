@@ -11,6 +11,7 @@
 #include <iostream>
 #include <memory> //shared_ptr
 #include <mutex>
+#include <deque>
 #include <mysql.h>
 #include <prettywriter.h>
 #include <random>
@@ -41,6 +42,10 @@ int rand_int(long int upper, long int lower = 0);
 std::string rand_float(float upper, float lower = 0);
 std::string rand_double(double upper, double lower = 0);
 std::string rand_string(int upper, int lower = 2);
+
+// Introduction of new function to retrive deque of recent queries
+std::deque<std::string> get_recent_queries();
+extern std::mutex recent_queries_mutex;
 
 struct Table;
 class Column {

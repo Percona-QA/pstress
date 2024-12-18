@@ -1024,6 +1024,12 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* log recent N queries */
+  opt = newOption(Option::INT, Option::LOG_N_QUERIES, "log-N-queries");
+  opt->help = "Set the number of queries to log (default is 5)";
+  opt->setInt(5);
+  opt->setArgs(required_argument);
+
   /* execute sql sequentially */
   opt = newOption(Option::BOOL, Option::NO_SHUFFLE, "no-shuffle");
   opt->help = "execute SQL sequentially | randomly\n";
@@ -1259,6 +1265,8 @@ void show_cli_help(void) {
                "threads=1 | no\n"
             << "--log-all-queries      | Log all queries (succeeded and "
                "failed)       | no\n"
+            << "--log-N-queries      | Log recent N queries (succeeded and "
+               "failed)       | 5\n"
             << "--log-succeeded-queries| Log succeeded queries                 "
                "       | no\n"
             << "--log-failed-queries   | Log failed queries                    "
@@ -1316,6 +1324,8 @@ void show_config_help(void) {
                "verbose = No\n"
             << "# Log all queries\n"
             << "log-all-queries = No\n"
+            << "# Log recent N queries\n"
+            << "log-N-queries = 5\n"
             << "# Log succeeded queries\n"
             << "log-succeeded-queries = No\n"
             << "# Log failed queries\n"

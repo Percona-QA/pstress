@@ -2679,11 +2679,17 @@ void Table::Compare_between_engine(const std::string &sql, Thd1 *thd) {
   set_default();
 }
 
+  // Data structures for recent queries
+  static std::deque<std::string> recent_queries;
+  std::mutex recent_queries_mutex;
+
 bool execute_sql(const std::string &sql, Thd1 *thd) {
   auto query = sql.c_str();
   static auto log_all = opt_bool(LOG_ALL_QUERIES);
   static auto log_failed = opt_bool(LOG_FAILED_QUERIES);
   static auto log_success = opt_bool(LOG_SUCCEDED_QUERIES);
+  static auto log_N = opt_bool(LOG_N_QUERIES);
+  static auto log_N_count = options->at(Option::LOG_N_QUERIES)->getInt();
   static auto log_query_duration = opt_bool(LOG_QUERY_DURATION);
   static auto log_client_output = opt_bool(LOG_CLIENT_OUTPUT);
   static auto log_query_numbers = opt_bool(LOG_QUERY_NUMBERS);
@@ -2716,6 +2722,16 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
   if (res != 0) { // query failed
     thd->failed_queries_total++;
     thd->max_con_fail_count++;
+    // Manage recent queries for failed queries
+    if (!log_N) {
+      std::lock_guard<std::mutex> lock(recent_queries_mutex);
+      recent_queries.push_back("FAILED: " + sql);
+      
+      // Maintain the recent queries count
+      if (recent_queries.size() > static_cast<std::deque<std::string>::size_type>(log_N_count)) {
+        recent_queries.pop_front();
+      }
+    }
     if (log_all || log_failed) {
       thd->thread_log << " F " << sql << std::endl;
       thd->thread_log << "Error " << mysql_error(thd->conn) << std::endl;
@@ -2749,6 +2765,15 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
       if (r)
         mysql_free_result(r);
     });
+    // Manage recent queries for successful queries
+    if (!log_N) {
+      std::lock_guard<std::mutex> lock(recent_queries_mutex);
+      recent_queries.push_back("SUCCESS: " + sql);
+      // Maintain the recent queries count
+      if (recent_queries.size() > static_cast<std::deque<std::string>::size_type>(log_N_count)) {
+        recent_queries.pop_front();
+      }
+    }
 
     if (log_client_output) {
       if (thd->result != nullptr) {
@@ -2796,6 +2821,11 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
   }
 
   return (res == 0 ? 1 : 0);
+}
+// Retrive the formed deque
+std::deque<std::string> get_recent_queries() {
+  std::lock_guard<std::mutex> lock(recent_queries_mutex);
+  return recent_queries;
 }
 
 const std::vector<uint32_t> row_group_sizes = {2,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};

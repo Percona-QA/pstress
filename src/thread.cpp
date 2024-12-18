@@ -9,6 +9,10 @@
 std::atomic_flag lock_metadata = ATOMIC_FLAG_INIT;
 std::atomic<bool> metadata_loaded(false);
 
+// Mutex for thread-safe logging
+std::mutex general_log_mutex;
+
+// Get the number of affected rows safely
 inline unsigned long long Node::getAffectedRows(MYSQL *connection) {
   if (mysql_affected_rows(connection) == ~(unsigned long long)0) {
     return 0LL;
@@ -32,16 +36,32 @@ void Node::workerThread(int number) {
       return;
     }
   }
+  bool log_all_queries = options->at(Option::LOG_ALL_QUERIES)->getBool();
+  size_t n_queries = 5;
 
-  std::ostringstream os;
-  os << myParams.logdir << "/" << myParams.myName << "_step_"
-     << std::to_string(options->at(Option::STEP)->getInt()) << "_thread-"
-     << number << ".sql";
-  thread_log.open(os.str(), std::ios::out | std::ios::trunc);
+  if(options->at(Option::LOG_N_QUERIES) && options->at(Option::LOG_N_QUERIES)->getInt() >= 0) {
+      n_queries = options->at(Option::LOG_N_QUERIES)->getInt();
+  }
+
+  // Prepare log filename based on logging mode
+  std::ostringstream log_filename;
+  log_filename<< myParams.logdir << "/" << myParams.myName << "_step_"
+              << std::to_string(options->at(Option::STEP)->getInt()) << "_thread-"
+              << number;
+
+  // Construct full log filename
+  std::string full_log_filename = log_all_queries 
+        ? (log_filename.str()  + ".sql")  // All queries log
+        : (log_filename.str() + "_recent" 
+          + "-" + std::to_string(n_queries) + ".sql");
+
+  
+  // Thread log file setup
+  thread_log.open(full_log_filename, std::ios::out | std::ios::trunc);
   if (!thread_log.is_open()) {
-    general_log << "Unable to open thread logfile " << os.str() << ": "
-                << std::strerror(errno) << std::endl;
-    return;
+      general_log << "Unable to open thread logfile " << full_log_filename 
+                  << ": " << std::strerror(errno) << std::endl;
+      return;
   }
 
   if (options->at(Option::LOG_QUERY_DURATION)->getBool()) {
@@ -159,6 +179,33 @@ void Node::workerThread(int number) {
   /* connection can be changed if we thd->tryreconnect is called */
   conn = thd->conn;
   delete thd;
+
+  if (!log_all_queries) {
+    // Retrieve recent queries from execute_sql
+    std::deque<std::string> logDeque = get_recent_queries();
+
+    // Trim to N queries if necessary
+    if (options->at(Option::LOG_N_QUERIES) && 
+      options->at(Option::LOG_N_QUERIES)->getInt() > 0) {
+      size_t max_queries = options->at(Option::LOG_N_QUERIES)->getInt();
+      while (logDeque.size() > max_queries) {
+        logDeque.pop_front();
+      }
+    }
+
+    // Write logs to file
+    std::ofstream log_file_write(full_log_filename, std::ios::out | std::ios::trunc);
+    if (!log_file_write.is_open()) {
+        general_log << "Unable to open log file: " << full_log_filename << std::endl;
+        return;
+    }
+
+    for (const auto &log : logDeque) {
+        log_file_write << log << std::endl;
+    }
+    log_file_write.close();
+  }
+
 
   if (thread_log.is_open())
     thread_log.close();
