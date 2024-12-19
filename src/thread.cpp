@@ -37,11 +37,6 @@ void Node::workerThread(int number) {
     }
   }
   bool log_all_queries = options->at(Option::LOG_ALL_QUERIES)->getBool();
-  size_t n_queries = 5;
-
-  if(options->at(Option::LOG_N_QUERIES) && options->at(Option::LOG_N_QUERIES)->getInt() >= 0) {
-      n_queries = options->at(Option::LOG_N_QUERIES)->getInt();
-  }
 
   // Prepare log filename based on logging mode
   std::ostringstream log_filename;
@@ -50,10 +45,7 @@ void Node::workerThread(int number) {
               << number;
 
   // Construct full log filename
-  std::string full_log_filename = log_all_queries 
-        ? (log_filename.str()  + ".sql")  // All queries log
-        : (log_filename.str() + "_recent" 
-          + "-" + std::to_string(n_queries) + ".sql");
+  std::string full_log_filename = log_filename.str()  + ".sql"
 
   
   // Thread log file setup
@@ -109,11 +101,13 @@ void Node::workerThread(int number) {
     return;
   }
 
+  static auto log_N_count = options->at(Option::LOG_N_QUERIES)->getInt();
   Thd1 *thd = new Thd1(number, thread_log, general_log, client_log, conn,
-                       performed_queries_total, failed_queries_total);
+                       performed_queries_total, failed_queries_total,log_N_count);
 
   thd->myParam = &myParams;
 
+  std::deque<std::string> logDeque; //Initialise a Deque
   /* run pstress in with dynamic generator or infile */
   if (options->at(Option::PQUERY)->getBool() == false) {
     static bool success = false;
@@ -146,6 +140,7 @@ void Node::workerThread(int number) {
         }
       }
     }
+    logDeque = thd->get_recent_queries();
 
   } else {
     std::random_device rd;
@@ -175,14 +170,13 @@ void Node::workerThread(int number) {
         break;
       }
     }
+    logDeque = thd->get_recent_queries();
   }
   /* connection can be changed if we thd->tryreconnect is called */
   conn = thd->conn;
   delete thd;
 
   if (!log_all_queries) {
-    // Retrieve recent queries from execute_sql
-    std::deque<std::string> logDeque = get_recent_queries();
 
     // Trim to N queries if necessary
     if (options->at(Option::LOG_N_QUERIES) && 

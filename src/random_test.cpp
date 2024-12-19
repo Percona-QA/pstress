@@ -2689,7 +2689,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
   static auto log_failed = opt_bool(LOG_FAILED_QUERIES);
   static auto log_success = opt_bool(LOG_SUCCEDED_QUERIES);
   static auto log_N = opt_bool(LOG_N_QUERIES);
-  static auto log_N_count = options->at(Option::LOG_N_QUERIES)->getInt();
+  thd->max_recent_queries = options->at(Option::LOG_N_QUERIES)->getInt();
   static auto log_query_duration = opt_bool(LOG_QUERY_DURATION);
   static auto log_client_output = opt_bool(LOG_CLIENT_OUTPUT);
   static auto log_query_numbers = opt_bool(LOG_QUERY_NUMBERS);
@@ -2724,13 +2724,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
     thd->max_con_fail_count++;
     // Manage recent queries for failed queries
     if (!log_N) {
-      std::lock_guard<std::mutex> lock(recent_queries_mutex);
-      recent_queries.push_back("FAILED: " + sql);
-      
-      // Maintain the recent queries count
-      if (recent_queries.size() > static_cast<std::deque<std::string>::size_type>(log_N_count)) {
-        recent_queries.pop_front();
-      }
+      thd->add_query("FAILED: " + sql);
     }
     if (log_all || log_failed) {
       thd->thread_log << " F " << sql << std::endl;
@@ -2767,12 +2761,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
     });
     // Manage recent queries for successful queries
     if (!log_N) {
-      std::lock_guard<std::mutex> lock(recent_queries_mutex);
-      recent_queries.push_back("SUCCESS: " + sql);
-      // Maintain the recent queries count
-      if (recent_queries.size() > static_cast<std::deque<std::string>::size_type>(log_N_count)) {
-        recent_queries.pop_front();
-      }
+      thd->add_query("SUCCESS: " + sql);
     }
 
     if (log_client_output) {

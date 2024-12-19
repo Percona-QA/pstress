@@ -192,9 +192,9 @@ struct Index {
 struct Thd1 {
   Thd1(int id, std::ofstream &tl, std::ofstream &ddl_l, std::ofstream &client_l,
        MYSQL *c, std::atomic<unsigned long long> &p,
-       std::atomic<unsigned long long> &f)
+       std::atomic<unsigned long long> &f,int log_N_count)
       : thread_id(id), thread_log(tl), ddl_logs(ddl_l), client_log(client_l),
-        conn(c), performed_queries_total(p), failed_queries_total(f){};
+        conn(c), performed_queries_total(p), failed_queries_total(f), max_recent_queries(log_N_count){};
 
   bool run_some_query(); // create default tables and run random queries
   bool load_metadata();  // load metada of tool in memory
@@ -213,6 +213,10 @@ struct Thd1 {
   bool success = false;              // if the sql is successfully executed
   int max_con_fail_count = 0;        // consecutive failed queries
 
+  // For storing recent queries
+  std::deque<std::string> recent_queries;
+  size_t max_recent_queries;
+
   /* for loading Bulkdata, Primary key of current table is stored in this vector
    * which  is used for the FK tables  */
   std::vector<int> unique_keys;
@@ -223,6 +227,19 @@ struct Thd1 {
   }
   struct workerParams *myParam;
   bool tryreconnet();
+
+  // Add a query to the deque
+  void add_query(const std::string &query) {
+    recent_queries.push_back(query);
+    if (recent_queries.size() > max_recent_queries) {
+      recent_queries.pop_front(); // Keep only the last N queries
+    }
+  }
+
+  // Retrieve recent queries (for logging or debugging)
+  const std::deque<std::string>& get_recent_queries() const {
+    return recent_queries;
+  }
 };
 
 /* Table basic properties */
