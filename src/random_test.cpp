@@ -2681,7 +2681,6 @@ void Table::Compare_between_engine(const std::string &sql, Thd1 *thd) {
 
   // Data structures for recent queries
   static std::deque<std::string> recent_queries;
-  std::mutex recent_queries_mutex;
 
 bool execute_sql(const std::string &sql, Thd1 *thd) {
   auto query = sql.c_str();
@@ -2813,7 +2812,6 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
 }
 // Retrive the formed deque
 std::deque<std::string> get_recent_queries() {
-  std::lock_guard<std::mutex> lock(recent_queries_mutex);
   return recent_queries;
 }
 

@@ -45,7 +45,7 @@ void Node::workerThread(int number) {
               << number;
 
   // Construct full log filename
-  std::string full_log_filename = log_filename.str()  + ".sql"
+  std::string full_log_filename = log_filename.str()  + ".sql";
 
   
   // Thread log file setup
@@ -172,33 +172,17 @@ void Node::workerThread(int number) {
     }
     logDeque = thd->get_recent_queries();
   }
+
+  if (!log_all_queries) {
+    for (const auto &log : logDeque) {
+        thread_log << log << std::endl;
+    }
+  }
+
   /* connection can be changed if we thd->tryreconnect is called */
   conn = thd->conn;
   delete thd;
 
-  if (!log_all_queries) {
-
-    // Trim to N queries if necessary
-    if (options->at(Option::LOG_N_QUERIES) && 
-      options->at(Option::LOG_N_QUERIES)->getInt() > 0) {
-      size_t max_queries = options->at(Option::LOG_N_QUERIES)->getInt();
-      while (logDeque.size() > max_queries) {
-        logDeque.pop_front();
-      }
-    }
-
-    // Write logs to file
-    std::ofstream log_file_write(full_log_filename, std::ios::out | std::ios::trunc);
-    if (!log_file_write.is_open()) {
-        general_log << "Unable to open log file: " << full_log_filename << std::endl;
-        return;
-    }
-
-    for (const auto &log : logDeque) {
-        log_file_write << log << std::endl;
-    }
-    log_file_write.close();
-  }
 
 
   if (thread_log.is_open())

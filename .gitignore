@@ -5,3 +5,4 @@ CMakeFiles
 Makefile
 *.a
 src/pstress-*
+.vscode/*
