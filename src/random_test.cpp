@@ -2679,16 +2679,12 @@ void Table::Compare_between_engine(const std::string &sql, Thd1 *thd) {
   set_default();
 }
 
-  // Data structures for recent queries
-  static std::deque<std::string> recent_queries;
 
 bool execute_sql(const std::string &sql, Thd1 *thd) {
   auto query = sql.c_str();
   static auto log_all = opt_bool(LOG_ALL_QUERIES);
   static auto log_failed = opt_bool(LOG_FAILED_QUERIES);
   static auto log_success = opt_bool(LOG_SUCCEDED_QUERIES);
-  static auto log_N = opt_bool(LOG_N_QUERIES);
-  thd->max_recent_queries = options->at(Option::LOG_N_QUERIES)->getInt();
   static auto log_query_duration = opt_bool(LOG_QUERY_DURATION);
   static auto log_client_output = opt_bool(LOG_CLIENT_OUTPUT);
   static auto log_query_numbers = opt_bool(LOG_QUERY_NUMBERS);
@@ -2722,7 +2718,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
     thd->failed_queries_total++;
     thd->max_con_fail_count++;
     // Manage recent queries for failed queries
-    if (!log_N) {
+    if (options->at(Option::LOG_N_QUERIES)->getInt()>0) {
       thd->add_query("FAILED: " + sql);
     }
     if (log_all || log_failed) {
@@ -2759,7 +2755,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
         mysql_free_result(r);
     });
     // Manage recent queries for successful queries
-    if (!log_N) {
+    if (options->at(Option::LOG_N_QUERIES)->getInt()>0) {
       thd->add_query("SUCCESS: " + sql);
     }
 
@@ -2809,10 +2805,6 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
   }
 
   return (res == 0 ? 1 : 0);
-}
-// Retrive the formed deque
-std::deque<std::string> get_recent_queries() {
-  return recent_queries;
 }
 
 const std::vector<uint32_t> row_group_sizes = {2,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};

@@ -9,8 +9,6 @@
 std::atomic_flag lock_metadata = ATOMIC_FLAG_INIT;
 std::atomic<bool> metadata_loaded(false);
 
-// Mutex for thread-safe logging
-std::mutex general_log_mutex;
 
 // Get the number of affected rows safely
 inline unsigned long long Node::getAffectedRows(MYSQL *connection) {
@@ -170,7 +168,6 @@ void Node::workerThread(int number) {
         break;
       }
     }
-    logDeque = thd->get_recent_queries();
   }
 
   if (!log_all_queries) {
@@ -182,8 +179,6 @@ void Node::workerThread(int number) {
   /* connection can be changed if we thd->tryreconnect is called */
   conn = thd->conn;
   delete thd;
-
-
 
   if (thread_log.is_open())
     thread_log.close();
