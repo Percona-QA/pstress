@@ -6,7 +6,13 @@
 #include <atomic>
 #include <fstream>
 #include <iostream>
+#ifdef USE_MYSQL
 #include <mysql.h>
+#endif
+
+#ifdef USE_DUCKDB
+#include "duckdb.hpp"
+#endif
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
@@ -69,8 +75,16 @@ public:
 private:
   // declaration for worker thread function
   void workerThread(int);
-  inline unsigned long long getAffectedRows(MYSQL *);
   void tryConnect();
+  #ifdef USE_MYSQL
+    inline unsigned long long getAffectedRows(MYSQL *);
+    void tryConnect(); // MySQL-specific connection logic
+  #endif
+
+  #ifdef USE_DUCKDB
+    inline unsigned long long getAffectedRows(duckdb::Connection *);
+    void tryConnect(); // DuckDB-specific connection logic
+  #endif
   bool createGeneralLog();
   void readSettings(std::string);
   void writeFinalReport();

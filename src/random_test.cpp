@@ -2681,130 +2681,211 @@ void Table::Compare_between_engine(const std::string &sql, Thd1 *thd) {
 
 
 bool execute_sql(const std::string &sql, Thd1 *thd) {
-  auto query = sql.c_str();
-  static auto log_all = opt_bool(LOG_ALL_QUERIES);
-  static auto log_failed = opt_bool(LOG_FAILED_QUERIES);
-  static auto log_success = opt_bool(LOG_SUCCEDED_QUERIES);
-  static auto log_query_duration = opt_bool(LOG_QUERY_DURATION);
-  static auto log_client_output = opt_bool(LOG_CLIENT_OUTPUT);
-  static auto log_query_numbers = opt_bool(LOG_QUERY_NUMBERS);
-  std::chrono::system_clock::time_point begin, end;
+    auto query = sql.c_str();
+    static auto log_all = opt_bool(LOG_ALL_QUERIES);
+    static auto log_failed = opt_bool(LOG_FAILED_QUERIES);
+    static auto log_success = opt_bool(LOG_SUCCEDED_QUERIES);
+    static auto log_query_duration = opt_bool(LOG_QUERY_DURATION);
+    static auto log_client_output = opt_bool(LOG_CLIENT_OUTPUT);
+    static auto log_query_numbers = opt_bool(LOG_QUERY_NUMBERS);
+    std::chrono::system_clock::time_point begin, end;
 
-  if (log_query_duration) {
-    begin = std::chrono::system_clock::now();
-  }
-
-  auto res = mysql_real_query(thd->conn, query, strlen(query));
-
-  if (log_query_duration) {
-    end = std::chrono::system_clock::now();
-
-    /* elpased time in micro-seconds */
-    auto te_start = std::chrono::duration_cast<std::chrono::microseconds>(
-        begin - start_time);
-    auto te_query =
-        std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
-    auto in_time_t = std::chrono::system_clock::to_time_t(begin);
-
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%dT%X");
-
-    thd->thread_log << ss.str() << " " << te_start.count() << "=>"
-                    << te_query.count() << "ms ";
-  }
-  thd->performed_queries_total++;
-
-  if (res != 0) { // query failed
-    thd->failed_queries_total++;
-    thd->max_con_fail_count++;
-    // Manage recent queries for failed queries
-    if (options->at(Option::LOG_N_QUERIES)->getInt()>0) {
-      thd->add_query("FAILED: " + sql);
-    }
-    if (log_all || log_failed) {
-      thd->thread_log << " F " << sql << std::endl;
-      thd->thread_log << "Error " << mysql_error(thd->conn) << std::endl;
-    }
-    static std::set<int> mysql_ignore_error =
-        splitStringToIntSet(options->at(Option::IGNORE_ERRORS)->getString());
-
-    if (options->at(Option::IGNORE_ERRORS)->getString() == "all" ||
-        mysql_ignore_error.count(mysql_errno(thd->conn)) > 0) {
-      thd->thread_log << "Ignoring error " << mysql_error(thd->conn)
-                      << std::endl;
-
-      if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
-          mysql_errno(thd->conn) == CR_SERVER_LOST ||
-          mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
-        thd->tryreconnet();
-      }
-
-    } else if (mysql_errno(thd->conn) == CR_SERVER_LOST ||
-               mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED ||
-               mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
-               mysql_errno(thd->conn) == CR_SECONDARY_NOT_READY) {
-      print_and_log("Fatal: " + sql, thd, true);
-      run_query_failed = true;
-    }
-  } else {
-    thd->max_con_fail_count = 0;
-    thd->success = true;
-    auto result = mysql_store_result(thd->conn);
-    thd->result = std::shared_ptr<MYSQL_RES>(result, [](MYSQL_RES *r) {
-      if (r)
-        mysql_free_result(r);
-    });
-    // Manage recent queries for successful queries
-    if (options->at(Option::LOG_N_QUERIES)->getInt()>0) {
-      thd->add_query("SUCCESS: " + sql);
+    if (log_query_duration) {
+        begin = std::chrono::system_clock::now();
     }
 
-    if (log_client_output) {
-      if (thd->result != nullptr) {
-        unsigned int i, num_fields;
+#ifdef DUCKDB
+    try {
+        // Create DuckDB connection
+        duckdb::DuckDB db(nullptr);  // In-memory database
+        duckdb::Connection con(db);
+        auto result = con.Query(sql);
 
-        num_fields = mysql_num_fields(thd->result.get());
-        while (auto row = mysql_fetch_row_safe(thd)) {
-          for (i = 0; i < num_fields; i++) {
-            if (row[i]) {
-              if (strlen(row[i]) == 0) {
-                thd->client_log << "EMPTY"
-                                << "#";
-              } else {
-                thd->client_log << row[i] << "#";
-              }
-            } else {
-              thd->client_log << "#NO DATA"
-                              << "#";
-            }
-          }
-          if (log_query_numbers) {
-            thd->client_log << ++thd->query_number;
-          }
-          thd->client_log << '\n';
+        if (log_query_duration) {
+            end = std::chrono::system_clock::now();
+            auto te_start = std::chrono::duration_cast<std::chrono::microseconds>(begin - start_time);
+            auto te_query = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
+            auto in_time_t = std::chrono::system_clock::to_time_t(begin);
+
+            std::stringstream ss;
+            ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%dT%X");
+
+            thd->thread_log << ss.str() << " " << te_start.count() << "=>" << te_query.count() << "ms ";
         }
-      }
+        thd->performed_queries_total++;
+
+        if (!result->success) {  // Query failed
+            thd->failed_queries_total++;
+            thd->max_con_fail_count++;
+
+            // Manage recent queries for failed queries
+            if (options->at(Option::LOG_N_QUERIES)->getInt() > 0) {
+                thd->add_query("FAILED: " + sql);
+            }
+            if (log_all || log_failed) {
+                thd->thread_log << " F " << sql << std::endl;
+                thd->thread_log << "Error: " << result->error << std::endl;
+            }
+
+            print_and_log("Fatal: " + sql, thd, true);
+            run_query_failed = true;
+        } else {  // Query succeeded
+            thd->max_con_fail_count = 0;
+            thd->success = true;
+
+            // Process query results
+            if (result->ColumnCount() > 0) {
+                thd->client_log << "Result Rows: ";
+                while (result->HasNext()) {
+                    auto row = result->FetchRow();
+                    for (size_t i = 0; i < result->ColumnCount(); ++i) {
+                        if (row[i].is_null) {
+                            thd->client_log << "#NO DATA#";
+                        } else {
+                            thd->client_log << row[i].ToString() << "#";
+                        }
+                    }
+                    if (log_query_numbers) {
+                        thd->client_log << ++thd->query_number;
+                    }
+                    thd->client_log << '\n';
+                }
+            }
+
+            // Manage recent queries for successful queries
+            if (options->at(Option::LOG_N_QUERIES)->getInt() > 0) {
+                thd->add_query("SUCCESS: " + sql);
+            }
+
+            if (log_all || log_success) {
+                thd->thread_log << " S " << sql << " rows: " << result->row_count() << std::endl;
+            }
+        }
+
+        if (thd->ddl_query) {
+            std::lock_guard<std::mutex> lock(ddl_logs_write);
+            thd->ddl_logs << thd->thread_id << " " << sql << " " << result->error << std::endl;
+        }
+
+        return result->success ? 1 : 0;
+
+    } catch (std::exception &e) {
+        thd->failed_queries_total++;
+        thd->thread_log << "Exception: " << e.what() << std::endl;
+        return 0;
     }
 
-    /* log successful query */
-    if (log_all || log_success) {
-      thd->thread_log << " S " << sql;
-      int number;
-      if (thd->result == nullptr)
-        number = mysql_affected_rows(thd->conn);
-      else
-        number = mysql_num_rows(thd->result.get());
-      thd->thread_log << " rows:" << number << std::endl;
+#else
+    // MySQL Logic
+    auto res = mysql_real_query(thd->conn, query, strlen(query));
+
+    if (log_query_duration) {
+        end = std::chrono::system_clock::now();
+        auto te_start = std::chrono::duration_cast<std::chrono::microseconds>(begin - start_time);
+        auto te_query = std::chrono::duration_cast<std::chrono::microseconds>(end - begin);
+        auto in_time_t = std::chrono::system_clock::to_time_t(begin);
+
+        std::stringstream ss;
+        ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%dT%X");
+
+        thd->thread_log << ss.str() << " " << te_start.count() << "=>" << te_query.count() << "ms ";
     }
-  }
+    thd->performed_queries_total++;
 
-  if (thd->ddl_query) {
-    std::lock_guard<std::mutex> lock(ddl_logs_write);
-    thd->ddl_logs << thd->thread_id << " " << sql << " "
-                  << mysql_error(thd->conn) << std::endl;
-  }
+    if (res != 0) {  // Query failed
+        thd->failed_queries_total++;
+        thd->max_con_fail_count++;
 
-  return (res == 0 ? 1 : 0);
+        // Manage recent queries for failed queries
+        if (options->at(Option::LOG_N_QUERIES)->getInt() > 0) {
+            thd->add_query("FAILED: " + sql);
+        }
+        if (log_all || log_failed) {
+            thd->thread_log << " F " << sql << std::endl;
+            thd->thread_log << "Error: " << mysql_error(thd->conn) << std::endl;
+        }
+
+        static std::set<int> mysql_ignore_error =
+            splitStringToIntSet(options->at(Option::IGNORE_ERRORS)->getString());
+
+        if (options->at(Option::IGNORE_ERRORS)->getString() == "all" ||
+            mysql_ignore_error.count(mysql_errno(thd->conn)) > 0) {
+            thd->thread_log << "Ignoring error " << mysql_error(thd->conn) << std::endl;
+
+            if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
+                mysql_errno(thd->conn) == CR_SERVER_LOST ||
+                mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED) {
+                thd->tryreconnet();
+            }
+        } else if (mysql_errno(thd->conn) == CR_SERVER_LOST ||
+                   mysql_errno(thd->conn) == CR_WSREP_NOT_PREPARED ||
+                   mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
+                   mysql_errno(thd->conn) == CR_SECONDARY_NOT_READY) {
+            print_and_log("Fatal: " + sql, thd, true);
+            run_query_failed = true;
+        }
+    } else {  // Query succeeded
+        thd->max_con_fail_count = 0;
+        thd->success = true;
+
+        auto result = mysql_store_result(thd->conn);
+        thd->result = std::shared_ptr<MYSQL_RES>(result, [](MYSQL_RES *r) {
+            if (r)
+                mysql_free_result(r);
+        });
+
+        // Manage recent queries for successful queries
+        if (options->at(Option::LOG_N_QUERIES)->getInt() > 0) {
+            thd->add_query("SUCCESS: " + sql);
+        }
+
+        if (log_client_output) {
+            if (thd->result != nullptr) {
+                unsigned int i, num_fields;
+
+                num_fields = mysql_num_fields(thd->result.get());
+                while (auto row = mysql_fetch_row_safe(thd)) {
+                    for (i = 0; i < num_fields; i++) {
+                        if (row[i]) {
+                            if (strlen(row[i]) == 0) {
+                                thd->client_log << "EMPTY"
+                                                << "#";
+                            } else {
+                                thd->client_log << row[i] << "#";
+                            }
+                        } else {
+                            thd->client_log << "#NO DATA"
+                                            << "#";
+                        }
+                    }
+                    if (log_query_numbers) {
+                        thd->client_log << ++thd->query_number;
+                    }
+                    thd->client_log << '\n';
+                }
+            }
+        }
+
+        /* log successful query */
+        if (log_all || log_success) {
+            thd->thread_log << " S " << sql;
+            int number;
+            if (thd->result == nullptr)
+                number = mysql_affected_rows(thd->conn);
+            else
+                number = mysql_num_rows(thd->result.get());
+            thd->thread_log << " rows:" << number << std::endl;
+        }
+    }
+
+    if (thd->ddl_query) {
+        std::lock_guard<std::mutex> lock(ddl_logs_write);
+        thd->ddl_logs << thd->thread_id << " " << sql << " "
+                      << mysql_error(thd->conn) << std::endl;
+    }
+
+    return (res == 0 ? 1 : 0);
+#endif
 }
 
 const std::vector<uint32_t> row_group_sizes = {2,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};

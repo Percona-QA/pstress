@@ -98,6 +98,7 @@ struct Option {
     DELETE_ALL_ROW,
     DELETE_ROW_USING_PKEY,
     INVALID_OPTION = 63,
+    DUCKDB,
     LOG_ALL_QUERIES = 'A',
     LOG_N_QUERIES,
     PQUERY = 'k',

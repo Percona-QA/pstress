@@ -1030,6 +1030,12 @@ void add_options() {
   opt->setInt(5);
   opt->setArgs(required_argument);
 
+  /* Use DuckDb */
+  opt = newOption(Option::BOOL, Option::DUCKDB, "duckdb");
+  opt->help = "Use DuckDB as database backend";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* execute sql sequentially */
   opt = newOption(Option::BOOL, Option::NO_SHUFFLE, "no-shuffle");
   opt->help = "execute SQL sequentially | randomly\n";

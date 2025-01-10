@@ -44,8 +44,16 @@ bool Node::createGeneralLog() {
   }
   general_log.open(logName, std::ios::out | std::ios::trunc);
   general_log << "- PStress v" << PQVERSION << "-" << PQREVISION
-              << " compiled with " << FORK << "-" << mysql_get_client_info()
-              << std::endl;
+                << " compiled with " << FORK;
+  #ifdef USE_MYSQL
+    general_log << "-" << mysql_get_client_info();
+  #endif
+
+  #ifdef USE_DUCKDB
+    general_log << "-" << duckdb::LibraryVersion();
+  #endif
+
+  general_log << std::endl;
 
   if (!general_log.is_open()) {
     std::cout << "Unable to open log file " << logName << ": "
@@ -128,62 +136,82 @@ int Node::startWork() {
 
 void Node::tryConnect() {
   node_mutex.lock();
-  MYSQL *conn;
-  conn = mysql_init(NULL);
-  if (conn == NULL) {
-    std::cerr << "Error " << mysql_errno(conn) << ": " << mysql_error(conn)
-              << std::endl;
-    std::cerr << "* PSTRESS: Unable to continue [1], exiting" << std::endl;
-    general_log << "Error " << mysql_errno(conn) << ": " << mysql_error(conn)
-                << std::endl;
-    general_log << "* PSTRESS: Unable to continue [1], exiting" << std::endl;
-    mysql_close(conn);
-    mysql_library_end();
-    exit(EXIT_FAILURE);
-  }
-  if (mysql_real_connect(conn, myParams.address.c_str(),
-                         myParams.username.c_str(), myParams.password.c_str(),
-                         options->at(Option::DATABASE)->getString().c_str(),
-                         myParams.port, myParams.socket.c_str(), 0) == NULL) {
-    std::cerr << "Error " << mysql_errno(conn) << ": " << mysql_error(conn)
-              << std::endl;
-    std::cerr << "* PSTRESS: Unable to continue [2], exiting" << std::endl;
-    general_log << "Error " << mysql_errno(conn) << ": " << mysql_error(conn)
-                << std::endl;
-    general_log << "* PSTRESS: Unable to continue [2], exiting" << std::endl;
-    mysql_close(conn);
-    mysql_library_end();
-    exit(EXIT_FAILURE);
-  }
-  general_log << "- Connected to " << mysql_get_host_info(conn) << "..."
-              << std::endl;
-  // getting the real server version
-  MYSQL_RES *result = NULL;
-  std::string server_version;
-
-  if (!mysql_query(conn, "select @@version_comment limit 1") &&
-      (result = mysql_use_result(conn))) {
-    MYSQL_ROW row = mysql_fetch_row(result);
-    if (row && row[0]) {
-      server_version = mysql_get_server_info(conn);
-      server_version.append(" ");
-      server_version.append(row[0]);
+  #ifdef MYSQL
+    MYSQL *conn = mysql_init(NULL);
+    if (conn == NULL) {
+      std::cerr << "Error: Unable to initialize MySQL connection." << std::endl;
+      general_log << "Error: Unable to initialize MySQL connection." << std::endl;
+      exit(EXIT_FAILURE);
     }
-  } else {
-    server_version = mysql_get_server_info(conn);
-  }
-  general_log << "- Connected server version: " << server_version << std::endl;
-  if (strcmp(PLATFORM_ID, "Darwin") == 0)
-    general_log << "- Table compression is disabled as hole punching is not "
-                   "supported on OSX"
-                << std::endl;
-  if (result != NULL) {
-    mysql_free_result(result);
-  }
-  mysql_close(conn);
-  mysql_thread_end();
+
+    if (mysql_real_connect(conn, myParams.address.c_str(),
+                          myParams.username.c_str(), myParams.password.c_str(),
+                          options->at(Option::DATABASE)->getString().c_str(),
+                          myParams.port, myParams.socket.c_str(), 0) == NULL) {
+      std::cerr << "MySQL Error " << mysql_errno(conn) << ": " << mysql_error(conn) << std::endl;
+      general_log << "MySQL Error " << mysql_errno(conn) << ": " << mysql_error(conn) << std::endl;
+      mysql_close(conn);
+      mysql_library_end();
+      exit(EXIT_FAILURE);
+    }
+
+    general_log << "- Connected to MySQL: " << mysql_get_host_info(conn) << std::endl;
+
+    // Get MySQL server version
+    MYSQL_RES *result = NULL;
+    std::string server_version;
+    if (!mysql_query(conn, "SELECT @@version_comment LIMIT 1") &&
+        (result = mysql_use_result(conn))) {
+      MYSQL_ROW row = mysql_fetch_row(result);
+      if (row && row[0]) {
+        server_version = mysql_get_server_info(conn);
+        server_version.append(" ");
+        server_version.append(row[0]);
+      }
+    } else {
+      server_version = mysql_get_server_info(conn);
+    }
+    general_log << "- MySQL server version: " << server_version << std::endl;
+
+    if (result != NULL) {
+      mysql_free_result(result);
+    }
+    mysql_close(conn);
+    mysql_thread_end();
+
+  #elif defined(DUCKDB)
+    duckdb_database db;
+    duckdb_connection conn;
+    if (duckdb_open(myParams.database_path.c_str(), &db) != DuckDBSuccess) {
+      std::cerr << "Error: Unable to open DuckDB database." << std::endl;
+      general_log << "Error: Unable to open DuckDB database." << std::endl;
+      exit(EXIT_FAILURE);
+    }
+
+    if (duckdb_connect(db, &conn) != DuckDBSuccess) {
+      std::cerr << "Error: Unable to connect to DuckDB." << std::endl;
+      general_log << "Error: Unable to connect to DuckDB." << std::endl;
+      duckdb_close(&db);
+      exit(EXIT_FAILURE);
+    }
+
+    general_log << "- Connected to DuckDB." << std::endl;
+
+    // Get DuckDB version
+    general_log << "- DuckDB version: " << duckdb_library_version() << std::endl;
+
+    duckdb_disconnect(&conn);
+    duckdb_close(&db);
+
+  #else
+    std::cerr << "Error: No database backend defined." << std::endl;
+    general_log << "Error: No database backend defined." << std::endl;
+    exit(EXIT_FAILURE);
+  #endif
+
   if (options->at(Option::TEST_CONNECTION)->getBool()) {
     exit(EXIT_SUCCESS);
   }
+
   node_mutex.unlock();
 }

@@ -12,7 +12,13 @@
 #include <memory> //shared_ptr
 #include <mutex>
 #include <deque>
+#ifdef USE_MYSQL
 #include <mysql.h>
+#endif
+
+#ifdef USE_DUCKDB
+#include "duckdb.hpp"
+#endif
 #include <prettywriter.h>
 #include <random>
 #include <shared_mutex>
@@ -188,10 +194,22 @@ struct Index {
 
 struct Thd1 {
   Thd1(int id, std::ofstream &tl, std::ofstream &ddl_l, std::ofstream &client_l,
-       MYSQL *c, std::atomic<unsigned long long> &p,
-       std::atomic<unsigned long long> &f,int log_N_count)
+#ifdef USE_MYSQL
+       MYSQL *c,
+#endif
+#ifdef USE_DUCKDB
+       duckdb::Connection *c,
+#endif
+       std::atomic<unsigned long long> &p,
+       std::atomic<unsigned long long> &f, int log_N_count)
       : thread_id(id), thread_log(tl), ddl_logs(ddl_l), client_log(client_l),
-        conn(c), performed_queries_total(p), failed_queries_total(f), max_recent_queries(log_N_count){};
+#ifdef USE_MYSQL
+        conn(c),
+#endif
+#ifdef USE_DUCKDB
+        duckdb_conn(c),
+#endif
+        performed_queries_total(p), failed_queries_total(f), max_recent_queries(log_N_count) {}
 
   bool run_some_query(); // create default tables and run random queries
   bool load_metadata();  // load metada of tool in memory
@@ -202,10 +220,17 @@ struct Thd1 {
   std::ofstream &thread_log;
   std::ofstream &ddl_logs;
   std::ofstream &client_log;
-  MYSQL *conn;
+  #ifdef USE_MYSQL
+    MYSQL *conn; // MySQL connection
+    std::shared_ptr<MYSQL_RES> result; // Result set of SQL for MySQL
+  #endif
+
+  #ifdef USE_DUCKDB
+    duckdb::Connection *duckdb_conn; // DuckDB connection
+    std::unique_ptr<duckdb::MaterializedQueryResult> result; // Result set for DuckDB
+  #endif
   std::atomic<unsigned long long> &performed_queries_total;
   std::atomic<unsigned long long> &failed_queries_total;
-  std::shared_ptr<MYSQL_RES> result; // result set of sql
   bool ddl_query = false;            // is the query ddl
   bool success = false;              // if the sql is successfully executed
   int max_con_fail_count = 0;        // consecutive failed queries

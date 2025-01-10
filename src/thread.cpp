@@ -186,13 +186,19 @@ void Node::workerThread(int number) {
   if (client_log.is_open())
     client_log.close();
 
-  mysql_close(conn);
-  mysql_thread_end();
+  #ifdef USE_MYSQL
+    mysql_close(conn);
+    mysql_thread_end();
+  #elif defined(USE_DUCKDB)
+    delete conn;
+  #endif
 }
 
-bool Thd1::tryreconnet() {
+bool Thd1::tryreconnect() {
   MYSQL *conn;
   auto myParams = *this->myParam;
+
+#ifdef USE_MYSQL
   conn = mysql_init(NULL);
   if (mysql_real_connect(conn, myParams.address.c_str(),
                          myParams.username.c_str(), myParams.password.c_str(),
@@ -200,11 +206,21 @@ bool Thd1::tryreconnet() {
                          myParams.socket.c_str(), 0) == NULL) {
     thread_log << "Error Failed to reconnect " << mysql_errno(conn);
     mysql_close(conn);
-
     return false;
   }
   MYSQL *old_conn = this->conn;
   mysql_close(old_conn);
   this->conn = conn;
   return true;
+#elif defined(USE_DUCKDB)
+  duckdb::DuckDB *conn = new duckdb::DuckDB(myParams.database);
+  if (conn == nullptr) {
+    thread_log << "Error: Failed to reconnect to DuckDB database." << std::endl;
+    return false;
+  }
+  duckdb::DuckDB *old_conn = this->conn;
+  delete old_conn;
+  this->conn = conn;
+  return true;
+#endif
 }

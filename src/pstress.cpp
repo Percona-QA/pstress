@@ -18,7 +18,13 @@
 #include "random_test.hpp"
 #include <INIReader.hpp>
 #include <libgen.h> //dirname() uses this
+#ifdef USE_MYSQL
 #include <mysql.h>
+#endif
+
+#ifdef USE_DUCKDB
+#include "duckdb.hpp"
+#endif
 #include <string>
 #include <thread>
 
@@ -197,7 +203,9 @@ int main(int argc, char *argv[]) {
 
   save_metadata_to_file();
   clean_up_at_end();
-  mysql_library_end();
+  #ifdef USE_MYSQL
+    mysql_library_end();
+  #endif
   delete_options();
   std::cout << "COMPLETED" << std::endl;
   if (run_query_failed)
