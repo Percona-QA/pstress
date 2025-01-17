@@ -16,7 +16,7 @@ SERVER_FAIL_TO_START_COUNT=0; ENGINE=InnoDB; UUID=$(uuidgen); GCACHE_ENCRYPTION=
 
 # Read configuration
 if [ "$1" != "" ]; then CONFIGURATION_FILE=$1; fi
-if [ ! -r ${SCRIPT_PWD}/${CONFIGURATION_FILE} ]; then echo "Assert: the confiruation file ${SCRIPT_PWD}/${CONFIGURATION_FILE} cannot be read!"; exit 1; fi
+if [ ! -r ${SCRIPT_PWD}/${CONFIGURATION_FILE} ]; then echo "Assert: the configuration file ${SCRIPT_PWD}/${CONFIGURATION_FILE} cannot be read!"; exit 1; fi
 source ${SCRIPT_PWD}/$CONFIGURATION_FILE
 if [ "${SEED}" == "" ]; then SEED=${RANDOMD}; fi
 
@@ -135,19 +135,16 @@ pxc_bug_found(){
   done;
 }
 
-create_global_manifest() {
-  echoit "Creating global manifest file mysqld.my"
+create_local_manifest() {
+  cmp_name=$1
+  node=$2
+  echoit "Creating local manifest file mysqld.my"
   cat << EOF >${BASEDIR}/bin/mysqld.my
 {
   "read_local_manifest": true
 }
 EOF
-}
 
-create_local_manifest() {
-  cmp_name=$1
-  node=$2
-  echoit "Creating local manifest file mysqld.my"
   if [ "$node" == "" ]; then
     cat << EOF >${RUNDIR}/${TRIAL}/data/mysqld.my
 {
@@ -163,20 +160,15 @@ EOF
   fi
 }
 
-create_global_config() {
+create_local_config() {
   cmp_name=$1
-  echoit "Creating global configuration file $cmp_name.cnf"
+  node=$2
+  echoit "Creating local configuration file $cmp_name.cnf"
   cat << EOF >${BASEDIR}/lib/plugin/$cmp_name.cnf
 {
   "read_local_config": true
 }
 EOF
-}
-
-create_local_config() {
-  cmp_name=$1
-  node=$2
-  echoit "Creating local configuration file $cmp_name.cnf"
   if [ "$cmp_name" == "component_keyring_file" ]; then
     if [ "$node" == "" ]; then
       cat << EOF >${RUNDIR}/${TRIAL}/data/$cmp_name.cnf
@@ -1495,17 +1487,6 @@ START_OPT="--core-file"  # Compatible with 5.6,5.7,8.0
 INIT_OPT="--no-defaults --initialize-insecure ${MYINIT}"  # Compatible with 5.7,8.0 (mysqld init)
 INIT_TOOL="${BIN}"  # Compatible with 5.7,8.0 (mysqld init), changed to MID later if version <=5.6
 VERSION_INFO=$(${BIN} --version | grep -oe '[58]\.[01567]' | head -n1)
-if [ "${VERSION_INFO}" == "5.1" -o "${VERSION_INFO}" == "5.5" -o "${VERSION_INFO}" == "5.6" ]; then
-  if [ "${MID}" == "" ]; then
-    echo "Assert: Version was detected as ${VERSION_INFO}, yet ./scripts/mysql_install_db nor ./bin/mysql_install_db is present!"
-    exit 1
-  fi
-  INIT_TOOL="${MID}"
-  INIT_OPT="--no-defaults --force ${MYINIT}"
-  START_OPT="--core"
-elif [ "${VERSION_INFO}" != "5.7" -a "${VERSION_INFO}" != "8.0" -a "${VERSION_INFO}" != "8.1" ]; then
-  echo "WARNING: mysqld (${BIN}) version detection failed. This is likely caused by using this script with a non-supported distribution or version of mysqld. Please expand this script to handle (which shoud be easy to do). Even so, the script will now try and continue as-is, but this may fail."
-fi
 
 if [ "${VERSION_INFO}" == "5.7" ]; then
   # Keyring components are not supported in PS-5.7 and PXC-5.7, hence disabling it.
@@ -1532,14 +1513,9 @@ elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
   KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
 fi
 
-if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
-  create_global_manifest
-  create_global_config component_keyring_file
-elif [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
   if check_for_version $MYSQL_VERSION "8.1.0" ; then
     start_vault_server
-    create_global_manifest
-    create_global_config component_keyring_vault
   else
     echoit "ERROR: Vault as a component is not supported in versions older than PS-8.1.0. Use PLUGIN_KEYRING_VAULT=1 instead"
     exit 1
@@ -1639,6 +1615,10 @@ else
 fi
 echoit "Done. Attempting to cleanup the pstress rundir ${RUNDIR}..."
 rm -Rf ${RUNDIR}
+if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+    echoit "Stopping vault server"
+    killall vault > /dev/null 2>&1
+fi
 echoit "The results of this run can be found in the workdir ${WORKDIR}..."
 echoit "Done. Exiting $0 with exit code 0..."
 exit 0
