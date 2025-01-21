@@ -94,6 +94,7 @@ public:
   bool primary_key = false;
   bool auto_increment = false;
   bool compressed = false; // percona type compressed
+  std::vector<int> unique_values;
   Table *table_;
 };
 
@@ -167,12 +168,16 @@ struct Thd1 {
   bool ddl_query = false;     // is the query ddl
   bool success = false;       // if the sql is successfully executed
   int max_con_fail_count = 0; // consecutive failed queries
+
+  /* for loading Bulkdata, Primary key of current table is stored in this vector
+   * which  is used for the FK tables  */
+  std::vector<int> unique_keys;
   int query_number = 0;
 };
 
 /* Table basic properties */
 struct Table {
-  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY } type;
+  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, FK } type;
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id);
@@ -200,7 +205,7 @@ struct Table {
   void SetAlterEngine(Thd1 *thd);
   void ModifyColumn(Thd1 *thd);
   void InsertRandomRow(Thd1 *thd);
-  bool InsertBulkRecord(Thd1 *thd, size_t number_of_records);
+  bool InsertBulkRecord(Thd1 *thd);
   void DropColumn(Thd1 *thd);
   void AddColumn(Thd1 *thd);
   void DropIndex(Thd1 *thd);
@@ -223,6 +228,7 @@ struct Table {
   std::string compression;
   std::string encryption = "N";
   int key_block_size = 0;
+  int number_of_initial_records;
   size_t auto_inc_index;
   // std::string data_directory; todo add corressponding code
   std::vector<Column *> *columns_;
@@ -238,9 +244,12 @@ struct Table {
       return "PARTITION";
     case TEMPORARY:
       return "TEMPORARY";
+    case FK:
+      return "FK";
     }
     return "FAIL";
   };
+  bool has_pk () const ;
 
   void set_type(std::string s) {
     if (s.compare("PARTITION") == 0)
@@ -249,7 +258,99 @@ struct Table {
       type = NORMAL;
     else if (s.compare("TEMPORARY") == 0)
       type = TEMPORARY;
+    else if (s.compare("FK") == 0)
+      type = FK;
   };
+};
+
+
+/* Fk table */
+struct FK_table : Table {
+  FK_table(std::string n) : Table(n) {
+  };
+
+  /* conustruct used for load_metadata */
+  FK_table(std::string n, std::string on_update, std::string on_delete)
+      : Table(n) {
+    set_refrence(on_update, on_delete);
+  }
+
+  /* current only used for step 1. So we do not store in metadata.
+   Used to get distince keys of pkey table */
+  Table* parent;
+  bool load_fk_constrain(Thd1 *thd);
+
+  void pickRefrence(Table *table) {
+    on_delete = getRandomForeignKeyAction(table);
+    on_update = getRandomForeignKeyAction(table);
+  }
+
+  enum class ForeignKeyAction {
+    RESTRICT,
+    CASCADE,
+    SET_NULL,
+    NO_ACTION,
+    SET_DEFAULT
+  };
+  std::string enumToString(ForeignKeyAction value) const {
+    switch (value) {
+    case ForeignKeyAction::RESTRICT:
+      return "RESTRICT";
+    case ForeignKeyAction::CASCADE:
+      return "CASCADE";
+    case ForeignKeyAction::SET_NULL:
+      return "SET NULL";
+    case ForeignKeyAction::NO_ACTION:
+      return "NO ACTION";
+    case ForeignKeyAction::SET_DEFAULT:
+      return "SET DEFAULT";
+    default:
+      return "Unknown";
+    }
+  }
+  // Function to convert string to enum
+  ForeignKeyAction stringToEnum(const std::string &str) {
+    static const std::unordered_map<std::string, ForeignKeyAction> enumMap = {
+        {"RESTRICT", ForeignKeyAction::RESTRICT},
+        {"CASCADE", ForeignKeyAction::CASCADE},
+        {"SET NULL", ForeignKeyAction::SET_NULL},
+        {"NO ACTION", ForeignKeyAction::NO_ACTION},
+        {"SET DEFAULT", ForeignKeyAction::SET_DEFAULT}};
+
+    auto it = enumMap.find(str);
+    if (it != enumMap.end()) {
+      return it->second;
+    }
+
+    // Throw an exception if the string does not correspond to any enum value
+    throw std::invalid_argument("Invalid enum value: " + str);
+  }
+  ForeignKeyAction on_update;
+  ForeignKeyAction on_delete;
+
+  ForeignKeyAction getRandomForeignKeyAction(Table *table) {
+    /* if a table has virtual generated column and if any of  the base column
+     * colum use set DEFAULT*/
+
+    for (const auto &col : *table->columns_) {
+      if (col->type_ == Column::COLUMN_TYPES::GENERATED) {
+        const std::string &clause =
+            static_cast<Generated_Column *>(col)->clause();
+        if (clause.find("fk_col") != std::string::npos &&
+            clause.find("STORED") != std::string::npos) {
+          return ForeignKeyAction::SET_DEFAULT;
+        }
+      }
+    }
+
+    int randomValue = rand_int(static_cast<int>(ForeignKeyAction::SET_DEFAULT));
+    return static_cast<ForeignKeyAction>(randomValue);
+  }
+
+  void set_refrence(std::string on_update_str, std::string on_delete_str) {
+    on_update = stringToEnum(on_update_str);
+    on_delete = stringToEnum(on_delete_str);
+  }
 };
 
 /* Partition table */
@@ -314,8 +415,7 @@ public:
 };
 
 /* Temporary table */
-struct Temporary_table : public Table {
-public:
+struct Temporary_table : Table {
   Temporary_table(std::string n) : Table(n){};
   Temporary_table(const Temporary_table &table) : Table(table.name_){};
 };
@@ -326,7 +426,6 @@ int sum_of_all_server_options();
 Option::Opt pick_some_option();
 std::vector<std::string> *random_strs_generator(unsigned long int seed);
 bool load_metadata(Thd1 *thd);
-int save_dictionary(std::vector<Table *> *all_tables);
 
 /* Execute SQL and update thd variables
 param[in] sql	 	query that we want to execute
