@@ -32,14 +32,15 @@ fi
 
 # Check no two encryption types are enabled at the same time
 if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-  enabled_count=$((${COMPONENT_KEYRING_FILE} + ${COMPONENT_KEYRING_VAULT} + ${PLUGIN_KEYRING_VAULT} + ${PLUGIN_KEYRING_FILE}))
+  enabled_count=$(( ${COMPONENT_KEYRING_FILE} + ${COMPONENT_KEYRING_VAULT} + ${PLUGIN_KEYRING_VAULT} + ${PLUGIN_KEYRING_FILE} + ${COMPONENT_KEYRING_KMIP} ))
   if [ "$enabled_count" -gt 1 ]; then
-    echo "Enable one encryption(keyring_file|keyring_vault) type(plugin|component) at a time"
+    echo "Enable one encryption(keyring_file|keyring_vault|keyring_kmip) type(plugin|component) at a time"
     exit 1
   fi
 elif [ ${ENCRYPTION_RUN} -eq 0 ]; then
   COMPONENT_KEYRING_FILE=0
   COMPONENT_KEYRING_VAULT=0
+  COMPONENT_KEYRING_KMIP=0
   PLUGIN_KEYRING_VAULT=0
   PLUGIN_KEYRING_FILE=0
 fi
@@ -124,6 +125,41 @@ start_vault_server(){
   vault_ca=$(grep 'vault_ca' "${WORKDIR}/vault/keyring_vault_ps.cnf" | awk -F '=' '{print $2}' | tr -d '[:space:]')
 }
 
+# Start KMIP server
+start_kmip_server(){
+  # Check if KMIP docker container is already running
+  container_id=$(sudo docker ps -a | grep mohitpercona/kmip | awk '{print $1}')
+  if [ -n "$container_id" ]; then
+      sudo docker stop "$container_id" > /dev/null 2>&1
+      sudo docker rm "$container_id" > /dev/null 2>&1
+  fi
+  # Start KMIP server with docker container
+  sudo docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 5696:5696 --name kmip mohitpercona/kmip:latest
+
+  # Sleep for 30 seconds for KMIP server to fully initialise
+  sleep 30
+
+  # Copy the certs
+  if [ -d ${WORKDIR}/kmip_certs ]; then
+      rm -rf ${WORKDIR}/kmip_certs
+  fi
+  mkdir ${WORKDIR}/kmip_certs
+  sudo docker cp kmip:/opt/certs/root_certificate.pem ${WORKDIR}/kmip_certs
+  sudo docker cp kmip:/opt/certs/client_key_jane_doe.pem ${WORKDIR}/kmip_certs
+  sudo docker cp kmip:/opt/certs/client_certificate_jane_doe.pem ${WORKDIR}/kmip_certs
+
+  # Generate component_keyring_kmip.cnf
+  cat > ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf <<EOF
+{
+  "server_addr": "127.0.0.1",
+  "server_port": "5696",
+  "client_ca": "${WORKDIR}/kmip_certs/client_certificate_jane_doe.pem",
+  "client_key": "${WORKDIR}/kmip_certs/client_key_jane_doe.pem",
+  "server_ca": "${WORKDIR}/kmip_certs/root_certificate.pem"
+}
+EOF
+}
+
 # PXC Bug found display function
 pxc_bug_found(){
   NODE=$1
@@ -205,7 +241,16 @@ EOF
 }
 EOF
     fi
+  elif [ "$cmp_name" == "component_keyring_kmip" ]; then
+      if [ "$node" == "" ]; then
+          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/data
+      else
+          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+      fi
   fi
+
 }
 
 # Incase, user starts pstress in RR mode, check if RR is installed on the machine
@@ -395,6 +440,7 @@ if [[ $PXC -eq 1 ]];then
   SPASS=
   rm -rf ${BASEDIR}/my.cnf
   echo "[mysqld]" > ${BASEDIR}/my.cnf
+  echo "mysqlx=OFF" >> ${BASEDIR}/my.cnf
   echo "basedir=${BASEDIR}" >> ${BASEDIR}/my.cnf
   echo "wsrep-debug=1" >> ${BASEDIR}/my.cnf
   echo "pxc_strict_mode=ENFORCING" >> ${BASEDIR}/my.cnf
@@ -438,6 +484,10 @@ pxc_startup(){
       sleep 1
       if ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET} ping > /dev/null 2>&1; then
         break
+      fi
+      if [ $X -eq ${PXC_START_TIMEOUT} ]; then
+        echo "Node$NR failed to start. Exiting"
+        exit 1
       fi
     done
   }
@@ -608,6 +658,7 @@ gr_startup(){
 # General replication settings
 
 disabled_storage_engines="MyISAM,BLACKHOLE,FEDERATED,ARCHIVE,MEMORY"
+mysqlx=OFF
 gtid_mode = ON
 enforce_gtid_consistency = ON
 master_info_repository = TABLE
@@ -737,7 +788,7 @@ fi
 
   get_error_socket_file 1
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
@@ -779,7 +830,7 @@ fi
   get_error_socket_file 2
 
   if [ "${ENCRYPTION_RUN}" == "1" ]; then
-    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
@@ -821,7 +872,7 @@ fi
   get_error_socket_file 3
 
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} ]; then
+    if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
       ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1  ]; then
@@ -898,6 +949,9 @@ pstress_test(){
       elif [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
         create_local_manifest component_keyring_vault
         create_local_config component_keyring_vault
+      elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
+          create_local_manifest component_keyring_kmip
+          create_local_config component_keyring_kmip
       fi
     fi
     MYEXTRA=
@@ -956,7 +1010,7 @@ pstress_test(){
         CMD="${BIN} ${MYEXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
-      elif [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
+      elif [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
         CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
@@ -1047,6 +1101,13 @@ pstress_test(){
         create_local_config component_keyring_vault 1
         create_local_config component_keyring_vault 2
         create_local_config component_keyring_vault 3
+      elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
+        create_local_manifest component_keyring_kmip 1
+        create_local_manifest component_keyring_kmip 2
+        create_local_manifest component_keyring_kmip 3
+        create_local_config component_keyring_kmip 1
+        create_local_config component_keyring_kmip 2
+        create_local_config component_keyring_kmip 3
       fi
     fi
 
@@ -1492,6 +1553,7 @@ if [ "${VERSION_INFO}" == "5.7" ]; then
   # Keyring components are not supported in PS-5.7 and PXC-5.7, hence disabling it.
   COMPONENT_KEYRING_FILE=0
   COMPONENT_KEYRING_VAULT=0
+  COMPONENT_KEYRING_KMIP=0
 fi
 
 if [ ${ENCRYPTION_RUN} -eq 1 ]; then
@@ -1514,12 +1576,14 @@ elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
 fi
 
 if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
-  if check_for_version $MYSQL_VERSION "8.1.0" ; then
-    start_vault_server
-  else
-    echoit "ERROR: Vault as a component is not supported in versions older than PS-8.1.0. Use PLUGIN_KEYRING_VAULT=1 instead"
-    exit 1
-  fi
+    if check_for_version $MYSQL_VERSION "8.1.0" ; then
+        start_vault_server
+    else
+        echoit "ERROR: Vault as a component is not supported in versions older than PS-8.1.0. Use PLUGIN_KEYRING_VAULT=1 instead"
+        exit 1
+    fi
+elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
+    start_kmip_server
 fi
 
 echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
@@ -1618,6 +1682,10 @@ rm -Rf ${RUNDIR}
 if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
     echoit "Stopping vault server"
     killall vault > /dev/null 2>&1
+elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
+    echoit "Stopping kmip server"
+    sudo docker stop kmip
+    sudo docker rm kmip
 fi
 echoit "The results of this run can be found in the workdir ${WORKDIR}..."
 echoit "Done. Exiting $0 with exit code 0..."
