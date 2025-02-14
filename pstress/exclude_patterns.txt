@@ -51,6 +51,7 @@
 .*Error_code.*MY-003825.*
 
 .*MY-010584.*
+.*MY-012801.*
 .*Error_code: 1529.*
 .*Error_code: 11001.*
 .*Error_code: 1478.*
@@ -73,3 +74,5 @@
 
 # PS-7865 Dropping a table with discarded tablespace crashes the server.
 .*Assertion failure.*btr0sea.cc:.*page.id.space.*
+
+.*[MY-012585].*Linux Native AIO interface.*
