@@ -151,8 +151,31 @@ cleanup_existing_container() {
 
 validate_port_available() {
     local port="$1"
-    ! ss -tuln | grep -q ":${port} " && \
-    ! docker ps --format '{{.Ports}}' | grep -q ":$port->"
+    # Check if port is provided
+    [ -z "$port" ] && return 1
+
+    for i in $(seq 1 10); do
+        # Check system-level port binding (TCP and UDP)
+        if netstat -tuln | grep -q ":${port} "; then
+            :  # Port in use, continue loop
+        # Check Docker container port mappings
+        elif docker ps --format '{{.Ports}}' | grep -q ":$port->"; then
+            :  # Port in use, continue loop
+        # Check if port is in TIME_WAIT state
+        elif netstat -tan | grep -q ":${port} .*TIME_WAIT"; then
+            :  # Port in use, continue loop
+        # Additional check with lsof if available
+        elif command -v lsof >/dev/null 2>&1 && lsof -i ":$port" >/dev/null 2>&1; then
+            :  # Port in use, continue loop
+        else
+            # Port is available
+            return 0
+        fi
+
+        [ $i -lt 10 ] && sleep 2
+    done
+
+    return 1
 }
 
 validate_environment() {
@@ -256,7 +279,7 @@ setup_pykmip() {
     fi
 
     # 3. Start container
-    echoit "[3/3] Starting container... "
+    echoit "Starting container... "
     if ! docker run -d \
         --name "$container_name" \
         --security-opt seccomp=unconfined \
