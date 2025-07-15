@@ -13,6 +13,16 @@ RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's
 SCRIPT_AND_PATH=$(readlink -f $0); SCRIPT=$(echo ${SCRIPT_AND_PATH} | sed 's|.*/||'); SCRIPT_PWD=$(cd `dirname $0` && pwd)
 WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; PXC=0; GRP_RPL=0; PXC_START_TIMEOUT=60; GRP_RPL_START_TIMEOUT=60; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
 SERVER_FAIL_TO_START_COUNT=0; ENGINE=InnoDB; UUID=$(uuidgen); GCACHE_ENCRYPTION=0;
+declare -A KMIP_CONFIGS=(
+    # PyKMIP Docker Configuration
+    ["pykmip"]="addr=127.0.0.1,image=mohitpercona/kmip:latest,port=5696,name=kmip_pykmip"
+
+    # Hashicorp Docker Setup Configuration
+    ["hashicorp"]="addr=127.0.0.1,port=5696,name=kmip_hashicorp,setup_script=hashicorp-kmip-setup.sh"
+
+    # API Configuration
+    # ["ciphertrust"]="addr=127.0.0.1,port=5696,name=kmip_ciphertrust,setup_script=setup_kmip_api.py"
+)
 
 # Read configuration
 if [ "$1" != "" ]; then CONFIGURATION_FILE=$1; fi
@@ -125,39 +135,252 @@ start_vault_server(){
   vault_ca=$(grep 'vault_ca' "${WORKDIR}/vault/keyring_vault_ps.cnf" | awk -F '=' '{print $2}' | tr -d '[:space:]')
 }
 
-# Start KMIP server
-start_kmip_server(){
-  # Check if KMIP docker container is already running
-  container_id=$(sudo docker ps -a | grep mohitpercona/kmip | awk '{print $1}')
-  if [ -n "$container_id" ]; then
-      sudo docker stop "$container_id" > /dev/null 2>&1
-      sudo docker rm "$container_id" > /dev/null 2>&1
-  fi
-  # Start KMIP server with docker container
-  sudo docker run -d --security-opt seccomp=unconfined --cap-add=NET_ADMIN --rm -p 5696:5696 --name kmip mohitpercona/kmip:latest
+# KMIP Helper functions
+cleanup_existing_container() {
+    local container_name="$1"
+    local container_id=$(docker ps -aq --filter "name=$container_name")
 
-  # Sleep for 30 seconds for KMIP server to fully initialise
-  sleep 30
+    [ -z "$container_id" ] && return 0
 
-  # Copy the certs
-  if [ -d ${WORKDIR}/kmip_certs ]; then
-      rm -rf ${WORKDIR}/kmip_certs
-  fi
-  mkdir ${WORKDIR}/kmip_certs
-  sudo docker cp kmip:/opt/certs/root_certificate.pem ${WORKDIR}/kmip_certs
-  sudo docker cp kmip:/opt/certs/client_key_jane_doe.pem ${WORKDIR}/kmip_certs
-  sudo docker cp kmip:/opt/certs/client_certificate_jane_doe.pem ${WORKDIR}/kmip_certs
+    if ! docker rm -f "$container_id" >/dev/null 2>&1; then
+        return 1
+    fi
+    sleep 5  # Allow port to be released
+    return 0
+}
 
-  # Generate component_keyring_kmip.cnf
-  cat > ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf <<EOF
+validate_port_available() {
+    local port="$1"
+    # Check if port is provided
+    [ -z "$port" ] && return 1
+
+    for i in $(seq 1 10); do
+        # Check system-level port binding (TCP and UDP)
+        if netstat -tuln | grep -q ":${port} "; then
+            :  # Port in use, continue loop
+        # Check Docker container port mappings
+        elif docker ps --format '{{.Ports}}' | grep -q ":$port->"; then
+            :  # Port in use, continue loop
+        # Check if port is in TIME_WAIT state
+        elif netstat -tan | grep -q ":${port} .*TIME_WAIT"; then
+            :  # Port in use, continue loop
+        # Additional check with lsof if available
+        elif command -v lsof >/dev/null 2>&1 && lsof -i ":$port" >/dev/null 2>&1; then
+            :  # Port in use, continue loop
+        else
+            # Port is available
+            return 0
+        fi
+
+        [ $i -lt 10 ] && sleep 2
+    done
+
+    return 1
+}
+
+validate_environment() {
+    local type=$1
+
+    # First check if type argument was provided
+    [[ -z "$type" ]] && {
+        echoit "ERROR: No KMIP type specified"
+        return 1
+    }
+
+    # Ensure KMIP_CONFIGS array exists and is not empty
+    if ! declare -p KMIP_CONFIGS &>/dev/null || [[ ${#KMIP_CONFIGS[@]} -eq 0 ]]; then
+        echoit "ERROR: KMIP configurations not initialized"
+        return 1
+    fi
+
+    # Validate the type exists in configurations
+    if [[ -z "${KMIP_CONFIGS[$type]+x}" ]]; then
+        echoit "ERROR: Invalid type '$type'. Available types:"
+        printf "  - %s\n" "${!KMIP_CONFIGS[@]}"
+        return 1
+    fi
+
+    return 0
+}
+
+parse_config() {
+    local type=$1
+    declare -gA kmip_config  # Global associative array
+
+    IFS=',' read -ra pairs <<< "${KMIP_CONFIGS[$type]}"
+    for pair in "${pairs[@]}"; do
+        IFS='=' read -r key value <<< "$pair"
+        kmip_config["$key"]="$value"
+    done
+
+    # Set defaults if not specified
+    kmip_config["type"]="$type"
+    [[ -z "${kmip_config[name]}" ]] && kmip_config["name"]="kmip_${type}"
+    [[ -z "${kmip_config[addr]}" ]] && kmip_config["addr"]="127.0.0.1"
+    [[ -z "${kmip_config[port]}" ]] && kmip_config["port"]="5696"
+    [[ -z "${kmip_config[cert_dir]}" ]] && kmip_config["cert_dir"]="kmip_certs_${kmip_config[type]}"
+}
+
+generate_kmip_config() {
+    local type="$1"
+    local addr="$2"
+    local port="$3"
+    local cert_dir="$4"
+    local config_file="${cert_dir}/component_keyring_kmip.cnf"
+    echoit "Generating KMIP config for: $name"
+
+    cat > "$config_file" <<EOF
 {
-  "server_addr": "127.0.0.1",
-  "server_port": "5696",
-  "client_ca": "${WORKDIR}/kmip_certs/client_certificate_jane_doe.pem",
-  "client_key": "${WORKDIR}/kmip_certs/client_key_jane_doe.pem",
-  "server_ca": "${WORKDIR}/kmip_certs/root_certificate.pem"
+  "server_addr": "$addr",
+  "server_port": "$port",
+  "client_ca": "${cert_dir}/client_certificate.pem",
+  "client_key": "${cert_dir}/client_key.pem",
+  "server_ca": "${cert_dir}/root_certificate.pem"
 }
 EOF
+    echoit "Configuration file created: $config_file"
+}
+
+setup_pykmip() {
+    local type="pykmip"
+    local container_name="${kmip_config[name]}"
+    local addr="${kmip_config[addr]}"
+    local port="${kmip_config[port]}"
+    local image="${kmip_config[image]}"
+    local cert_dir="${WORKDIR}/${kmip_config[cert_dir]}"
+
+    mkdir -p "$cert_dir" || {
+    echoit "ERROR: Failed to create certificate directory: $cert_dir" >&2
+    return 1
+    }
+    chmod 700 "$cert_dir"  # Restrict access to owner only
+
+    # 1. Cleanup existing resources
+    echoit "Cleaning up existing container... "
+    if cleanup_existing_container "$container_name"; then
+        echoit "Done"
+    else
+        echoit "Failed"
+        return 1
+    fi
+
+    # 2. Verify port availability
+    echoit "Checking port availability... "
+    if validate_port_available "$port"; then
+        echoit "Available"
+    else
+        echoit "Unavailable"
+        echoit "Port $port is in use by:"
+        lsof -i :"$port"
+        return 1
+    fi
+
+    # 3. Start container
+    echoit "Starting container... "
+    if ! docker run -d \
+        --name "$container_name" \
+        --security-opt seccomp=unconfined \
+        --cap-add=NET_ADMIN \
+        -p "$port:5696" \
+        "$image" >/dev/null 2>&1; then
+        echoit "Failed"
+        return 1
+    fi
+    echoit "Started (ID: $(docker inspect --format '{{.Id}}' "$container_name"))"
+
+    sleep 10
+
+    docker cp "$container_name":/opt/certs/root_certificate.pem $cert_dir/root_certificate.pem >/dev/null 2>&1
+    docker cp "$container_name":/opt/certs/client_key_jane_doe.pem $cert_dir/client_key.pem >/dev/null 2>&1
+    docker cp "$container_name":/opt/certs/client_certificate_jane_doe.pem $cert_dir/client_certificate.pem >/dev/null 2>&1
+
+    sleep 5
+
+    # Post-startup configuration
+    echoit "Generating KMIP configuration..."
+    generate_kmip_config "$type" "$addr" "$port" "$cert_dir" || {
+        echoit "Failed to generate KMIP config"
+        return 1
+    }
+
+    echoit "PyKMIP server started successfully on address $addr and port $port"
+    return 0
+}
+
+setup_hashicorp() {
+    local type="hashicorp"
+    local container_name="${kmip_config[name]}"
+    local addr="${kmip_config[addr]}"
+    local port="${kmip_config[port]}"
+    local image="${kmip_config[image]}"
+    local setup_script="${kmip_config[setup_script]}"
+    local cert_dir="${WORKDIR}/${kmip_config[cert_dir]}"
+
+    #Keep container name for cleanup
+
+    echoit "Cleaning up existing container... "
+    if cleanup_existing_container "$container_name"; then
+        echoit "Done"
+    else
+        echoit "Failed"
+        return 1
+    fi
+
+    echoit "Checking port availability... "
+    if validate_port_available "$port"; then
+        echoit "Available"
+    else
+        echoit "Unavailable"
+        echoit "Port $port is in use by:"
+        lsof -i :"$port"
+        return 1
+    fi
+
+    echoit "Starting Docker KMIP server in (script method): $setup_script"
+    # Download first, then execute the hashicorp setup
+    script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
+    wget_exit_code=$?
+
+    if [ $wget_exit_code -ne 0 ]; then
+      echoit "Failed to download script (wget exit code: $wget_exit_code)"
+      exit 1
+    fi
+
+    if [ -z "$script" ]; then
+      echoit "Downloaded script is empty"
+      exit 1
+    fi
+
+    mkdir -p "$cert_dir" || true
+    # Execute the script
+    echo "$script" | bash -s -- --cert-dir="$cert_dir"
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echoit "Failed to execute script $setup_script, (exit code: $exit_code)"
+        exit 1
+    fi
+
+    generate_kmip_config "$type" "$addr" "$port" "$cert_dir" || {
+        echoit "Failed to generate KMIP config"; exit 1; }
+
+    echoit "Hashicorp server started successfully on address $addr and port $port"
+    return 0
+}
+
+# Start KMIP server
+start_kmip_server() {
+    local type="$1"
+    validate_environment "$type" || return 1
+    parse_config "$type"
+
+    echo "Starting ${type^^} KMIP Server on port ${kmip_config[port]}"
+
+    case "$type" in
+        pykmip)  setup_pykmip ;;
+        hashicorp)  setup_hashicorp ;;
+        ciphertrust)  setup_cipher_api ;;
+        *)           echo "Unsupported KMIP Type: $type"; return 1 ;;
+    esac
 }
 
 # PXC Bug found display function
@@ -243,11 +466,11 @@ EOF
     fi
   elif [ "$cmp_name" == "component_keyring_kmip" ]; then
       if [ "$node" == "" ]; then
-          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/data
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/data
       else
-          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
-          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
-          cp ${WORKDIR}/kmip_certs/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
       fi
   fi
 
@@ -1582,8 +1805,8 @@ if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
         echoit "ERROR: Vault as a component is not supported in versions older than PS-8.1.0. Use PLUGIN_KEYRING_VAULT=1 instead"
         exit 1
     fi
-elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-    start_kmip_server
+elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ] && [ -n "${COMPONENT_KEYRING_KMIP_TYPE}" ]; then
+    start_kmip_server "${COMPONENT_KEYRING_KMIP_TYPE}"
 fi
 
 echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
@@ -1683,9 +1906,10 @@ if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
     echoit "Stopping vault server"
     killall vault > /dev/null 2>&1
 elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-    echoit "Stopping kmip server"
-    sudo docker stop kmip
-    sudo docker rm kmip
+    container_name="${kmip_config[name]}"
+    echoit "Stopping kmip server $container_name"
+    docker stop "$container_name" >/dev/null 2>&1
+    docker rm "$container_name" >/dev/null 2>&1
 fi
 echoit "The results of this run can be found in the workdir ${WORKDIR}..."
 echoit "Done. Exiting $0 with exit code 0..."
