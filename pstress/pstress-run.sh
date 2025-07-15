@@ -205,20 +205,20 @@ validate_environment() {
 
 parse_config() {
     local type=$1
-    declare -gA config  # Global associative array
+    declare -gA kmip_config  # Global associative array
 
     IFS=',' read -ra pairs <<< "${KMIP_CONFIGS[$type]}"
     for pair in "${pairs[@]}"; do
         IFS='=' read -r key value <<< "$pair"
-        config["$key"]="$value"
+        kmip_config["$key"]="$value"
     done
 
     # Set defaults if not specified
-    config["type"]="$type"
-    [[ -z "${config[name]}" ]] && config["name"]="kmip_${type}"
-    [[ -z "${config[addr]}" ]] && config["addr"]="127.0.0.1"
-    [[ -z "${config[port]}" ]] && config["port"]="5696"
-    [[ -z "${config[cert_dir]}" ]] && config["cert_dir"]="kmip_certs_${config[type]}"
+    kmip_config["type"]="$type"
+    [[ -z "${kmip_config[name]}" ]] && kmip_config["name"]="kmip_${type}"
+    [[ -z "${kmip_config[addr]}" ]] && kmip_config["addr"]="127.0.0.1"
+    [[ -z "${kmip_config[port]}" ]] && kmip_config["port"]="5696"
+    [[ -z "${kmip_config[cert_dir]}" ]] && kmip_config["cert_dir"]="kmip_certs_${kmip_config[type]}"
 }
 
 generate_kmip_config() {
@@ -243,14 +243,11 @@ EOF
 
 setup_pykmip() {
     local type="pykmip"
-    local container_name="${config[name]}"
-    local addr="${config[addr]}"
-    local port="${config[port]}"
-    local image="${config[image]}"
-    local cert_dir="${WORKDIR}/${config[cert_dir]}"
-
-    #Keep container name for cleanup
-    [[ -z "${config[container]}" ]] && config["container"]="$container_name"
+    local container_name="${kmip_config[name]}"
+    local addr="${kmip_config[addr]}"
+    local port="${kmip_config[port]}"
+    local image="${kmip_config[image]}"
+    local cert_dir="${WORKDIR}/${kmip_config[cert_dir]}"
 
     mkdir -p "$cert_dir" || {
     echoit "ERROR: Failed to create certificate directory: $cert_dir" >&2
@@ -312,15 +309,14 @@ setup_pykmip() {
 
 setup_hashicorp() {
     local type="hashicorp"
-    local container_name="${config[name]}"
-    local addr="${config[addr]}"
-    local port="${config[port]}"
-    local image="${config[image]}"
-    local setup_script="${config[setup_script]}"
-    local cert_dir="${WORKDIR}/${config[cert_dir]}"
+    local container_name="${kmip_config[name]}"
+    local addr="${kmip_config[addr]}"
+    local port="${kmip_config[port]}"
+    local image="${kmip_config[image]}"
+    local setup_script="${kmip_config[setup_script]}"
+    local cert_dir="${WORKDIR}/${kmip_config[cert_dir]}"
 
     #Keep container name for cleanup
-    [[ -z "${config[container]}" ]] && config["container"]="$container_name"
 
     echoit "Cleaning up existing container... "
     if cleanup_existing_container "$container_name"; then
@@ -377,7 +373,7 @@ start_kmip_server() {
     validate_environment "$type" || return 1
     parse_config "$type"
 
-    echo "Starting ${type^^} KMIP Server on port ${config[port]}"
+    echo "Starting ${type^^} KMIP Server on port ${kmip_config[port]}"
 
     case "$type" in
         pykmip)  setup_pykmip ;;
@@ -470,11 +466,11 @@ EOF
     fi
   elif [ "$cmp_name" == "component_keyring_kmip" ]; then
       if [ "$node" == "" ]; then
-          cp ${WORKDIR}/${config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/data
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/data
       else
-          cp ${WORKDIR}/${config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
-          cp ${WORKDIR}/${config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
-          cp ${WORKDIR}/${config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
       fi
   fi
 
@@ -1910,9 +1906,10 @@ if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
     echoit "Stopping vault server"
     killall vault > /dev/null 2>&1
 elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-    echoit "Stopping kmip server ${config[container]}"
-    docker stop "${config[container]}" >/dev/null 2>&1
-    docker rm "${config[container]}" >/dev/null 2>&1
+    container_name="${kmip_config[name]}"
+    echoit "Stopping kmip server $container_name"
+    docker stop "$container_name" >/dev/null 2>&1
+    docker rm "$container_name" >/dev/null 2>&1
 fi
 echoit "The results of this run can be found in the workdir ${WORKDIR}..."
 echoit "Done. Exiting $0 with exit code 0..."
