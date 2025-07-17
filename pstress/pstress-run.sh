@@ -661,6 +661,12 @@ if [[ $PXC -eq 1 ]];then
   # Creating default my.cnf file
   SUSER=root
   SPASS=
+  if [ -z "${SST_METHOD}" ]; then
+    SST_METHOD=xtrabackup-v2
+  elif [[ "${SST_METHOD}" == "clone" && ! $(check_for_version "$MYSQL_VERSION" "8.0.41") ]]; then
+    echo "Clone SST method is available only from version 8.0.41"
+    exit 1
+  fi
   rm -rf ${BASEDIR}/my.cnf
   echo "[mysqld]" > ${BASEDIR}/my.cnf
   echo "mysqlx=OFF" >> ${BASEDIR}/my.cnf
@@ -675,7 +681,8 @@ if [[ $PXC -eq 1 ]];then
     echo "log-error-verbosity=3" >> ${BASEDIR}/my.cnf
   fi
   echo "wsrep-provider=${BASEDIR}/lib/libgalera_smm.so" >> ${BASEDIR}/my.cnf
-  echo "wsrep_sst_method=xtrabackup-v2" >> ${BASEDIR}/my.cnf
+  echo "wsrep_sst_allowed_methods=${SST_METHOD}" >> ${BASEDIR}/my.cnf
+  echo "wsrep_sst_method=${SST_METHOD}" >> ${BASEDIR}/my.cnf
   echo "core-file" >> ${BASEDIR}/my.cnf
   echo "log-output=none" >> ${BASEDIR}/my.cnf
   echo "wsrep_slave_threads=2" >> ${BASEDIR}/my.cnf
@@ -1177,7 +1184,11 @@ pstress_test(){
           create_local_config component_keyring_kmip
       fi
     fi
-    MYEXTRA=
+    if [ "${COMPONENT_NAME:-}" == "component_js_lang" ]; then
+      MYEXTRA="--log_bin_trust_function_creators=ON" # Required for the stored functions or procedures created using DEFINER clause
+    else
+      MYEXTRA=
+    fi
     if [ "${ADD_RANDOM_OPTIONS}" == "" ]; then  # Backwards compatibility for .conf files without this option
        ADD_RANDOM_OPTIONS=0
     fi
@@ -1491,6 +1502,34 @@ EOF
       fi
     fi
 
+    if [[ ${TRIAL} -eq 1 || $REINIT_DATADIR -eq 1 ]]; then
+      if [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
+	SOCKET=${SOCKET1}
+      fi
+      COMP_SETUP_ERR_FILE=${WORKDIR}/component_setup_${TRIAL}.err
+      if [ -n "${COMPONENT_NAME}" ]; then
+        echo "Installing component ${COMPONENT_NAME}";
+        ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "INSTALL COMPONENT 'file://${COMPONENT_NAME}';" > ${COMP_SETUP_ERR_FILE} 2>&1;
+        # Component-specific setup
+        if [ "${COMPONENT_NAME:-}" == "component_js_lang" ]; then
+          echo "Granting privilege for JS routines"
+          ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "GRANT CREATE_JS_ROUTINE ON *.* TO 'root'@'localhost';" >> ${COMP_SETUP_ERR_FILE} 2>&1
+        fi
+        if [ "${COMPONENT_NAME:-}" == "component_masking_functions" ]; then
+          echo "Setting up the component : ${COMPONENT_NAME}"
+          ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "CREATE TABLE IF NOT EXISTS mysql.masking_dictionaries( Dictionary VARCHAR(256) NOT NULL, Term VARCHAR(256) NOT NULL, UNIQUE INDEX dictionary_term_idx (Dictionary, Term) ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;" >> ${COMP_SETUP_ERR_FILE} 2>&1
+          ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "GRANT MASKING_DICTIONARIES_ADMIN ON *.* TO 'root'@'localhost';" >> ${COMP_SETUP_ERR_FILE} 2>&1
+          if check_for_version $MYSQL_VERSION "8.0.0" ; then
+            ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "GRANT SELECT, INSERT, UPDATE, DELETE ON mysql.masking_dictionaries TO 'mysql.session'@'localhost';" >> ${COMP_SETUP_ERR_FILE} 2>&1
+          fi
+        fi
+      fi
+      if [ -n "${SQL_FILE}" ]; then
+        echo "Executing the queries from file ${SQL_FILE}"
+        ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -f < ${SCRIPT_PWD}/${SQL_FILE} > ${WORKDIR}/sql_file_step_${TRIAL}.result 2>&1
+      fi
+    fi
+
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
       CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL} --user=root --socket=${SOCKET} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER} --engine=${ENGINE}"
     elif [ ${PXC_CLUSTER_RUN} -eq 1 ]; then
@@ -1795,7 +1834,12 @@ if [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
     exit 1
   fi
 elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
-  KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
+  if ! check_for_version $MYSQL_VERSION "8.4.0" ; then
+    KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
+  else
+    echoit "ERROR: Keyring file as a plugin is not supported from PS-8.4 onwards. Use COMPONENT_KEYRING_FILE=1 instead"
+    exit 1
+  fi
 fi
 
 if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
@@ -1807,6 +1851,12 @@ if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
     fi
 elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ] && [ -n "${COMPONENT_KEYRING_KMIP_TYPE}" ]; then
     start_kmip_server "${COMPONENT_KEYRING_KMIP_TYPE}"
+fi
+
+if [ "${COMPONENT_NAME:-}" == "component_js_lang" ]; then
+  if ! check_for_version $MYSQL_VERSION "8.4.5" ; then
+    echo "ERROR: Component: ${COMPONENT_NAME} is not available on version '${MYSQL_VERSION}'"
+  fi
 fi
 
 echoit "Making a copy of the mysqld binary into ${WORKDIR}/mysqld (handy for coredump analysis and manually starting server)..."
