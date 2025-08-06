@@ -1147,10 +1147,14 @@ pstress_test(){
   echoit "====== TRIAL #${TRIAL} ======"
   echoit "Ensuring there are no relevant servers running..."
   KILLPID=$(ps -ef | grep "${RUNDIR}" | grep -v grep | awk '{print $2}' | tr '\n' ' ')
-  for i in "${KILLPID[@]}"
-  do
-    kill_server 9 $i
-  done
+  if [[ -n "$KILLPID" ]]; then
+    for MPID in "${KILLPID[@]}"
+    do
+      echoit "Killing the server with Signal 9 (pid: ${MPID})";
+      ps -fp $MPID
+      kill_server 9 $MPID
+    done
+  fi
   echoit "Clearing rundir..."
   rm -Rf ${RUNDIR}/*
   echoit "Generating new trial workdir ${RUNDIR}/${TRIAL}..."
@@ -1235,18 +1239,20 @@ pstress_test(){
     fi
     PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
     echoit "Starting mysqld. Error log is stored at ${RUNDIR}/${TRIAL}/log/master.err"
+    PID_FILE=${RUNDIR}/${TRIAL}/pid.pid
+    rm -f ${PID_FILE}
     if [ ${ENCRYPTION_RUN} -eq 1 ]; then
       if [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
         CMD="${BIN} ${MYEXTRA} ${VAULT_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
-          --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+          --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
         CMD="${BIN} ${MYEXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
-          --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+          --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       elif [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
         CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
-          --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+          --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       else
         echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
@@ -1254,16 +1260,34 @@ pstress_test(){
       fi
     else
       CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
-        --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${RUNDIR}/${TRIAL}/pid.pid --socket=${SOCKET} \
+        --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
 
     if [ $RR_MODE -eq 1 ]; then
-      CMD="rr $CMD"
+      CMD="${INLINE_ENV_VARS} rr $CMD"
+    else
+      CMD="${INLINE_ENV_VARS} $CMD"
     fi
+
     echo $CMD
-    $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
-    MPID="$!"
+
+    if [ $GDB_MODE -eq 1 ]; then
+      echo "Starting..." >> ${RUNDIR}/${TRIAL}/log/master.err
+      gnome-terminal -- bash -c "
+        gdb -ex 'set pagination off' -ex run --args $CMD
+        exec bash
+      "
+
+      echo "[INFO] Waiting until the ${PID_FILE} is created"
+      while [ ! -f $PID_FILE ]; do sleep 1; done
+      MPID=$(cat $PID_FILE)
+      echo "[INFO] Launched mysqld with PID: $MPID"
+      ps -fp $MPID
+    else
+      $CMD > ${RUNDIR}/${TRIAL}/log/master.err 2>&1 &
+      MPID="$!"
+    fi
 	
     echoit "Waiting for mysqld (pid: ${MPID}) to fully start..."
     BADVALUE=0
@@ -1271,7 +1295,7 @@ pstress_test(){
     for X in $(seq 0 ${MYSQLD_START_TIMEOUT}); do
       sleep 1
       if [ "${MPID}" == "" ]; then echoit "Assert! ${MPID} empty. Terminating!"; exit 1; fi
-        if grep -qi "ERROR. Aborting" ${RUNDIR}/${TRIAL}/log/master.err; then
+      if grep -qi "ERROR. Aborting" ${RUNDIR}/${TRIAL}/log/master.err; then
         if grep -qi "TCP.IP port. Address already in use" ${RUNDIR}/${TRIAL}/log/master.err; then
           echoit "Assert! The text '[ERROR] Aborting' was found in the error log due to a IP port conflict (the port was already in use)"
           removetrial
@@ -1626,9 +1650,24 @@ EOF
   # generated, search_string.sh will still produce output in case the server crashed based on the information in the error log), then we do not need to save this trial (as it is a
   # standard occurence for this to happen). If however we saw 250 queries failed before the timeout was complete, then there may be another problem and the trial should be saved.
   if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
-    echoit "Killing the server with Signal $SIGNAL";
+    echoit "Killing the server with Signal $SIGNAL (pid: ${MPID})";
+    ps -fp $MPID
     kill_server $SIGNAL $MPID
     sleep 1  # <^ Make sure all is gone
+
+    if [ $GDB_MODE -eq 1 ]; then
+      while true; do
+        # Get list of matching PIDs (if any)
+        KILLPID=$(ps -ef | grep "$RUNDIR" | grep -v grep | awk '{print $2}' | tr '\n' ' ')
+
+        if [[ -z "$KILLPID" ]]; then
+          echo "[INFO] All matching processes have exited."
+          break
+        fi
+        echo "[INFO] Wait until the following PID(s) end: $KILLPID"
+        sleep 5
+      done
+    fi
   elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
     MPID=( $(ps -ef | grep -e 'n[0-9].cnf' | grep ${RUNDIR} | grep -v grep | awk '{print $2}') )
     if [ ${PXC} -eq 1 ]; then
