@@ -499,7 +499,7 @@ if [ -r ${BASEDIR}/bin/mysqld ]; then
   BIN=${BASEDIR}/bin/mysqld
 else
   # Check if this is a debug build by checking if debug string is present in dirname
-  if [[ ${BASEDIR} = *debug* ]]; then
+  if [[ "$BASEDIR" == *debug* || "$BASEDIR" == *-deb-* ]]; then
     if [ -r ${BASEDIR}/bin/mysqld-debug ]; then
       BIN=${BASEDIR}/bin/mysqld-debug
     else
