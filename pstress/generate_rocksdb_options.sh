@@ -21,9 +21,11 @@ SOCKET=/tmp/mysql_22000.sock
 DATADIR=$BASEDIR/data
 MYSQLD_START_TIMEOUT=30
 
+MYSQLD_BIN=$BASEDIR/bin/mysqld
 # Check if mysqld binaries exists
-if [ ! -r $BASEDIR/bin/mysqld ]; then
-    echo "Error: no ./bin/mysqld or ./mysqld found!"
+if [ ! -x ${MYSQLD_BIN} ]; then MYSQLD_BIN=$BASEDIR/bin/mysqld-debug; fi
+if [ ! -x ${MYSQLD_BIN} ]; then
+    echo "Error: no $BASEDIR/bin/mysqld or $MYSQLD_BIN found!"
     exit 1
 fi
 
@@ -34,8 +36,8 @@ echoit(){
 }
 
 echoit "Starting MySQL server"
-$BASEDIR/bin/mysqld --no-defaults --datadir=$DATADIR --initialize-insecure > /tmp/mysql_install_db.txt 2>&1
-$BASEDIR/bin/mysqld --no-defaults --datadir=$DATADIR --port=$PORT --socket=$SOCKET 2>&1 > /tmp/master.err 2>&1 &
+$MYSQLD_BIN --no-defaults --datadir=$DATADIR --initialize-insecure > /tmp/mysql_install_db.txt 2>&1
+$MYSQLD_BIN --no-defaults --datadir=$DATADIR --port=$PORT --socket=$SOCKET 2>&1 > /tmp/master.err 2>&1 &
 MPID=$!
 
 echoit "Waiting for the server to fully start..."
@@ -51,28 +53,59 @@ for X in $(seq 0 ${MYSQLD_START_TIMEOUT}); do
 done
 
 # Extract all options, their default values into temp file
-$BASEDIR/bin/mysql --no-defaults -S$SOCKET -uroot -e "SHOW GLOBAL VARIABLES LIKE '%rocksdb%'" > $TEMP_FILE
+$BASEDIR/bin/mysql --no-defaults -S$SOCKET -uroot -e "
+  SELECT
+    vi.VARIABLE_NAME,
+    gv.VARIABLE_VALUE AS current_value,
+    vi.MIN_VALUE,
+    vi.MAX_VALUE
+  FROM performance_schema.variables_info vi
+  JOIN performance_schema.global_variables gv
+    ON vi.VARIABLE_NAME = gv.VARIABLE_NAME
+  WHERE vi.VARIABLE_NAME LIKE 'rocksdb_%';
+" > $TEMP_FILE
 
 # Remove the first line from the temp file
 # Variable_name, Variable_value (we do not need the column name displayed in temp file)
 sed -i 1d $TEMP_FILE
 
 # List of rocksdb variables which must not be changed.
-EXCLUDED_LIST=( --loose-rocksdb_compact_cf --loose-rocksdb_info_log_level --loose-rocksdb_update_cf_options --loose-rocksdb_delete_cf --loose-rocksdb_override_cf_options --loose-rocksdb_create_checkpoint --loose-rocksdb_create_temporary_checkpoint --loose-rocksdb_fault_injection_options --loose-rocksdb_read_free_rpl_tables --loose-rocksdb_persistent_cache_path --loose-rocksdb_strict_collation_exceptions --loose-rocksdb_tmpdir --loose-rocksdb_trace_block_cache_access --loose-rocksdb_trace_queries --loose-rocksdb_wal_dir --loose-rocksdb_wsenv_path --loose-rocksdb_datadir )
+EXCLUDED_LIST=( rocksdb_write_batch_max_bytes rocksdb_disable_instant_ddl rocksdb_column_default_value_as_expression rocksdb_cancel_manual_compactions rocksdb_alter_table_comment_inplace rocksdb_io_error_action rocksdb_invalid_create_option_action rocksdb_corrupt_data_action rocksdb_fs_uri rocksdb_compact_cf rocksdb_info_log_level rocksdb_update_cf_options rocksdb_delete_cf rocksdb_override_cf_options rocksdb_create_checkpoint rocksdb_create_temporary_checkpoint rocksdb_fault_injection_options rocksdb_read_free_rpl_tables rocksdb_persistent_cache_path rocksdb_strict_collation_exceptions rocksdb_tmpdir rocksdb_trace_block_cache_access rocksdb_trace_queries rocksdb_wal_dir rocksdb_wsenv_path rocksdb_datadir )
 
 # Create an output file which contains all the options/values
 rm -rf $OUTPUT_FILE
 touch $OUTPUT_FILE
 
+fix_min_value() {
+    local max32=4294967296  # 2^32
+    local half32=2147483648 # 2^31
+
+    if (( MIN_VALUE >= half32 )); then
+        MIN_VALUE=$(( MIN_VALUE - max32 ))
+    fi
+}
+
+check_range() {
+    local value="$1"
+
+    # bc will return 1 if condition true, 0 if false
+    if (( $(echo "$value > $MIN_VALUE && $value < $MAX_VALUE && $value != $DEFAULT_VALUE" | bc) )); then
+        echo "$OPTION=$value" >> "$OUTPUT_FILE"
+    fi
+}
+
 while read line; do
-  OPTION="--loose-$(echo $line | awk '{print $1}')"
+  COMMAND=$(echo $line | awk '{print $1}')
+  OPTION="--loose-$COMMAND"
   VALUE="$(echo $line | awk '{print $2}')"
+  MIN_VALUE="$(echo $line | awk '{print $3}')"
+  MAX_VALUE="$(echo $line | awk '{print $4}')"
   if [ "$VALUE" == "" ]; then
     echoit "Working on option '$OPTION' which has no default value..."
   else
-    echoit "Working on option '$OPTION' with default value '$VALUE'..."
+    echoit "Working on option '$OPTION' with default value=$VALUE MIN_VALUE=$MIN_VALUE MAX_VALUE=$MAX_VALUE"
   fi
-  if [[ " ${EXCLUDED_LIST[@]} " =~ " ${OPTION} " ]]; then
+  if [[ " ${EXCLUDED_LIST[@]} " =~ " ${COMMAND} " ]]; then
     echoit "Option '$OPTION' is logically excluded from being handled by this script..."
   elif [[ "$OPTION" == "--loose-rocksdb_access_hint_on_compaction_start" ]]; then
     echoit " > Adding possible values NONE, NORMAL, SEQUENTIAL, WILLNEED for option '${OPTION}' to the final list..."
@@ -107,13 +140,13 @@ while read line; do
     echo "$OPTION=\"write_buffer_size=256m;max_write_buffer_number=1\"" >> $OUTPUT_FILE
     echo "$OPTION=\"write_buffer_size=32m;max_write_buffer_number=4\"" >> $OUTPUT_FILE
     echo "$OPTION=\"write_buffer_size=128m;max_write_buffer_number=3\"" >> $OUTPUT_FILE
-    echo "$OPTION=\"target_file_size=32m\"" >> $OUTPUT_FILE
-    echo "$OPTION=\"target_file_size=128m\"" >> $OUTPUT_FILE
-    echo "$OPTION=\"target_file_size=256m\"" >> $OUTPUT_FILE
-    echo "$OPTION=\"max_byte_for_level_base=32m\"" >> $OUTPUT_FILE
-    echo "$OPTION=\"max_byte_for_level_base=128m\"" >> $OUTPUT_FILE
-    echo "$OPTION=\"max_byte_for_level_base=256m\"" >> $OUTPUT_FILE
-    echo "$OPTION=\"max_byte_for_level_base=512m\"" >> $OUTPUT_FILE
+    echo "$OPTION=\"target_file_size_base=32m\"" >> $OUTPUT_FILE
+    echo "$OPTION=\"target_file_size_base=128m\"" >> $OUTPUT_FILE
+    echo "$OPTION=\"target_file_size_base=256m\"" >> $OUTPUT_FILE
+    echo "$OPTION=\"max_bytes_for_level_base=32m\"" >> $OUTPUT_FILE
+    echo "$OPTION=\"max_bytes_for_level_base=128m\"" >> $OUTPUT_FILE
+    echo "$OPTION=\"max_bytes_for_level_base=256m\"" >> $OUTPUT_FILE
+    echo "$OPTION=\"max_bytes_for_level_base=512m\"" >> $OUTPUT_FILE
     echo "$OPTION=\"max_write_buffer_number=4\"" >> $OUTPUT_FILE
     echo "$OPTION=\"max_write_buffer_number=3\"" >> $OUTPUT_FILE
     echo "$OPTION=\"max_write_buffer_number=2\"" >> $OUTPUT_FILE
@@ -137,6 +170,11 @@ while read line; do
     echo "$OPTION=OFF" >> $OUTPUT_FILE
     echo "$OPTION=PK_SK" >> $OUTPUT_FILE
     echo "$OPTION=PK_ONLY" >> $OUTPUT_FILE
+  elif [[ "$OPTION" == "--loose-rocksdb_file_checksums" ]]; then
+    echoit " > Adding possible values CHECKSUMS_OFF, CHECKSUMS_WRITE_ONLY, CHECKSUMS_WRITE_AND_VERIFY for option '${OPTION}' to the final list..."
+    echo "$OPTION=CHECKSUMS_OFF" >> $OUTPUT_FILE
+    echo "$OPTION=CHECKSUMS_WRITE_ONLY" >> $OUTPUT_FILE
+    echo "$OPTION=CHECKSUMS_WRITE_AND_VERIFY" >> $OUTPUT_FILE
   elif [ "$OPTION" == "--loose-rocksdb_validate_tables" -o "$OPTION" == "--loose-rocksdb_flush_log_at_trx_commit" ]; then
     echoit " > Adding possible values 0, 1, 2 for option '${OPTION}' to the final list..."
     echo "$OPTION=0" >> $OUTPUT_FILE
@@ -181,19 +219,24 @@ while read line; do
     echo "$OPTION=OFF" >> $OUTPUT_FILE
   elif [[ "$VALUE" =~ ^-?[0-9]+$ ]]; then
     echoit "  > Adding int values ( $VALUE, 0, 1, -1, 2, 12, 24, 254, 1023, 2047, 2147483647, 1125899906842624, 18446744073709551615 ) for option '${OPTION}' to the final list..."
-    echo "$OPTION=$VALUE" >> $OUTPUT_FILE
-    echo "$OPTION=0" >> $OUTPUT_FILE
-    echo "$OPTION=1" >> $OUTPUT_FILE
-    echo "$OPTION=-1" >> $OUTPUT_FILE
-    echo "$OPTION=2" >> $OUTPUT_FILE
-    echo "$OPTION=12" >> $OUTPUT_FILE
-    echo "$OPTION=24" >> $OUTPUT_FILE
-    echo "$OPTION=254" >> $OUTPUT_FILE
-    echo "$OPTION=1023" >> $OUTPUT_FILE
-    echo "$OPTION=2047" >> $OUTPUT_FILE
-    echo "$OPTION=2147483647" >> $OUTPUT_FILE
-    echo "$OPTION=1844674407" >> $OUTPUT_FILE
-    echo "$OPTION=1125899906" >> $OUTPUT_FILE
+    fix_min_value
+    echo "$OPTION=$MIN_VALUE" >> $OUTPUT_FILE
+    echo "$OPTION=$MAX_VALUE" >> $OUTPUT_FILE
+    # uncomment to add default values (if different from MIN_VALUE and MAX_VALUE):
+    # DEFAULT_VALUE=$MIN_VALUE; check_range $VALUE
+    DEFAULT_VALUE=$VALUE
+    check_range 0
+    check_range 1
+    check_range -1
+    check_range 2
+    check_range 12
+    check_range 24
+    check_range 254
+    check_range 1023
+    check_range 2047
+    check_range 2147483647
+    check_range 1125899906842624
+    check_range 18446744073709551615
   elif [ "${VALUE}" == "" ]; then
     echoit "  > Assert: Option '${OPTION}' is blank by default and not programmed into the script yet, please cover this in the script..."
     exit 1
@@ -205,3 +248,4 @@ done < $TEMP_FILE
 
 rm -rf $TEMP_FILE
 echo "Done! Output file: ${OUTPUT_FILE}"
+killall -9 $MYSQLD_BIN
