@@ -1020,8 +1020,11 @@ template <typename Writer> void Table::Serialize(Writer &writer) const {
     }
   } else if (type == FK) {
     auto fk_table = static_cast<const FK_table *>(this);
+    std::string parent = fk_table->parent->name_;
     std::string on_update = fk_table->enumToString(fk_table->on_update);
     std::string on_delete = fk_table->enumToString(fk_table->on_delete);
+    writer.String("parent");
+    writer.String(parent.c_str(), static_cast<SizeType>(parent.length()));
     writer.String("on_update");
     writer.String(on_update.c_str(), static_cast<SizeType>(on_update.length()));
     writer.String("on_delete");
@@ -3360,7 +3363,15 @@ static std::string load_metadata_from_file() {
     } else if (table_type == "FK") {
       std::string on_update = tab["on_update"].GetString();
       std::string on_delete = tab["on_delete"].GetString();
+      std::string parent_name = tab["parent"].GetString();
+
       table = new FK_table(name, on_update, on_delete);
+      for (auto &tbl : *all_tables) {
+        if (tbl->name_ == parent_name) {
+            static_cast<FK_table *>(table)->parent = tbl;
+            break;
+        }
+      }
     } else
       throw std::runtime_error("Unhandle Table type " + table_type);
 
