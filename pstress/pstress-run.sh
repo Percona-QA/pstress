@@ -496,12 +496,12 @@ fi
 
 # Find mysqld binary
 if [ -r ${BASEDIR}/bin/mysqld ]; then
-  BIN=${BASEDIR}/bin/mysqld
+  MYSQLD_BIN=${BASEDIR}/bin/mysqld
 else
   # Check if this is a debug build by checking if debug string is present in dirname
   if [[ "$BASEDIR" == *debug* || "$BASEDIR" == *-deb-* ]]; then
     if [ -r ${BASEDIR}/bin/mysqld-debug ]; then
-      BIN=${BASEDIR}/bin/mysqld-debug
+      MYSQLD_BIN=${BASEDIR}/bin/mysqld-debug
     else
       echoit "Assert: there is no (script readable) mysqld binary at ${BASEDIR}/bin/mysqld[-debug] ?"
       exit 1
@@ -513,7 +513,7 @@ else
 fi
 
 #Store MySQL version string
-MYSQL_VERSION=$(${BASEDIR}/bin/mysqld --version 2>&1 | grep -oP 'Ver \K[0-9]+\.[0-9]+\.[0-9]+')
+MYSQL_VERSION=$(${MYSQLD_BIN} --version 2>&1 | grep -oP 'Ver \K[0-9]+\.[0-9]+\.[0-9]+')
 
 if [ "${CONFIGURATION_FILE}" == "pstress-run-PXC80.conf" -o "${CONFIGURATION_FILE}" == "pstress-run-PXC57.conf" ]; then PXC=1; fi
 if [ "$(whoami)" == "root" ]; then MYEXTRA="--user=root ${MYEXTRA}"; fi
@@ -699,9 +699,9 @@ pxc_startup(){
   SOCKET2=${RUNDIR}/${TRIAL}/node2/node2_socket.sock
   SOCKET3=${RUNDIR}/${TRIAL}/node3/node3_socket.sock
   if check_for_version $MYSQL_VERSION "5.7.0" ; then
-    MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure --basedir=${BASEDIR}"
+    MID="${MYSQLD_BIN} --no-defaults --initialize-insecure --basedir=${BASEDIR}"
   else
-    MID="${BASEDIR}/bin/mysqld --no-defaults --basedir=${BASEDIR}"
+    MID="${MYSQLD_BIN} --no-defaults --basedir=${BASEDIR}"
   fi
 
   if [ "$IS_STARTUP" != "startup" ]; then
@@ -811,25 +811,25 @@ pxc_startup(){
 
   get_error_socket_file 1
   if [ $RR_MODE -eq 1 ]; then
-    rr ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
-    ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   fi
   pxc_startup_status 1
 
   get_error_socket_file 2
   if [ $RR_MODE -eq 1 ]; then
-    rr ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
-    ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   fi
   pxc_startup_status 2
 
   get_error_socket_file 3
   if [ $RR_MODE -eq 1 ]; then
-    rr ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
-    ${BASEDIR}/bin/mysqld --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   fi
   pxc_startup_status 3
   
@@ -858,7 +858,7 @@ gr_startup(){
   SUSER=root
   SPASS=
 
-  MID="${BASEDIR}/bin/mysqld --no-defaults --initialize-insecure --basedir=${BASEDIR}"
+  MID="${MYSQLD_BIN} --no-defaults --initialize-insecure --basedir=${BASEDIR}"
   if [ "$1" == "startup" ]; then
     if [ ${GRP_RPL_CLUSTER_RUN} -eq 1 ]; then
       MYEXTRA="$MYEXTRA --plugin-load=group_replication.so --group_replication_single_primary_mode=OFF"
@@ -1019,20 +1019,20 @@ fi
   get_error_socket_file 1
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
     if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
       echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
-     ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
+     ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
   fi
   gr_startup_status 1
@@ -1061,20 +1061,20 @@ fi
 
   if [ "${ENCRYPTION_RUN}" == "1" ]; then
     if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
       echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
-    ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
+    ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
     --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA > $ERR_FILE 2>&1 &
   fi
 
@@ -1103,20 +1103,20 @@ fi
 
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
     if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1  ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
-      ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
+      ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
       --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
       echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
-    ${BASEDIR}/bin/mysqld --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
+    ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
     --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA > $ERR_FILE 2>&1 &
   fi
 
@@ -1243,15 +1243,15 @@ pstress_test(){
     rm -f ${PID_FILE}
     if [ ${ENCRYPTION_RUN} -eq 1 ]; then
       if [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
-        CMD="${BIN} ${MYEXTRA} ${VAULT_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+        CMD="${MYSQLD_BIN} ${MYEXTRA} ${VAULT_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
-        CMD="${BIN} ${MYEXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+        CMD="${MYSQLD_BIN} ${MYEXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       elif [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-        CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+        CMD="${MYSQLD_BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       else
@@ -1259,7 +1259,7 @@ pstress_test(){
         exit 1
       fi
     else
-      CMD="${BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+      CMD="${MYSQLD_BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
         --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
@@ -1319,7 +1319,7 @@ pstress_test(){
       # Check if mysqld is alive and if so, set ISSTARTED=1 so pstress will run
       if ${BASEDIR}/bin/mysqladmin -uroot -S${SOCKET} ping > /dev/null 2>&1; then
         ISSTARTED=1
-        echoit "Server started ok. Client: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET}"
+        echoit "Server started ok. Client: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET}"
         ${BASEDIR}/bin/mysql -uroot -S${SOCKET} -e "CREATE DATABASE IF NOT EXISTS test;" > /dev/null 2>&1
         break;
       fi
@@ -1444,9 +1444,9 @@ pstress_test(){
       if [ ${CLUSTER_UP} -eq 6 ]; then
         ISSTARTED=1
         echoit "3 Node PXC Cluster started ok. Clients:"
-        echoit "Node #1: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET1}"
-        echoit "Node #2: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET2}"
-        echoit "Node #3: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET3}"
+        echoit "Node #1: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET1}"
+        echoit "Node #2: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET2}"
+        echoit "Node #3: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET3}"
         break
       fi
     done
@@ -1501,9 +1501,9 @@ EOF
       if [ ${CLUSTER_UP} -eq 3 ]; then
         ISSTARTED=1
         echoit "3 Node Group Replication Cluster started ok. Clients:"
-        echoit "Node #1: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET1}"
-        echoit "Node #2: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET2}"
-        echoit "Node #3: `echo ${BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET3}"
+        echoit "Node #1: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET1}"
+        echoit "Node #2: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET2}"
+        echoit "Node #3: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET3}"
 	break
       fi
       if [ $X -eq 3 ]; then
@@ -1847,8 +1847,8 @@ if [ -r ${BASEDIR}/scripts/mysql_install_db ]; then MID="${BASEDIR}/scripts/mysq
 if [ -r ${BASEDIR}/bin/mysql_install_db ]; then MID="${BASEDIR}/bin/mysql_install_db"; fi
 START_OPT="--core-file"  # Compatible with 5.6,5.7,8.0
 INIT_OPT="--no-defaults --initialize-insecure ${MYINIT}"  # Compatible with 5.7,8.0 (mysqld init)
-INIT_TOOL="${BIN}"  # Compatible with 5.7,8.0 (mysqld init), changed to MID later if version <=5.6
-VERSION_INFO=$(${BIN} --version | grep -oe '[58]\.[01567]' | head -n1)
+INIT_TOOL="${MYSQLD_BIN}"  # Compatible with 5.7,8.0 (mysqld init), changed to MID later if version <=5.6
+VERSION_INFO=$(${MYSQLD_BIN} --version | grep -oe '[58]\.[01567]' | head -n1)
 
 if [ "${VERSION_INFO}" == "5.7" ]; then
   # Keyring components are not supported in PS-5.7 and PXC-5.7, hence disabling it.
