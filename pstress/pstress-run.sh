@@ -70,7 +70,11 @@ if [ ! -r ${PSTRESS_BIN} ]; then echo "${PSTRESS_BIN} specified in the configura
 if [ ! -r ${OPTIONS_INFILE} ]; then echo "${OPTIONS_INFILE} specified in the configuration file used (${SCRIPT_PWD}/${CONFIGURATION_FILE}) cannot be found/read"; exit 1; fi
 
 # Try and raise ulimit for user processes (see setup_server.sh for how to set correct soft/hard nproc settings in limits.conf)
-ulimit -u 7000
+current_limit=$(ulimit -u)
+if [ "$current_limit" -lt 7000 ]; then
+  echo "Current ulimit -u is $current_limit, raising to 7000"
+  ulimit -u 7000
+fi
 
 #Format version string (thanks to wsrep_sst_xtrabackup-v2) 
 normalize_version(){
