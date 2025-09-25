@@ -110,7 +110,7 @@ sed -i 's/rows:[0-9]*//g' $OUTPUT_FILENAME
 crashQuery=$(awk '/Error Lost connection to MySQL server during query/{print prev} {prev=$0}' $LOG_FILENAME | head -n1 | sed 's/.* F //')
 
 # Append the crashing query at the end of output file
-echo $crashQuery >> $OUTPUT_FILENAME
+echo "$crashQuery" >> $OUTPUT_FILENAME
 
 # Adding semi-colon at the end of each SQL statement. In case, semi-colon
 # already exists, then do not add twice
