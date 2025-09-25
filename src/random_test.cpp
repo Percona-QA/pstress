@@ -1907,7 +1907,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
   }
   thd->performed_queries_total++;
 
-  if (res == 1) { // query failed
+  if (res != 0) { // query failed
     thd->failed_queries_total++;
     thd->max_con_fail_count++;
     if (log_all || log_failed) {
@@ -1916,7 +1916,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
     }
     if (mysql_errno(thd->conn) == CR_SERVER_GONE_ERROR ||
         mysql_errno(thd->conn) == CR_SERVER_LOST) {
-      thd->thread_log << "server gone, while processing " + sql;
+      thd->thread_log << "server gone, while processing " + sql << std::endl;
       run_query_failed = true;
     }
   } else {
