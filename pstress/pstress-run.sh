@@ -1216,6 +1216,7 @@ pstress_test(){
       done
       echoit "ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's MYEXTRA..."
       MYEXTRA="${MYEXTRA} ${OPTIONS_TO_ADD}"
+      echo -e "${MYEXTRA}\n" > ${RUNDIR}/${TRIAL}/MYEXTRA
     fi
     if [ "${ADD_RANDOM_ROCKSDB_OPTIONS}" == "" ]; then  # Backwards compatibility for .conf files without this option
       ADD_RANDOM_ROCKSDB_OPTIONS=0
@@ -1226,7 +1227,7 @@ pstress_test(){
       OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
         OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${ROCKSDB_OPTIONS_INFILE} | head -n1)"
-	if [ ${#OPTION_NAME[@]} -eq 0 ]; then
+        if [ ${#OPTION_NAME[@]} -eq 0 ]; then
           OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
           OPTION_NAME+=(${OPTION_TO_ADD%=*})
         elif [[ ! ${OPTION_NAME[@]} =~ ${OPTION_TO_ADD%=*} ]]; then
@@ -1236,6 +1237,7 @@ pstress_test(){
       done
       echoit "ADD_RANDOM_ROCKSDB_OPTIONS=1: adding RocksDB mysqld option(s) ${OPTIONS_TO_ADD} to this run's MYEXTRA..."
       MYEXTRA="${MYEXTRA} ${OPTIONS_TO_ADD}"
+      echo -e "${MYEXTRA}\n" > ${RUNDIR}/${TRIAL}/MYEXTRA
     fi
     echo "${MYEXTRA}" | if grep -qi "innodb[_-]log[_-]checksum[_-]algorithm"; then
       # Ensure that mysqld server startup will not fail due to a mismatched checksum algo between the original MID and the changed MYEXTRA options
