@@ -13,6 +13,7 @@ BASEDIR=${BASEDIR:-$1}
 
 # User variables
 OUTPUT_PATH=${OUTPUT_PATH:-/tmp/gen_rocksdb_options}
+OUTPUT_PATH=$(realpath "$OUTPUT_PATH")
 OUTPUT_FILE=${OUTPUT_PATH}/rocksdb_options_80.txt
 
 # Internal variables, do not change
@@ -72,7 +73,20 @@ $BASEDIR/bin/mysql --no-defaults -S$SOCKET -uroot -e "
 sed -i 1d $TEMP_FILE
 
 # List of rocksdb variables which must not be changed.
-EXCLUDED_LIST=( rocksdb_no_block_cache rocksdb_create_if_missing rocksdb_write_batch_max_bytes rocksdb_disable_instant_ddl rocksdb_column_default_value_as_expression rocksdb_cancel_manual_compactions rocksdb_alter_table_comment_inplace rocksdb_io_error_action rocksdb_invalid_create_option_action rocksdb_corrupt_data_action rocksdb_fs_uri rocksdb_compact_cf rocksdb_info_log_level rocksdb_update_cf_options rocksdb_delete_cf rocksdb_override_cf_options rocksdb_create_checkpoint rocksdb_create_temporary_checkpoint rocksdb_fault_injection_options rocksdb_read_free_rpl_tables rocksdb_persistent_cache_path rocksdb_strict_collation_exceptions rocksdb_tmpdir rocksdb_trace_block_cache_access rocksdb_trace_queries rocksdb_wal_dir rocksdb_wsenv_path rocksdb_datadir )
+EXCLUDED_LIST=(
+  rocksdb_protection_bytes_per_key  # WriteBatch::WriteBatch(size_t, size_t, size_t, size_t): Assertion `protection_bytes_per_key == 0 || protection_bytes_per_key == 8' failed.
+  rocksdb_no_block_cache            # Status Code: 4, Status: Invalid argument: Enable cache_index_and_filter_blocks, , but block cache is disabled'
+  rocksdb_create_if_missing         # Status Code: 4, Status: Invalid argument: ./.rocksdb/CURRENT: does not exist (create_if_missing is false)
+  rocksdb_write_batch_max_bytes     # ERROR HY000: Status error 10 received from RocksDB: Operation aborted: Memory limit reached.
+  rocksdb_fs_uri                    # Custom filesystem URI
+  rocksdb_cancel_manual_compactions # just a trigger
+  rocksdb_disable_instant_ddl
+  rocksdb_io_error_action
+  rocksdb_corrupt_data_action
+  rocksdb_invalid_create_option_action
+  rocksdb_alter_table_comment_inplace
+  rocksdb_column_default_value_as_expression
+  rocksdb_compact_cf rocksdb_info_log_level rocksdb_update_cf_options rocksdb_delete_cf rocksdb_override_cf_options rocksdb_create_checkpoint rocksdb_create_temporary_checkpoint rocksdb_fault_injection_options rocksdb_read_free_rpl_tables rocksdb_persistent_cache_path rocksdb_strict_collation_exceptions rocksdb_tmpdir rocksdb_trace_block_cache_access rocksdb_trace_queries rocksdb_wal_dir rocksdb_wsenv_path rocksdb_datadir )
 
 # Create an output file which contains all the options/values
 rm -rf $OUTPUT_FILE
