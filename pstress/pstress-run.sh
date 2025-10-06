@@ -481,7 +481,7 @@ EOF
 }
 
 # Incase, user starts pstress in RR mode, check if RR is installed on the machine
-if [ $RR_MODE -eq 1 ]; then
+if [ $RR_MODE -ge 1 ]; then
   echoit "Running pstress in RR mode. It is expected that pstress executions will be slower"
   if [[ ! -e `which rr` ]];then
     echo "rr package is not installed. Exiting"
@@ -814,7 +814,7 @@ pxc_startup(){
   sed -i "2i wsrep_cluster_address=gcomm://${PXC_LADDRS[1]},${PXC_LADDRS[2]},${PXC_LADDRS[3]}" ${DATADIR}/n3.cnf
 
   get_error_socket_file 1
-  if [ $RR_MODE -eq 1 ]; then
+  if [ $RR_MODE -ge 1 ]; then
     rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
     ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
@@ -822,7 +822,7 @@ pxc_startup(){
   pxc_startup_status 1
 
   get_error_socket_file 2
-  if [ $RR_MODE -eq 1 ]; then
+  if [ $RR_MODE -ge 1 ]; then
     rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
     ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
@@ -830,7 +830,7 @@ pxc_startup(){
   pxc_startup_status 2
 
   get_error_socket_file 3
-  if [ $RR_MODE -eq 1 ]; then
+  if [ $RR_MODE -ge 1 ]; then
     rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
     ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
@@ -1267,8 +1267,14 @@ pstress_test(){
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
 
-    if [ $RR_MODE -eq 1 ]; then
-      CMD="${INLINE_ENV_VARS} rr $CMD"
+    if [ $RR_MODE -ge 1 ]; then
+      if [ $RR_MODE -eq 2 ]; then
+        RR_TRACE_DIR=${RUNDIR}/${TRIAL}/rr_data
+        mkdir -p ${RR_TRACE_DIR}
+        CMD="env ${INLINE_ENV_VARS} _RR_TRACE_DIR=${RR_TRACE_DIR} rr $CMD"
+      else
+        CMD="${INLINE_ENV_VARS} rr $CMD"
+      fi
     else
       CMD="${INLINE_ENV_VARS} $CMD"
     fi
