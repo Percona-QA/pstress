@@ -74,13 +74,17 @@ sed -i 1d $TEMP_FILE
 
 # List of rocksdb variables which must not be changed.
 EXCLUDED_LIST=(
+  rocksdb_enable_pipelined_write    # with rocksdb_two_write_queues=OFF: MemTableInserter::MarkCommit(const rocksdb::Slice&): Assertion `!write_after_commit_ || log_number_ref_ > 0' failed.
+  rocksdb_write_policy              # Status: Not implemented: WriteCommitted txn tag when write_before_prepare_ is enabled (in WriteUnprepared mode). If it is not due to corruption, the WAL must be emptied before changing the WritePolicy.
+                                    # Status: Not implemented: WriteCommitted txn tag when write_after_commit_ is disabled (in WritePrepared/WriteUnprepared mode). If it is not due to corruption, the WAL must be emptied before changing the WritePolicy.'
+  rocksdb_error_if_exists           # Status: Invalid argument: ./.rocksdb: exists (error_if_exists is true)
   rocksdb_protection_bytes_per_key  # WriteBatch::WriteBatch(size_t, size_t, size_t, size_t): Assertion `protection_bytes_per_key == 0 || protection_bytes_per_key == 8' failed.
   rocksdb_no_block_cache            # Status Code: 4, Status: Invalid argument: Enable cache_index_and_filter_blocks, , but block cache is disabled'
   rocksdb_create_if_missing         # Status Code: 4, Status: Invalid argument: ./.rocksdb/CURRENT: does not exist (create_if_missing is false)
   rocksdb_write_batch_max_bytes     # ERROR HY000: Status error 10 received from RocksDB: Operation aborted: Memory limit reached.
   rocksdb_fs_uri                    # Custom filesystem URI
   rocksdb_cancel_manual_compactions # just a trigger
-  rocksdb_disable_instant_ddl
+  rocksdb_disable_instant_ddl       # deprecated
   rocksdb_io_error_action
   rocksdb_corrupt_data_action
   rocksdb_invalid_create_option_action
@@ -123,13 +127,31 @@ while read line; do
   fi
   if [[ " ${EXCLUDED_LIST[@]} " =~ " ${COMMAND} " ]]; then
     echoit "Option '$OPTION' is logically excluded from being handled by this script..."
-  elif [[  "$COMMAND" == "rocksdb_persistent_cache_size_mb" ]]; then
+  elif [[ "$COMMAND" == "rocksdb_rate_limiter_bytes_per_sec" ]]; then
     echoit " > Adding possible values for option '${OPTION}' to the final list..."
-    echo "$OPTION=100 --loose-rocksdb_persistent_cache_path=." >> $OUTPUT_FILE
-    echo "$OPTION=254 --loose-rocksdb_persistent_cache_path=." >> $OUTPUT_FILE
-    echo "$OPTION=1023 --loose-rocksdb_persistent_cache_path=." >> $OUTPUT_FILE
-    echo "$OPTION=2047 --loose-rocksdb_persistent_cache_path=." >> $OUTPUT_FILE
-    echo "$OPTION=4096 --loose-rocksdb_persistent_cache_path=." >> $OUTPUT_FILE
+    for value in 0 4k 256k 16m 1g 64g; do
+        echo "$OPTION=$value" >> "$OUTPUT_FILE"
+    done
+  elif [[ "$COMMAND" == "rocksdb_merge_buf_size" ]]; then
+    echoit " > Adding possible values for option '${OPTION}' to the final list..."
+    for value in 4k 16k 64k 256k 1m 4m 16m 64m 256m 1g; do
+        echo "$OPTION=$value" >> "$OUTPUT_FILE"
+    done
+  elif [[ "$COMMAND" == "rocksdb_manifest_preallocation_size" ]]; then
+    echoit " > Adding possible values for option '${OPTION}' to the final list..."
+    for value in 0 4k 32k 256k 2m 16m 128m 1g; do
+        echo "$OPTION=$value" >> "$OUTPUT_FILE"
+    done
+  elif [[ "$COMMAND" == "rocksdb_max_total_wal_size" ]]; then
+    echoit " > Adding possible values for option '${OPTION}' to the final list..."
+    for value in 0 4k 32k 256k 2m 16m 128m 1g 8g 64g; do
+        echo "$OPTION=$value" >> "$OUTPUT_FILE"
+    done
+  elif [[ "$COMMAND" == "rocksdb_persistent_cache_size_mb" ]]; then
+    echoit " > Adding possible values for option '${OPTION}' to the final list..."
+    for value in 100 254 1023 2047 4096; do
+        echo "$OPTION=$value --loose-rocksdb_persistent_cache_path=." >> "$OUTPUT_FILE"
+    done
   elif [[ "$COMMAND" == "rocksdb_access_hint_on_compaction_start" ]]; then
     echoit " > Adding possible values NONE, NORMAL, SEQUENTIAL, WILLNEED for option '${OPTION}' to the final list..."
     echo "$OPTION=NONE" >> $OUTPUT_FILE
@@ -140,11 +162,6 @@ while read line; do
     echoit " > Adding possible values kBinarySearch, kHashSearch for option '${OPTION}' to the final list..."
     echo "$OPTION=kBinarySearch" >> $OUTPUT_FILE
     echo "$OPTION=kHashSearch --loose-rocksdb_default_cf_options=prefix_extractor=capped:12" >> $OUTPUT_FILE
-  elif [[ "$COMMAND" == "rocksdb_write_policy" ]]; then
-    echoit " > Adding possible values write_committed, write_prepared, write_unprepared for option '${OPTION}' to the final list..."
-    echo "$OPTION=write_committed" >> $OUTPUT_FILE
-    echo "$OPTION=write_prepared" >> $OUTPUT_FILE
-    echo "$OPTION=write_unprepared" >> $OUTPUT_FILE
   elif [[ "$COMMAND" == "rocksdb_manual_compaction_bottommost_level" ]]; then
     echoit " > Adding possible values kSkip, kIfHaveCompactionFilter, kForce, kForceOptimized for option '${OPTION}' to the final list..."
     echo "$OPTION=kSkip" >> $OUTPUT_FILE
@@ -236,12 +253,6 @@ while read line; do
     echo "$OPTION=5000" >> $OUTPUT_FILE
     echo "$OPTION=1999999" >> $OUTPUT_FILE
     echo "$OPTION=2000000" >> $OUTPUT_FILE
-  elif [[ "$COMMAND" == "rocksdb_enable_pipelined_write" ]]; then
-    if [ "$VALUE" == "OFF" ]; then
-      echo "$OPTION=ON --loose-rocksdb_two_write_queues=OFF" >> $OUTPUT_FILE
-    else
-      echo "$OPTION=OFF --loose-rocksdb_two_write_queues=OFF" >> $OUTPUT_FILE
-    fi
   elif [[ "$COMMAND" == "rocksdb_write_disable_wal" || "$COMMAND" == "rocksdb_allow_mmap_writes" ]]; then
     if [ "$VALUE" == "OFF" ]; then
       echo "$OPTION=ON --loose-rocksdb_flush_log_at_trx_commit=0" >> $OUTPUT_FILE
