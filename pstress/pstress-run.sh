@@ -1171,15 +1171,12 @@ pstress_test(){
     fi
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       echoit "Copying datadir from Trial $WORKDIR/$((${TRIAL}-1)) into $WORKDIR/${TRIAL}..."
-    else
-      echoit "Copying datadir from template..."
-    fi
-    if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
       fi
     else
+      echoit "Copying datadir from template..."
       cp -R ${WORKDIR}/data.template/* ${RUNDIR}/${TRIAL}/data 2>&1
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         create_local_manifest component_keyring_file
@@ -1530,6 +1527,17 @@ EOF
       if [[ ${TRIAL} -eq 1 || $REINIT_DATADIR -eq 1 ]]; then
         ${BASEDIR}/bin/ps-admin --enable-rocksdb -uroot -S${SOCKET}
       fi
+
+      # Check if RocksDB plugin is active
+      ACTIVE_COUNT=$(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -Nse \
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='rocksdb' AND PLUGIN_STATUS='ACTIVE';")
+
+      if [ "${ACTIVE_COUNT}" -gt 0 ]; then
+        echoit "RocksDB is active."
+      else
+        echoit "RocksDB is NOT active."
+        REINIT_DATADIR=1
+      fi
     fi
 
     if [[ ${TRIAL} -eq 1 || $REINIT_DATADIR -eq 1 ]]; then
@@ -1575,7 +1583,7 @@ EOF
    else
       CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL}/ --user=root --socket=${SOCKET1} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     fi
-    if [ $REINIT_DATADIR -eq 1 ]; then
+    if [ "$REINIT_DATADIR" -eq 1 ] && [ "$ENGINE" != "RocksDB" ]; then
       CMD="$CMD --prepare"
       REINIT_DATADIR=0
     fi
