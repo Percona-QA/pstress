@@ -815,25 +815,25 @@ pxc_startup(){
 
   get_error_socket_file 1
   if [ $RR_MODE -ge 1 ]; then
-    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $PS_EXTRA $PXC_EXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
-    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
+    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n1.cnf $STARTUP_OPTION $PS_EXTRA $PXC_EXTRA --wsrep-new-cluster > ${ERR_FILE} 2>&1 &
   fi
   pxc_startup_status 1
 
   get_error_socket_file 2
   if [ $RR_MODE -ge 1 ]; then
-    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $PS_EXTRA $PXC_EXTRA > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
-    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n2.cnf $STARTUP_OPTION $PS_EXTRA $PXC_EXTRA > ${ERR_FILE} 2>&1 &
   fi
   pxc_startup_status 2
 
   get_error_socket_file 3
   if [ $RR_MODE -ge 1 ]; then
-    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    rr ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $PS_EXTRA $PXC_EXTRA > ${ERR_FILE} 2>&1 &
   elif [ $RR_MODE -eq 0 ]; then
-    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $MYEXTRA $PXC_MYEXTRA > ${ERR_FILE} 2>&1 &
+    ${MYSQLD_BIN} --defaults-file=${DATADIR}/n3.cnf $STARTUP_OPTION $PS_EXTRA $PXC_EXTRA > ${ERR_FILE} 2>&1 &
   fi
   pxc_startup_status 3
   
@@ -865,9 +865,9 @@ gr_startup(){
   MID="${MYSQLD_BIN} --no-defaults --initialize-insecure --basedir=${BASEDIR}"
   if [ "$1" == "startup" ]; then
     if [ ${GRP_RPL_CLUSTER_RUN} -eq 1 ]; then
-      MYEXTRA="$MYEXTRA --plugin-load=group_replication.so --group_replication_single_primary_mode=OFF"
+      PS_EXTRA="${PS_EXTRA} --plugin-load=group_replication.so --group_replication_single_primary_mode=OFF"
     else
-      MYEXTRA="$MYEXTRA --plugin-load=group_replication.so"
+      PS_EXTRA="${PS_EXTRA} --plugin-load=group_replication.so"
     fi
   fi
   if [ "$1" == "startup" ]; then
@@ -1024,20 +1024,20 @@ fi
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
     if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $PS_EXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $PS_EXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $PS_EXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
       echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
      ${MYSQLD_BIN} --defaults-file=$DATADIR_1/n1.cnf --basedir=${BASEDIR} --datadir=$DATADIR_1 \
-     --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $MYEXTRA > $ERR_FILE 2>&1 &
+     --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE1 $PS_EXTRA > $ERR_FILE 2>&1 &
   fi
   gr_startup_status 1
 
@@ -1066,20 +1066,20 @@ fi
   if [ "${ENCRYPTION_RUN}" == "1" ]; then
     if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $PS_EXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $PS_EXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $PS_EXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
       echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
     ${MYSQLD_BIN} --defaults-file=$DATADIR_2/n2.cnf --basedir=${BASEDIR} --datadir=$DATADIR_2 \
-    --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $MYEXTRA > $ERR_FILE 2>&1 &
+    --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE2 $PS_EXTRA > $ERR_FILE 2>&1 &
   fi
 
   gr_startup_status 2
@@ -1108,20 +1108,20 @@ fi
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
     if [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $PS_EXTRA > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_FILE} -eq 1  ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $PS_EXTRA ${KEYRING_PARAM} > $ERR_FILE 2>&1 &
     elif [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
       ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
-      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
+      --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $PS_EXTRA ${VAULT_PARAM} > $ERR_FILE 2>&1 &
     else
       echoit "ERROR: Atleast one encryption type must be enabled or else set ENCRYPTION_RUN=0 to continue"
       exit 1
     fi
   else
     ${MYSQLD_BIN} --defaults-file=$DATADIR_3/n3.cnf --basedir=${BASEDIR} --datadir=$DATADIR_3 \
-    --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $MYEXTRA > $ERR_FILE 2>&1 &
+    --core-file --log-error=$ERR_FILE --socket=$SOCKET --port=$RBASE3 $PS_EXTRA > $ERR_FILE 2>&1 &
   fi
 
   gr_startup_status 3
@@ -1163,6 +1163,7 @@ pstress_test(){
   rm -Rf ${RUNDIR}/*
   echoit "Generating new trial workdir ${RUNDIR}/${TRIAL}..."
   ISSTARTED=0
+  PS_EXTRA="${MYEXTRA}"
   if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
     if check_for_version $MYSQL_VERSION "8.0.0" ; then
       mkdir -p ${RUNDIR}/${TRIAL}/data ${RUNDIR}/${TRIAL}/tmp ${RUNDIR}/${TRIAL}/log  # Cannot create /data/test, /data/mysql in 8.0
@@ -1190,14 +1191,12 @@ pstress_test(){
       fi
     fi
     if [ "${COMPONENT_NAME:-}" == "component_js_lang" ]; then
-      MYEXTRA="--log_bin_trust_function_creators=ON" # Required for the stored functions or procedures created using DEFINER clause
-    else
-      MYEXTRA=
+      PS_EXTRA="${PS_EXTRA} --log_bin_trust_function_creators=ON" # Required for the stored functions or procedures created using DEFINER clause
     fi
     if [ "${ADD_RANDOM_OPTIONS}" == "" ]; then  # Backwards compatibility for .conf files without this option
        ADD_RANDOM_OPTIONS=0
     fi
-    if [ ${ADD_RANDOM_OPTIONS} -eq 1 ]; then  # Add random mysqld --options to MYEXTRA
+    if [ ${ADD_RANDOM_OPTIONS} -eq 1 ]; then  # Add random mysqld --options to PS_EXTRA
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
       OPTION_NAME=()
@@ -1211,14 +1210,14 @@ pstress_test(){
           OPTION_NAME+=(${OPTION_TO_ADD%=*})
         fi
       done
-      echoit "ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's MYEXTRA..."
-      MYEXTRA="${MYEXTRA} ${OPTIONS_TO_ADD}"
-      echo -e "${MYEXTRA}\n" > ${RUNDIR}/${TRIAL}/MYEXTRA
+      echoit "ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's PS_EXTRA..."
+      PS_EXTRA="${PS_EXTRA} ${OPTIONS_TO_ADD}"
+      echo -e "${PS_EXTRA}\n" > ${RUNDIR}/${TRIAL}/MYEXTRA
     fi
     if [ "${ADD_RANDOM_ROCKSDB_OPTIONS}" == "" ]; then  # Backwards compatibility for .conf files without this option
       ADD_RANDOM_ROCKSDB_OPTIONS=0
     fi
-    if [ ${ADD_RANDOM_ROCKSDB_OPTIONS} -eq 1 ]; then  # Add random rocksdb --options to MYEXTRA
+    if [ ${ADD_RANDOM_ROCKSDB_OPTIONS} -eq 1 ]; then  # Add random rocksdb --options to PS_EXTRA
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
       OPTION_NAME=()
@@ -1232,12 +1231,12 @@ pstress_test(){
           OPTION_NAME+=(${OPTION_TO_ADD%=*})
         fi
       done
-      echoit "ADD_RANDOM_ROCKSDB_OPTIONS=1: adding RocksDB mysqld option(s) ${OPTIONS_TO_ADD} to this run's MYEXTRA..."
-      MYEXTRA="${MYEXTRA} ${OPTIONS_TO_ADD}"
-      echo -e "${MYEXTRA}\n" > ${RUNDIR}/${TRIAL}/MYEXTRA
+      echoit "ADD_RANDOM_ROCKSDB_OPTIONS=1: adding RocksDB mysqld option(s) ${OPTIONS_TO_ADD} to this run's PS_EXTRA..."
+      PS_EXTRA="${PS_EXTRA} ${OPTIONS_TO_ADD}"
+      echo -e "${PS_EXTRA}\n" > ${RUNDIR}/${TRIAL}/MYEXTRA
     fi
-    echo "${MYEXTRA}" | if grep -qi "innodb[_-]log[_-]checksum[_-]algorithm"; then
-      # Ensure that mysqld server startup will not fail due to a mismatched checksum algo between the original MID and the changed MYEXTRA options
+    echo "${PS_EXTRA}" | if grep -qi "innodb[_-]log[_-]checksum[_-]algorithm"; then
+      # Ensure that mysqld server startup will not fail due to a mismatched checksum algo between the original MID and the changed PS_EXTRA options
       rm ${RUNDIR}/${TRIAL}/data/ib_log*
     fi
     PORT=$[50000 + ( $RANDOM % ( 9999 ) ) ]
@@ -1246,15 +1245,15 @@ pstress_test(){
     rm -f ${PID_FILE}
     if [ ${ENCRYPTION_RUN} -eq 1 ]; then
       if [ ${PLUGIN_KEYRING_VAULT} -eq 1 ]; then
-        CMD="${MYSQLD_BIN} ${MYEXTRA} ${VAULT_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+        CMD="${MYSQLD_BIN} ${PS_EXTRA} ${VAULT_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       elif [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
-        CMD="${MYSQLD_BIN} ${MYEXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+        CMD="${MYSQLD_BIN} ${PS_EXTRA} ${KEYRING_PARAM} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       elif [ ${COMPONENT_KEYRING_FILE} -eq 1 -o ${COMPONENT_KEYRING_VAULT} -eq 1 -o ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-        CMD="${MYSQLD_BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+        CMD="${MYSQLD_BIN} ${PS_EXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
           --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
           --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
       else
@@ -1262,7 +1261,7 @@ pstress_test(){
         exit 1
       fi
     else
-      CMD="${MYSQLD_BIN} ${MYEXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
+      CMD="${MYSQLD_BIN} ${PS_EXTRA} --basedir=${BASEDIR} --datadir=${RUNDIR}/${TRIAL}/data \
         --tmpdir=${RUNDIR}/${TRIAL}/tmp --core-file --port=$PORT --pid_file=${PID_FILE} --socket=${SOCKET} \
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
@@ -1378,14 +1377,14 @@ pstress_test(){
       fi
     fi
 
-    PXC_MYEXTRA=
-    # === PXC Options Stage 1: Add random mysqld options to PXC_MYEXTRA
+    PXC_EXTRA=
+    # === PXC Options Stage 1: Add random mysqld options to PXC_EXTRA
     if [ ${PXC_ADD_RANDOM_OPTIONS} -eq 1 ]; then
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % PXC_MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
       OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
-	OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${PXC_OPTIONS_INFILE} | head -n1)"
+        OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${PXC_OPTIONS_INFILE} | head -n1)"
         if [ ${#OPTION_NAME[@]} -eq 0 ]; then
           OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
           OPTION_NAME+=(${OPTION_TO_ADD%=*})
@@ -1394,17 +1393,17 @@ pstress_test(){
           OPTION_NAME+=(${OPTION_TO_ADD%=*})
         fi
       done
-      echoit "PXC_ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's PXC_MYEXTRA..."
-      PXC_MYEXTRA="${OPTIONS_TO_ADD}"
+      echoit "PXC_ADD_RANDOM_OPTIONS=1: adding mysqld option(s) ${OPTIONS_TO_ADD} to this run's PXC_EXTRA..."
+      PXC_EXTRA="${OPTIONS_TO_ADD}"
     fi
-    # === PXC Options Stage 2: Add random wsrep mysqld options to PXC_MYEXTRA
+    # === PXC Options Stage 2: Add random wsrep mysqld options to PXC_EXTRA
     if [ ${PXC_WSREP_ADD_RANDOM_WSREP_MYSQLD_OPTIONS} -eq 1 ]; then
       OPTIONS_TO_ADD=
       NR_OF_OPTIONS_TO_ADD=$(( RANDOM % PXC_WSREP_MAX_NR_OF_RND_OPTS_TO_ADD + 1 ))
       OPTION_NAME=()
       for X in $(seq 1 ${NR_OF_OPTIONS_TO_ADD}); do
         OPTION_TO_ADD="$(shuf --random-source=/dev/urandom ${PXC_WSREP_OPTIONS_INFILE} | head -n1)"
-	if [ ${#OPTION_NAME[@]} -eq 0 ]; then
+        if [ ${#OPTION_NAME[@]} -eq 0 ]; then
           OPTIONS_TO_ADD="$OPTIONS_TO_ADD $OPTION_TO_ADD"
           OPTION_NAME+=(${OPTION_TO_ADD%=*})
         elif [[ ! ${OPTION_NAME[@]} =~ ${OPTION_TO_ADD%=*} ]]; then
@@ -1412,8 +1411,8 @@ pstress_test(){
           OPTION_NAME+=(${OPTION_TO_ADD%=*})
         fi
       done
-      echoit "PXC_WSREP_ADD_RANDOM_WSREP_MYSQLD_OPTIONS=1: adding wsrep provider mysqld option(s) ${OPTIONS_TO_ADD} to this run's PXC_MYEXTRA..."
-      PXC_MYEXTRA="${PXC_MYEXTRA} ${OPTIONS_TO_ADD}"
+      echoit "PXC_WSREP_ADD_RANDOM_WSREP_MYSQLD_OPTIONS=1: adding wsrep provider mysqld option(s) ${OPTIONS_TO_ADD} to this run's PXC_EXTRA..."
+      PXC_EXTRA="${PXC_EXTRA} ${OPTIONS_TO_ADD}"
     fi
     # === PXC Options Stage 3: Add random wsrep (Galera) configuration options
     if [ ${PXC_WSREP_PROVIDER_ADD_RANDOM_WSREP_PROVIDER_CONFIG_OPTIONS} -eq 1 ]; then
@@ -1433,7 +1432,7 @@ pstress_test(){
       echoit "PXC_WSREP_PROVIDER_ADD_RANDOM_WSREP_PROVIDER_CONFIG_OPTIONS=1: adding wsrep provider configuration option(s) ${OPTIONS_TO_ADD} to this run..."
       WSREP_PROVIDER_OPT="$OPTIONS_TO_ADD"
     fi
-    echo "${MYEXTRA} ${KEYRING_PARAM} ${PXC_MYEXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
+    echo "${PS_EXTRA} ${KEYRING_PARAM} ${PXC_EXTRA}" > ${RUNDIR}/${TRIAL}/MYEXTRA
     echo "${MYINIT}" > ${RUNDIR}/${TRIAL}/MYINIT
     echo "$WSREP_PROVIDER_OPT" > ${RUNDIR}/${TRIAL}/WSREP_PROVIDER_OPT
     pxc_startup
