@@ -1165,6 +1165,9 @@ pstress_test(){
   ISSTARTED=0
   PS_EXTRA="${MYEXTRA}"
   if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
+    if [ ${ENGINE} == "RocksDB" ]; then
+      PS_EXTRA="--plugin-load-add=rocksdb=ha_rocksdb.so ${PS_EXTRA}"
+    fi
     if check_for_version $MYSQL_VERSION "8.0.0" ; then
       mkdir -p ${RUNDIR}/${TRIAL}/data ${RUNDIR}/${TRIAL}/tmp ${RUNDIR}/${TRIAL}/log  # Cannot create /data/test, /data/mysql in 8.0
     else
@@ -1512,12 +1515,28 @@ EOF
         echoit "Node #1: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET1}"
         echoit "Node #2: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET2}"
         echoit "Node #3: `echo ${MYSQLD_BIN} | sed 's|/mysqld|/mysql|'` -uroot -S${SOCKET3}"
-	break
+        break
       fi
       if [ $X -eq 3 ]; then
         echoit "Node inconsistency detected or server crashed. Check error logs for details."
       fi
     done
+  fi
+
+  if [ ${ISSTARTED} -eq 1 ]; then
+    if [ ${ENGINE} == "RocksDB" ]; then
+      # Check if RocksDB plugin is active
+      ACTIVE_COUNT=$(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -Nse \
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='rocksdb' AND PLUGIN_STATUS='ACTIVE';")
+
+      if [ "${ACTIVE_COUNT}" -gt 0 ]; then
+        echoit "RocksDB is active."
+      else
+        echoit "RocksDB is NOT active." Reinitializing the data directory.
+        REINIT_DATADIR=1
+        ISSTARTED=2  # don't run pstress (ISSTARTED=1) and don't report server didn't start (ISSTARTED=0)
+      fi
+    fi
   fi
 
   if [ ${ISSTARTED} -eq 1 ]; then
@@ -1528,26 +1547,9 @@ EOF
       echoit "Loading metadata from ${WORKDIR}/step_$((${TRIAL}-1)).dll ..."
     fi
 
-    if [ ${ENGINE} == "RocksDB" ]; then
-      if [[ ${TRIAL} -eq 1 || $REINIT_DATADIR -eq 1 ]]; then
-        ${BASEDIR}/bin/ps-admin --enable-rocksdb -uroot -S${SOCKET}
-      fi
-
-      # Check if RocksDB plugin is active
-      ACTIVE_COUNT=$(${BASEDIR}/bin/mysql -uroot -S${SOCKET} -Nse \
-        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.PLUGINS WHERE PLUGIN_NAME='rocksdb' AND PLUGIN_STATUS='ACTIVE';")
-
-      if [ "${ACTIVE_COUNT}" -gt 0 ]; then
-        echoit "RocksDB is active."
-      else
-        echoit "RocksDB is NOT active."
-        REINIT_DATADIR=1
-      fi
-    fi
-
     if [[ ${TRIAL} -eq 1 || $REINIT_DATADIR -eq 1 ]]; then
       if [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
-	SOCKET=${SOCKET1}
+        SOCKET=${SOCKET1}
       fi
       COMP_SETUP_ERR_FILE=${WORKDIR}/component_setup_${TRIAL}.err
       if [ -n "${COMPONENT_NAME}" ]; then
@@ -1585,10 +1587,10 @@ EOF
           | sed -e "s|\/tmp|${RUNDIR}\/${TRIAL}|" \
           > ${RUNDIR}/${TRIAL}/pstress-cluster-run.cfg
       CMD="${PSTRESS_BIN} --database=test --config-file=${RUNDIR}/${TRIAL}/pstress-cluster-run.cfg --queries-per-thread=${QUERIES_PER_THREAD} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
-   else
+    else
       CMD="${PSTRESS_BIN} --database=test --threads=${THREADS} --queries-per-thread=${QUERIES_PER_THREAD} --logdir=${RUNDIR}/${TRIAL}/ --user=root --socket=${SOCKET1} --seed ${SEED} --step ${TRIAL} --metadata-path ${WORKDIR}/ --seconds ${PSTRESS_RUN_TIMEOUT} ${DYNAMIC_QUERY_PARAMETER}"
     fi
-    if [ "$REINIT_DATADIR" -eq 1 ] && [ "$ENGINE" != "RocksDB" ]; then
+    if [ "$REINIT_DATADIR" -eq 1 ]; then
       CMD="$CMD --prepare"
       REINIT_DATADIR=0
     fi
@@ -1625,7 +1627,7 @@ EOF
         break
       fi
     done
-  else
+  elif [ ${ISSTARTED} -eq 0 ]; then
     if [[ ${PXC} -eq 0 && ${GRP_RPL} -eq 0 ]]; then
       echoit "Server (PID: ${MPID} | Socket: ${SOCKET}) failed to start after ${MYSQLD_START_TIMEOUT} seconds. Will issue extra kill -9 to ensure it's gone..."
       kill_server 9 ${MPID}
@@ -1655,7 +1657,7 @@ EOF
       done
       SERVER_FAIL_TO_START_COUNT=$[ $SERVER_FAIL_TO_START_COUNT + 1 ]
       if [ $SERVER_FAIL_TO_START_COUNT -gt 0 ]; then
-	echoit "Server failed to start. Reinitializing the data directory"
+        echoit "Server failed to start. Reinitializing the data directory"
         REINIT_DATADIR=1
       fi
     fi

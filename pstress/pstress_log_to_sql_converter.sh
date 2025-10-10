@@ -99,6 +99,8 @@ echo "Reading the pstress logfile: $LOG_FILENAME"
 
 # Filtering out all the successfully executed SQLs from the pstress log
 sed -n 's/.* S //p' $LOG_FILENAME > $OUTPUT_FILENAME
+# Keep both S (success) and F (failure) SQLs
+#sed -n 's/.* [SF] //p' "$LOG_FILENAME" > "$OUTPUT_FILENAME"
 
 # Trimming off un-necessary information at the beginning of each SQL
 sed -i 's/^ S //g' $OUTPUT_FILENAME
