@@ -229,6 +229,12 @@ void add_options() {
   opt->setArgs(no_argument);
   opt->setBool(false);
 
+  /* No FK tables */
+  opt = newOption(Option::BOOL, Option::NO_FK, "no-fk-tables");
+  opt->help = "do not work on foriegn tables";
+  opt->setArgs(no_argument);
+  opt->setBool(false);
+
   /* No Partition tables */
   opt = newOption(Option::BOOL, Option::NO_PARTITION, "no-partition-tables");
   opt->help = "do not work on partition tables";
@@ -241,12 +247,21 @@ void add_options() {
   opt->setArgs(no_argument);
   opt->setBool(false);
 
+  opt = newOption(Option::INT, Option::FK_PROB, "fk-prob");
+  opt->help = R"(
+    Probability of each normal table having the FK. Currently, FKs are only linked
+    to the primary key of the parent table. So, even with 100% probability, a table
+    will have an FK only if its parent has a primary key.
+  )";
+  opt->setInt(50);
+
+  opt = newOption(Option::INT, Option::PARTITION_PROB, "partition-prob");
+  opt->help = "Probability of parititon tables";
+  opt->setInt(10);
+
   /* Ratio of temporary table to normal table */
-  opt = newOption(Option::INT, Option::TEMPORARY_TO_NORMAL_RATIO,
-                  "ratio-normal-temp");
-  opt->help = "ratio of normal to temporary tables. for e.g. if ratio to "
-              "normal table to temporary is 10 . --tables 40. them only 4 "
-              "temorary table will be created per session";
+  opt = newOption(Option::INT, Option::TEMPORARY_PROB, "temporary-prob");
+  opt->help = "Probability of temporary tables";
   opt->setInt(10);
 
   /* Initial Records in table */
@@ -270,7 +285,7 @@ void add_options() {
   opt->setInt(1000);
 
   /* primary key probability */
-  opt = newOption(Option::INT, Option::PRIMARY_KEY, "primary-key-probability");
+  opt = newOption(Option::INT, Option::PRIMARY_KEY, "pk-prob");
   opt->help = "Probability of adding primary key in a table";
   opt->setInt(50);
 
@@ -684,7 +699,7 @@ void add_options() {
   opt =
       newOption(Option::BOOL, Option::LOG_QUERY_DURATION, "log-query-duration");
   opt->help = "Log query duration in milliseconds";
-  opt->setBool(true);
+  opt->setBool(false);
   opt->setArgs(no_argument);
 
   /* log failed queries */
@@ -714,28 +729,26 @@ void add_options() {
   opt->setArgs(no_argument);
 
   /* transaction probability */
-  opt = newOption(Option::INT, Option::TRANSATION_PRB_K, "trx-prb-k");
+  opt = newOption(Option::INT, Option::TRANSATION_PRB_K, "trx-prob-k");
   opt->help = "probability(out of 1000) of combining sql as single trx";
-  opt->setInt(10);
+  opt->setInt(1);
 
   /* tranasaction size */
   opt = newOption(Option::INT, Option::TRANSACTIONS_SIZE, "trx-size");
   opt->help = "average size of each trx";
-  opt->setInt(100);
+  opt->setInt(10);
 
-  /* commit to rollback ratio */
-  opt = newOption(Option::INT, Option::COMMMIT_TO_ROLLBACK_RATIO,
-                  "commit-rollback-ratio");
-  opt->help = "ratio of commit to rollback. e.g.\nif 5, then 5 "
-              "transactions will be committed and 1 will be rollback.\n"
-              "if 0 then all transactions will be rollback";
-  opt->setInt(5);
+  /* probability of executing commit */
+  opt = newOption(Option::INT, Option::COMMIT_PROB, "commit-prob");
+  opt->help = "probability of executing commit after a transaction. Else it "
+              "would be rollback ";
+  opt->setInt(95);
 
   /* number of savepoints in trxs */
-  opt = newOption(Option::INT, Option::SAVEPOINT_PRB_K, "savepoint-prb-k");
-  opt->help = "probability of using savepoint in a transaction.\n Also 25% "
+  opt = newOption(Option::INT, Option::SAVEPOINT_PRB_K, "savepoint-prob-k");
+  opt->help = "probability of using savepoint in a transaction.\n Also 10% "
               "such transaction will be rollback to some savepoint";
-  opt->setInt(50);
+  opt->setInt(10);
 
   /* steps */
   opt = newOption(Option::INT, Option::STEP, "step");
