@@ -389,9 +389,7 @@ setup_fortanix() {
 
     echoit "Starting Fortanix KMIP server in (script method): $setup_script"
     # Download first, then execute the fortanix setup script
-    script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/8ab34a4da257070518825fcdf8ae547f99705597/"$setup_script")
-    # To-Do Remove B4 Merge
-    # script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
+    script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
     wget_exit_code=$?
 
     if [ $wget_exit_code -ne 0 ]; then
