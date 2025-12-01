@@ -13,16 +13,6 @@ RANDOM=`date +%s%N | cut -b14-19`; RANDOMD=$(echo $RANDOM$RANDOM$RANDOM | sed 's
 SCRIPT_AND_PATH=$(readlink -f $0); SCRIPT=$(echo ${SCRIPT_AND_PATH} | sed 's|.*/||'); SCRIPT_PWD=$(cd `dirname $0` && pwd)
 WORKDIRACTIVE=0; SAVED=0; TRIAL=0; MYSQLD_START_TIMEOUT=60; PXC=0; GRP_RPL=0; PXC_START_TIMEOUT=60; GRP_RPL_START_TIMEOUT=60; TIMEOUT_REACHED=0; STOREANYWAY=0; REINIT_DATADIR=0;
 SERVER_FAIL_TO_START_COUNT=0; ENGINE=InnoDB; UUID=$(uuidgen); GCACHE_ENCRYPTION=0; GDB_MODE=0;
-declare -A KMIP_CONFIGS=(
-    # PyKMIP Docker Configuration
-    ["pykmip"]="addr=127.0.0.1,image=mohitpercona/kmip:latest,port=5696,name=kmip_pykmip"
-
-    # Hashicorp Docker Setup Configuration
-    ["hashicorp"]="addr=127.0.0.1,port=5696,name=kmip_hashicorp,setup_script=hashicorp-kmip-setup.sh"
-
-    # API Configuration
-    # ["ciphertrust"]="addr=127.0.0.1,port=5696,name=kmip_ciphertrust,setup_script=setup_kmip_api.py"
-)
 
 # Read configuration
 if [ "$1" != "" ]; then CONFIGURATION_FILE=$1; fi
@@ -371,6 +361,64 @@ setup_hashicorp() {
     return 0
 }
 
+setup_fortanix() {
+    local type="fortanix"
+    local container_name="${kmip_config[name]}"
+    local addr="${kmip_config[addr]}"
+    local port="${kmip_config[port]}"
+    local email="${COMPONENT_KEYRING_KMIP_FORTANIX_EMAIL:-${kmip_config[email]}}"
+    local password="${COMPONENT_KEYRING_KMIP_FORTANIX_PASSWORD:-${kmip_config[password]}}"
+    local setup_script="${kmip_config[setup_script]}"
+    local cert_dir="${WORKDIR}/${kmip_config[cert_dir]}"
+
+    # Check if both variables are set and not empty
+    if [[ -z "$email" || -z "$password" ]]; then
+      echoit "Error: Both email and password must be set in Config or Script for Fortanix KMIP Provider!!" >&2
+      exit 1
+    fi
+
+    echoit "Checking port availability... "
+    if validate_port_available "$port"; then
+        echoit "Available"
+    else
+        echoit "Unavailable"
+        echoit "Port $port is in use by:"
+        lsof -i :"$port"
+        return 1
+    fi
+
+    echoit "Starting Fortanix KMIP server in (script method): $setup_script"
+    # Download first, then execute the fortanix setup script
+    script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
+    wget_exit_code=$?
+
+    if [ $wget_exit_code -ne 0 ]; then
+      echoit "Failed to download script (wget exit code: $wget_exit_code)"
+      exit 1
+    fi
+
+    if [ -z "$script" ]; then
+      echoit "Downloaded script is empty"
+      exit 1
+    fi
+
+    mkdir -p "$cert_dir" || true
+
+    # Execute the Python script from a variable
+    echo "$script" | python3 - --cert-dir="$cert_dir" --email="$email" --password="$password"
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echoit "Failed to execute Python script (exit code: $exit_code)"
+        exit 1
+    fi
+
+    generate_kmip_config "$type" "$addr" "$port" "$cert_dir" || {
+        echoit "Failed to generate KMIP config"; exit 1; }
+
+    echoit "Fortanix server started successfully on address $addr and port $port"
+    return 0
+}
+
 # Start KMIP server
 start_kmip_server() {
     local type="$1"
@@ -382,6 +430,7 @@ start_kmip_server() {
     case "$type" in
         pykmip)  setup_pykmip ;;
         hashicorp)  setup_hashicorp ;;
+        fortanix)  setup_fortanix ;;
         ciphertrust)  setup_cipher_api ;;
         *)           echo "Unsupported KMIP Type: $type"; return 1 ;;
     esac
