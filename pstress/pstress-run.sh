@@ -149,26 +149,30 @@ validate_port_available() {
     [ -z "$port" ] && return 1
 
     for i in $(seq 1 10); do
+        port_in_use=false
+
         # Check system-level port binding (TCP and UDP)
         if netstat -tuln | grep -q ":${port} "; then
-            :  # Port in use, continue loop
+            port_in_use=true
         # Check Docker container port mappings
         elif docker ps --format '{{.Ports}}' | grep -q ":$port->"; then
-            :  # Port in use, continue loop
-        # Check if port is in TIME_WAIT state
-        elif netstat -tan | grep -q ":${port} .*TIME_WAIT"; then
-            :  # Port in use, continue loop
+            port_in_use=true
         # Additional check with lsof if available
         elif command -v lsof >/dev/null 2>&1 && lsof -i ":$port" >/dev/null 2>&1; then
-            :  # Port in use, continue loop
-        else
+            port_in_use=true
+        fi
+
+        if ! $port_in_use; then
             # Port is available
             return 0
         fi
 
+        # If not on last iteration, sleep
         [ $i -lt 10 ] && sleep 2
     done
 
+    # Port still in use after 10 attempts
+    echo "Port $port is still in use after 10 attempts"
     return 1
 }
 
@@ -197,9 +201,11 @@ validate_environment() {
     return 0
 }
 
+
 parse_config() {
     local type=$1
     declare -gA kmip_config  # Global associative array
+    kmip_config=() # Clear contents
 
     IFS=',' read -ra pairs <<< "${KMIP_CONFIGS[$type]}"
     for pair in "${pairs[@]}"; do
@@ -332,7 +338,10 @@ setup_hashicorp() {
 
     echoit "Starting Docker KMIP server in (script method): $setup_script"
     # Download first, then execute the hashicorp setup
-    script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
+    # ToDo Remove before Merge
+    # script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
+    script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/cad02909729f1347fa01079247c0ca03f2e3acab/"$setup_script")
+
     wget_exit_code=$?
 
     if [ $wget_exit_code -ne 0 ]; then
@@ -345,9 +354,14 @@ setup_hashicorp() {
       exit 1
     fi
 
+    if [[ -z ${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE} ]] || [[ ! -f ${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE} ]]; then
+      echoit "HashiCorp License File path is not set in Config file"
+      exit 1
+    fi
+
     mkdir -p "$cert_dir" || true
     # Execute the script
-    echo "$script" | bash -s -- --cert-dir="$cert_dir"
+    echo "$script" | bash -s -- --cert-dir="$cert_dir" --license=${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE}
     exit_code=$?
     if [ $exit_code -ne 0 ]; then
         echoit "Failed to execute script $setup_script, (exit code: $exit_code)"
@@ -668,8 +682,14 @@ ctrl-c(){
 }
 
 savetrial(){  # Only call this if you definitely want to save a trial
-  echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/${TRIAL}"
-  mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a /${WORKDIR}/pstress-run.log
+  if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
+    echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/kmip_${kmip_type}/${TRIAL}"
+    mkdir -p ${WORKDIR}/"kmip_${kmip_type}"/ 2>&1
+        mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/"kmip_${kmip_type}"/${TRIAL}/ 2>&1 | tee -a ${WORKDIR}/"kmip_${kmip_type}"/pstress-run.log
+  else
+    echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/${TRIAL}"
+    mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a /${WORKDIR}/pstress-run.log
+  fi
   SAVED=$[ $SAVED + 1 ]
 }
 
@@ -1223,8 +1243,13 @@ pstress_test(){
       mkdir -p ${RUNDIR}/${TRIAL}/data/test ${RUNDIR}/${TRIAL}/data/mysql ${RUNDIR}/${TRIAL}/tmp ${RUNDIR}/${TRIAL}/log
     fi
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
-      echoit "Copying datadir from Trial $WORKDIR/$((${TRIAL}-1)) into $WORKDIR/${TRIAL}..."
-      rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
+      if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
+          echoit "Copying datadir from Trial $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1)) into ${RUNDIR}/${TRIAL}..."
+          rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
+      else
+          echoit "Copying datadir from Trial $WORKDIR/$((${TRIAL}-1)) into $WORKDIR/${TRIAL}..."
+          rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
+      fi
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
       fi
@@ -1387,12 +1412,21 @@ pstress_test(){
   elif [[ "${PXC}" == "1" ]]; then
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       mkdir -p ${RUNDIR}/${TRIAL}/
-      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
-      rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
-      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
-      rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
-      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
-      rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
+      if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
+        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1..."
+        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node1 ${RUNDIR}/${TRIAL}/node1 2>&1
+        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2..."
+        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node2 ${RUNDIR}/${TRIAL}/node2 2>&1
+        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3..."
+        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node3 ${RUNDIR}/${TRIAL}/node3 2>&1
+      else
+	      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
+      	rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
+      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
+      	rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
+      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
+      	rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
+      fi
       sed -i 's|safe_to_bootstrap:.*$|safe_to_bootstrap: 1|' ${RUNDIR}/${TRIAL}/node1/grastate.dat
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node1/component_keyring_file.cnf
@@ -1513,12 +1547,21 @@ pstress_test(){
   elif [[ ${GRP_RPL} -eq 1 ]]; then
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       mkdir -p ${RUNDIR}/${TRIAL}/
-      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
-      rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
-      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
-      rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
-      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
-      rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
+      if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
+        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1..."
+        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node1 ${RUNDIR}/${TRIAL}/node1 2>&1
+        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2..."
+        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node2 ${RUNDIR}/${TRIAL}/node2 2>&1
+        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3..."
+        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node3 ${RUNDIR}/${TRIAL}/node3 2>&1
+      else
+	      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
+      	rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
+      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
+      	rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
+      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
+      	rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
+      fi
       for i in $(seq 1 3); do
         if [ ${COMPONENT_KEYRING_FILE} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
           sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node$i/component_keyring_file.cnf
@@ -1958,8 +2001,6 @@ if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
         echoit "ERROR: Vault as a component is not supported in versions older than PS-8.1.0. Use PLUGIN_KEYRING_VAULT=1 instead"
         exit 1
     fi
-elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ] && [ -n "${COMPONENT_KEYRING_KMIP_TYPE}" ]; then
-    start_kmip_server "${COMPONENT_KEYRING_KMIP_TYPE}"
 fi
 
 if [ "${COMPONENT_NAME:-}" == "component_js_lang" ]; then
@@ -2041,11 +2082,41 @@ fi
 
 # Start actual pstress testing
 echoit "Starting pstress testing iterations..."
-COUNT=0
-for X in $(seq 1 ${TRIALS}); do
-  pstress_test
-  COUNT=$[ $COUNT + 1 ]
-done
+if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
+    # Check if KMIP_CONFIGS has any types defined.
+    if [[ ${#KMIP_CONFIGS[@]} -eq 0 ]]; then
+        echo "Error: No KMIP_CONFIGS types defined, its require at least one is defined for COMPONENT_KEYRING_KMIP" >&2
+        exit 1
+    fi
+
+    # Iterate over all defined KMIP types in KMIP_CONFIGS, in the config file.
+    for kmip_type in "${!KMIP_CONFIGS[@]}"; do
+        echo "Starting KMIP server for: $kmip_type"
+        start_kmip_server "$kmip_type"
+
+        # Create a unique RUNDIR for each KMIP type
+        RUNDIR=/tmp/$RANDOMD/"kmip_${kmip_type}"
+
+        COUNT=0
+        for X in $(seq 0 ${TRIALS}); do
+          TRIAL=$X    # Set TRIAL based on loop counter
+          pstress_test
+          COUNT=$[ $COUNT + 1 ]
+        done
+
+        container_name="${kmip_config[name]}"
+        echoit "Stopping kmip server $container_name"
+        docker stop "$container_name" >/dev/null 2>&1
+        docker rm "$container_name" >/dev/null 2>&1
+    done
+else
+    COUNT=0
+    for X in $(seq 1 ${TRIALS}); do
+        pstress_test
+        COUNT=$[ $COUNT + 1 ]
+    done
+fi
+
 # All done, wrap up pstress run
 echoit "pstress finished requested number of trials (${TRIALS})... Terminating..."
 if [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
@@ -2064,11 +2135,6 @@ rm -Rf ${RUNDIR}
 if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
     echoit "Stopping vault server"
     killall vault > /dev/null 2>&1
-elif [ ${COMPONENT_KEYRING_KMIP} -eq 1 ]; then
-    container_name="${kmip_config[name]}"
-    echoit "Stopping kmip server $container_name"
-    docker stop "$container_name" >/dev/null 2>&1
-    docker rm "$container_name" >/dev/null 2>&1
 fi
 echoit "The results of this run can be found in the workdir ${WORKDIR}..."
 echoit "Done. Exiting $0 with exit code 0..."
