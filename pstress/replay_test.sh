@@ -424,7 +424,7 @@ if [ ${ENCRYPTION_RUN} -eq 0 ]; then
 fi
 
 if [ ${PXC} -eq 1 ]; then
-  DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --primary-key-probability 100 --alt-discard-tbs 0"
+  DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --pk-prob 100 --alt-discard-tbs 0"
   if [ ${ENCRYPTION_RUN} -eq 1 ]; then
     if [ ${PLUGIN_KEYRING_FILE} -eq 1 ]; then
       KEYRING_PARAM="--early-plugin-load=keyring_file.so --keyring_file_data=keyring"
