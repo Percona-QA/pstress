@@ -607,9 +607,9 @@ fi
 # Both PXC and Group replication expects that all tables must have a Primary key. Also discard tablespace is not supported
 if [ ${PXC} -eq 1 -o ${GRP_RPL} -eq 1 ]; then
   if [ "${ENCRYPTION_RUN}" == "1" ]; then
-    DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --primary-key-probability 100 --alt-discard-tbs 0"
+    DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --pk-prob 100 --alt-discard-tbs 0"
   elif [ "${ENCRYPTION_RUN}" == "0" ]; then
-    DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --primary-key-probability 100 --alt-discard-tbs 0 --no-encryption"
+    DYNAMIC_QUERY_PARAMETER="$DYNAMIC_QUERY_PARAMETER --pk-prob 100 --alt-discard-tbs 0 --no-encryption"
   fi
 elif [ ${PXC} -eq 0 -a ${GRP_RPL} -eq 0 ]; then
   if [ "${ENCRYPTION_RUN}" == "0" ]; then

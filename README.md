@@ -119,7 +119,7 @@ Option | Function | Example | Default
 --port: Port to use | | default#: 3306
 --pquery | run pstress as pquery 2.0. sqls will be executed from --infine in some order based on shuffle. basically it will run in pquery mode you can also use -k | | default: 0
 --prepare | create new random tables and insert initial records |  | default: 0
---primary-key-probability | Probability of adding primary key in a table | --primary-key-probability=40 | default#: 50
+--pk-prob | Probability of adding primary key in a table | --pk-prob=40 | default#: 50
 --queries-per-thread | The number of queries per thread | | default#: 1
 --ratio-normal-temp | ratio of normal to temporary tables. for e.g. if ratio to normal table to temporary is 10 . --tables 40. them only 4 temporary table will be created per session  | --ratio-normal-temp=4 | default#: 10
 --records | Number of initial records in table | --records=100 | default#: 1000
