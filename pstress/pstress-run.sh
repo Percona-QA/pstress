@@ -229,7 +229,7 @@ generate_kmip_config() {
     local config_file="${cert_dir}/component_keyring_kmip.cnf"
     echoit "Generating KMIP config for: $name"
 
-    cat > "$config_file" <<EOF
+    sudo tee "$config_file" > /dev/null <<EOF
 {
   "server_addr": "$addr",
   "server_port": "$port",
@@ -339,13 +339,18 @@ setup_hashicorp() {
     echoit "Starting Docker KMIP server in (script method): $setup_script"
     # Download first, then execute the hashicorp setup
     # ToDo Remove before Merge
-    # script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
-    script=$(wget -qO- https://raw.githubusercontent.com/Percona-QA/percona-qa/cad02909729f1347fa01079247c0ca03f2e3acab/"$setup_script")
+    script=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
+      --connect-timeout 5 --max-time 30 \
+      https://raw.githubusercontent.com/Percona-QA/percona-qa/cad02909729f1347fa01079247c0ca03f2e3acab/"$setup_script")
 
-    wget_exit_code=$?
+    # script=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
+    #   --connect-timeout 5 --max-time 30 \
+    #   https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
 
-    if [ $wget_exit_code -ne 0 ]; then
-      echoit "Failed to download script (wget exit code: $wget_exit_code)"
+    curl_exit_code=$?
+
+    if [ $curl_exit_code -ne 0 ]; then
+      echoit "Failed to download script (curl exit code: $curl_exit_code)"
       exit 1
     fi
 
@@ -361,7 +366,7 @@ setup_hashicorp() {
 
     mkdir -p "$cert_dir" || true
     # Execute the script
-    echo "$script" | bash -s -- --cert-dir="$cert_dir" --license=${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE}
+    echo "$script" | sudo bash -s -- --cert-dir="$cert_dir" --license=${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE}
     exit_code=$?
     if [ $exit_code -ne 0 ]; then
         echoit "Failed to execute script $setup_script, (exit code: $exit_code)"
