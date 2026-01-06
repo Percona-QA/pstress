@@ -2110,9 +2110,11 @@ if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
         done
 
         container_name="${kmip_config[name]}"
-        echoit "Stopping kmip server $container_name"
-        docker stop "$container_name" >/dev/null 2>&1
-        docker rm "$container_name" >/dev/null 2>&1
+        if [ -n "$container_name" ]; then
+          echoit "Stopping kmip server $container_name"
+          docker stop "$container_name" >/dev/null 2>&1
+          docker rm "$container_name" >/dev/null 2>&1
+        fi
     done
 else
     COUNT=0
