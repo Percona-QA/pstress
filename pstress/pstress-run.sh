@@ -338,14 +338,9 @@ setup_hashicorp() {
 
     echoit "Starting Docker KMIP server in (script method): $setup_script"
     # Download first, then execute the hashicorp setup
-    # ToDo Remove before Merge
     script=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
       --connect-timeout 5 --max-time 30 \
-      https://raw.githubusercontent.com/Percona-QA/percona-qa/cad02909729f1347fa01079247c0ca03f2e3acab/"$setup_script")
-
-    # script=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
-    #   --connect-timeout 5 --max-time 30 \
-    #   https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
+     https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
 
     curl_exit_code=$?
 
