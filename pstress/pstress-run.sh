@@ -483,7 +483,7 @@ start_kmip_server() {
     validate_environment "$type" || return 1
     parse_config "$type"
 
-    echo "Starting ${type^^} KMIP Server on port ${kmip_config[port]}"
+    echoit "Starting ${type^^} KMIP Server on port ${kmip_config[port]}"
 
     case "$type" in
         pykmip)
@@ -507,7 +507,7 @@ start_kmip_server() {
             fi
             ;;
         *)
-            echo "Unsupported KMIP Type: $type" >&2
+            echoit "Unsupported KMIP Type: $type"
             return 1
             ;;
     esac
@@ -747,7 +747,6 @@ ctrl-c(){
 
 savetrial(){  # Only call this if you definitely want to save a trial
   echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/${TRIAL}"
-  mkdir -p ${WORKDIR}/ 2>&1
   mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a ${WORKDIR}/pstress-run.log
   SAVED=$[ $SAVED + 1 ]
 }
@@ -2127,7 +2126,7 @@ echoit "Starting pstress testing iterations..."
 if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
     # Check if KMIP_CONFIGS has any types defined.
     if [[ ${#KMIP_CONFIGS[@]} -eq 0 ]]; then
-        echo "Error: No KMIP_CONFIGS types defined, its require at least one is defined for COMPONENT_KEYRING_KMIP" >&2
+        echoit "Error: No KMIP_CONFIGS types defined, its require at least one is defined for COMPONENT_KEYRING_KMIP"
         exit 1
     fi
 
@@ -2145,7 +2144,7 @@ if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
         WORKDIR="${ORIGINAL_WORKDIR}"
         
         # Start KMIP server for this type
-        echo "Starting KMIP server for: $kmip_type"
+        echoit "Starting KMIP server for: $kmip_type"
         if ! start_kmip_server "$kmip_type"; then
             echoit "ERROR: Failed to start KMIP server for type: $kmip_type" >&2
             exit 1
@@ -2156,6 +2155,7 @@ if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
         RUNDIR="${RUNDIR_BASE}/$RANDOMD/kmip_${kmip_type}"
         WORKDIR="${ORIGINAL_WORKDIR}/kmip_${kmip_type}"
         KMIP_RUNDIRS+=("${RUNDIR}")
+        # Create WORKDIR and log subdirectory (needed for echoit logging)
         mkdir -p ${WORKDIR} ${WORKDIR}/log ${RUNDIR}
 
         # Run trials for this KMIP type
