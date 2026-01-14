@@ -98,7 +98,7 @@ check_for_version()
 # Output function
 echoit(){
   echo "[$(date +'%T')] [$SAVED] $1"
-  if [ ${WORKDIRACTIVE} -eq 1 ]; then echo "[$(date +'%T')] [$SAVED] $1" >> /${WORKDIR}/pstress-run.log; fi
+  if [ ${WORKDIRACTIVE} -eq 1 ]; then echo "[$(date +'%T')] [$SAVED] $1" >> ${WORKDIR}/pstress-run.log; fi
 }
 
 # Kill the server
@@ -130,16 +130,28 @@ start_vault_server(){
 }
 
 # KMIP Helper functions
-cleanup_existing_container() {
+stop_kmip_container() {
     local container_name="$1"
+    
+    [ -z "$container_name" ] && return 0
+    
+    # Check if container exists (running or stopped)
     local container_id=$(docker ps -aq --filter "name=$container_name")
-
     [ -z "$container_id" ] && return 0
-
+    
+    # Log if we're stopping an active container (not just cleaning up)
+    if docker ps --format '{{.Names}}' | grep -q "^${container_name}$"; then
+        echoit "Stopping kmip server $container_name"
+    fi
+    
+    # Stop and remove container
     if ! docker rm -f "$container_id" >/dev/null 2>&1; then
         return 1
     fi
-    sleep 5  # Allow port to be released
+    
+    # Wait for port to be released (needed before starting new containers and after cleanup)
+    sleep 5
+    
     return 0
 }
 
@@ -153,6 +165,9 @@ validate_port_available() {
 
         # Check system-level port binding (TCP and UDP)
         if netstat -tuln | grep -q ":${port} "; then
+            port_in_use=true
+        # Check if port is in TIME_WAIT state (cannot be reused yet)
+        elif netstat -tan | grep -q ":${port} .*TIME_WAIT"; then
             port_in_use=true
         # Check Docker container port mappings
         elif docker ps --format '{{.Ports}}' | grep -q ":$port->"; then
@@ -229,7 +244,13 @@ generate_kmip_config() {
     local config_file="${cert_dir}/component_keyring_kmip.cnf"
     echoit "Generating KMIP config for: $name"
 
-    sudo tee "$config_file" > /dev/null <<EOF
+    # Check if sudo is available and can run without password before attempting to write
+    if ! sudo -n true >/dev/null 2>&1; then
+        echoit "ERROR: sudo requires password. Please configure passwordless sudo or run with appropriate privileges" >&2
+        return 1
+    fi
+
+    if ! sudo -n tee "$config_file" > /dev/null <<EOF
 {
   "server_addr": "$addr",
   "server_port": "$port",
@@ -238,7 +259,12 @@ generate_kmip_config() {
   "server_ca": "${cert_dir}/root_certificate.pem"
 }
 EOF
+    then
+        echoit "ERROR: Failed to write KMIP config file: $config_file" >&2
+        return 1
+    fi
     echoit "Configuration file created: $config_file"
+    return 0
 }
 
 setup_pykmip() {
@@ -257,7 +283,7 @@ setup_pykmip() {
 
     # 1. Cleanup existing resources
     echoit "Cleaning up existing container... "
-    if cleanup_existing_container "$container_name"; then
+    if stop_kmip_container "$container_name"; then
         echoit "Done"
     else
         echoit "Failed"
@@ -319,7 +345,7 @@ setup_hashicorp() {
     #Keep container name for cleanup
 
     echoit "Cleaning up existing container... "
-    if cleanup_existing_container "$container_name"; then
+    if stop_kmip_container "$container_name"; then
         echoit "Done"
     else
         echoit "Failed"
@@ -346,26 +372,31 @@ setup_hashicorp() {
 
     if [ $curl_exit_code -ne 0 ]; then
       echoit "Failed to download script (curl exit code: $curl_exit_code)"
-      exit 1
+      return 1
     fi
 
     if [ -z "$script" ]; then
       echoit "Downloaded script is empty"
-      exit 1
+      return 1
     fi
 
     if [[ -z ${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE} ]] || [[ ! -f ${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE} ]]; then
       echoit "HashiCorp License File path is not set in Config file"
-      exit 1
+      return 1
     fi
 
     mkdir -p "$cert_dir" || true
-    # Execute the script
-    echo "$script" | sudo bash -s -- --cert-dir="$cert_dir" --license=${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE}
+    # Execute the script with sudo (non-interactive mode to avoid password prompts)
+    # Check if sudo is available and can run without password
+    if ! sudo -n true >/dev/null 2>&1; then
+        echoit "ERROR: sudo requires password. Please configure passwordless sudo or run with appropriate privileges" >&2
+        return 1
+    fi
+    echo "$script" | sudo -n bash -s -- --cert-dir="$cert_dir" --license="${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE}"
     exit_code=$?
     if [ $exit_code -ne 0 ]; then
         echoit "Failed to execute script $setup_script, (exit code: $exit_code)"
-        exit 1
+        return 1
     fi
 
     generate_kmip_config "$type" "$addr" "$port" "$cert_dir" || {
@@ -391,14 +422,25 @@ setup_fortanix() {
       exit 1
     fi
 
-    echoit "Checking port availability... "
+    # Always check local port availability to ensure no conflicts from previous local services
+    # This is important when running multiple KMIP types sequentially (e.g., hashicorp then fortanix)
+    # Even for remote servers, we check to ensure no local service is using the port
+    echoit "Checking local port availability for port $port..."
     if validate_port_available "$port"; then
-        echoit "Available"
+        echoit "Port $port is available locally"
     else
-        echoit "Unavailable"
-        echoit "Port $port is in use by:"
-        lsof -i :"$port"
-        return 1
+        echoit "Port $port is unavailable locally"
+        if [[ "$addr" == "127.0.0.1" || "$addr" == "localhost" ]]; then
+            # For local servers, port must be available
+            echoit "Port $port is in use by:"
+            lsof -i :"$port"
+            return 1
+        else
+            # For remote servers, warn but continue (we don't bind to local port)
+            echoit "Warning: Port $port is in use locally, but continuing since $addr is a remote server"
+            echoit "Port $port is in use by:"
+            lsof -i :"$port" || true
+        fi
     fi
 
     echoit "Starting Fortanix KMIP server in (script method): $setup_script"
@@ -408,12 +450,12 @@ setup_fortanix() {
 
     if [ $wget_exit_code -ne 0 ]; then
       echoit "Failed to download script (wget exit code: $wget_exit_code)"
-      exit 1
+      return 1
     fi
 
     if [ -z "$script" ]; then
       echoit "Downloaded script is empty"
-      exit 1
+      return 1
     fi
 
     mkdir -p "$cert_dir" || true
@@ -423,11 +465,13 @@ setup_fortanix() {
     exit_code=$?
     if [ $exit_code -ne 0 ]; then
         echoit "Failed to execute Python script (exit code: $exit_code)"
-        exit 1
+        return 1
     fi
 
     generate_kmip_config "$type" "$addr" "$port" "$cert_dir" || {
-        echoit "Failed to generate KMIP config"; exit 1; }
+        echoit "Failed to generate KMIP config"
+        return 1
+    }
 
     echoit "Fortanix server started successfully on address $addr and port $port"
     return 0
@@ -442,12 +486,32 @@ start_kmip_server() {
     echo "Starting ${type^^} KMIP Server on port ${kmip_config[port]}"
 
     case "$type" in
-        pykmip)  setup_pykmip ;;
-        hashicorp)  setup_hashicorp ;;
-        fortanix)  setup_fortanix ;;
-        ciphertrust)  setup_cipher_api ;;
-        *)           echo "Unsupported KMIP Type: $type"; return 1 ;;
+        pykmip)
+            if ! setup_pykmip; then
+                return 1
+            fi
+            ;;
+        hashicorp)
+            if ! setup_hashicorp; then
+                return 1
+            fi
+            ;;
+        fortanix)
+            if ! setup_fortanix; then
+                return 1
+            fi
+            ;;
+        ciphertrust)
+            if ! setup_cipher_api; then
+                return 1
+            fi
+            ;;
+        *)
+            echo "Unsupported KMIP Type: $type" >&2
+            return 1
+            ;;
     esac
+    return 0
 }
 
 # PXC Bug found display function
@@ -532,12 +596,12 @@ EOF
 EOF
     fi
   elif [ "$cmp_name" == "component_keyring_kmip" ]; then
+      # Use ORIGINAL_WORKDIR for cert_dir since it's created at original location before WORKDIR is changed
+      CERT_WORKDIR="${ORIGINAL_WORKDIR:-${WORKDIR}}"
       if [ "$node" == "" ]; then
-          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/data
+          cp ${CERT_WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/data
       else
-          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
-          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
-          cp ${WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
+          cp ${CERT_WORKDIR}/${kmip_config[cert_dir]}/component_keyring_kmip.cnf ${RUNDIR}/${TRIAL}/node$node
       fi
   fi
 
@@ -682,17 +746,12 @@ ctrl-c(){
 }
 
 savetrial(){  # Only call this if you definitely want to save a trial
-  if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
-    echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/kmip_${kmip_type}/${TRIAL}"
-    mkdir -p ${WORKDIR}/"kmip_${kmip_type}"/ 2>&1
-        mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/"kmip_${kmip_type}"/${TRIAL}/ 2>&1 | tee -a ${WORKDIR}/"kmip_${kmip_type}"/pstress-run.log
-  else
-    echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/${TRIAL}"
-    mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a /${WORKDIR}/pstress-run.log
-  fi
+  echoit "Copying rundir from ${RUNDIR}/${TRIAL} to ${WORKDIR}/${TRIAL}"
+  mkdir -p ${WORKDIR}/ 2>&1
+  mv ${RUNDIR}/${TRIAL}/ ${WORKDIR}/ 2>&1 | tee -a ${WORKDIR}/pstress-run.log
   SAVED=$[ $SAVED + 1 ]
 }
-
+       
 removetrial(){
   echoit "Removing trial rundir ${RUNDIR}/${TRIAL}"
   if [ "${RUNDIR}" != "" -a "${TRIAL}" != "" -a -d ${RUNDIR}/${TRIAL}/ ]; then  # Protection against dangerous rm's
@@ -1243,19 +1302,16 @@ pstress_test(){
       mkdir -p ${RUNDIR}/${TRIAL}/data/test ${RUNDIR}/${TRIAL}/data/mysql ${RUNDIR}/${TRIAL}/tmp ${RUNDIR}/${TRIAL}/log
     fi
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
-      if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
-          echoit "Copying datadir from Trial $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1)) into ${RUNDIR}/${TRIAL}..."
-          rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
-      else
-          echoit "Copying datadir from Trial $WORKDIR/$((${TRIAL}-1)) into $WORKDIR/${TRIAL}..."
-          rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
-      fi
+      echoit "Copying datadir from Trial $WORKDIR/$((${TRIAL}-1)) into ${RUNDIR}/${TRIAL}..."
+      rsync -ar --exclude='*core*' ${WORKDIR}/$((${TRIAL}-1))/data/ ${RUNDIR}/${TRIAL}/data 2>&1
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/data/component_keyring_file.cnf
       fi
     else
       echoit "Copying datadir from template..."
-      cp -R ${WORKDIR}/data.template/* ${RUNDIR}/${TRIAL}/data 2>&1
+      # Use ORIGINAL_WORKDIR for templates if KMIP is enabled (templates are at original location)
+      TEMPLATE_WORKDIR="${ORIGINAL_WORKDIR:-${WORKDIR}}"
+      cp -R ${TEMPLATE_WORKDIR}/data.template/* ${RUNDIR}/${TRIAL}/data 2>&1
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         create_local_manifest component_keyring_file
         create_local_config component_keyring_file
@@ -1412,21 +1468,12 @@ pstress_test(){
   elif [[ "${PXC}" == "1" ]]; then
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       mkdir -p ${RUNDIR}/${TRIAL}/
-      if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
-        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1..."
-        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node1 ${RUNDIR}/${TRIAL}/node1 2>&1
-        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2..."
-        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node2 ${RUNDIR}/${TRIAL}/node2 2>&1
-        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3..."
-        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node3 ${RUNDIR}/${TRIAL}/node3 2>&1
-      else
-	      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
-      	rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
-      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
-      	rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
-      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
-      	rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
-      fi
+      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
+      rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
+      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
+      rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
+      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
+      rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
       sed -i 's|safe_to_bootstrap:.*$|safe_to_bootstrap: 1|' ${RUNDIR}/${TRIAL}/node1/grastate.dat
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node1/component_keyring_file.cnf
@@ -1436,9 +1483,11 @@ pstress_test(){
     else
       mkdir -p ${RUNDIR}/${TRIAL}/
       echoit "Copying datadir from template..."
-      cp -R ${WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
-      cp -R ${WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
-      cp -R ${WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
+      # Use ORIGINAL_WORKDIR for templates if KMIP is enabled (templates are at original location)
+      TEMPLATE_WORKDIR="${ORIGINAL_WORKDIR:-${WORKDIR}}"
+      cp -R ${TEMPLATE_WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
+      cp -R ${TEMPLATE_WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
+      cp -R ${TEMPLATE_WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 ]; then
         create_local_manifest component_keyring_file 1
         create_local_manifest component_keyring_file 2
@@ -1547,21 +1596,12 @@ pstress_test(){
   elif [[ ${GRP_RPL} -eq 1 ]]; then
     if [[ ${TRIAL} -gt 1 && $REINIT_DATADIR -eq 0 ]]; then
       mkdir -p ${RUNDIR}/${TRIAL}/
-      if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
-        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1..."
-        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node1 ${RUNDIR}/${TRIAL}/node1 2>&1
-        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2..."
-        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node2 ${RUNDIR}/${TRIAL}/node2 2>&1
-        echoit "Copying datadir from $WORKDIR/kmip_${kmip_type}/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3..."
-        rsync -ar --exclude='*core*' ${WORKDIR}/"kmip_${kmip_type}"/$((${TRIAL}-1))/node3 ${RUNDIR}/${TRIAL}/node3 2>&1
-      else
-	      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
-      	rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
-      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
-      	rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
-      	echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
-      	rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
-      fi
+      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node1 into ${RUNDIR}/${TRIAL}/node1 ..."
+      rsync -ar --exclude={'*core*','node1.err'} ${WORKDIR}/$((${TRIAL}-1))/node1/ ${RUNDIR}/${TRIAL}/node1/ 2>&1
+      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node2 into ${RUNDIR}/${TRIAL}/node2 ..."
+      rsync -ar --exclude={'*core*','node2.err'} ${WORKDIR}/$((${TRIAL}-1))/node2/ ${RUNDIR}/${TRIAL}/node2/ 2>&1
+      echoit "Copying datadir from $WORKDIR/$((${TRIAL}-1))/node3 into ${RUNDIR}/${TRIAL}/node3 ..."
+      rsync -ar --exclude={'*core*','node3.err'} ${WORKDIR}/$((${TRIAL}-1))/node3/ ${RUNDIR}/${TRIAL}/node3/ 2>&1
       for i in $(seq 1 3); do
         if [ ${COMPONENT_KEYRING_FILE} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
           sed -i "s/\/$((${TRIAL}-1))\//\/${TRIAL}\//" ${RUNDIR}/${TRIAL}/node$i/component_keyring_file.cnf
@@ -1570,9 +1610,11 @@ pstress_test(){
     else
       mkdir -p ${RUNDIR}/${TRIAL}/
       echoit "Copying datadir from template..."
-      cp -R ${WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
-      cp -R ${WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
-      cp -R ${WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
+      # Use ORIGINAL_WORKDIR for templates if KMIP is enabled (templates are at original location)
+      TEMPLATE_WORKDIR="${ORIGINAL_WORKDIR:-${WORKDIR}}"
+      cp -R ${TEMPLATE_WORKDIR}/node1.template ${RUNDIR}/${TRIAL}/node1 2>&1
+      cp -R ${TEMPLATE_WORKDIR}/node2.template ${RUNDIR}/${TRIAL}/node2 2>&1
+      cp -R ${TEMPLATE_WORKDIR}/node3.template ${RUNDIR}/${TRIAL}/node3 2>&1
       if [ ${COMPONENT_KEYRING_FILE} -eq 1 -a ${ENCRYPTION_RUN} -eq 1 ]; then
         for i in $(seq 1 3); do
           echoit "Creating local manifest file mysqld.my for node$i"
@@ -2089,26 +2131,54 @@ if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
         exit 1
     fi
 
+    # Save original WORKDIR and RUNDIR to restore them after the loop
+    ORIGINAL_WORKDIR="${WORKDIR}"
+    ORIGINAL_RUNDIR="${RUNDIR}"
+    # Extract base directory from RUNDIR (e.g., /tmp or /dev/shm)
+    RUNDIR_BASE=$(dirname "${RUNDIR}")
+    # Track all KMIP RUNDIRs for cleanup at the end
+    declare -a KMIP_RUNDIRS=()
+
     # Iterate over all defined KMIP types in KMIP_CONFIGS, in the config file.
     for kmip_type in "${!KMIP_CONFIGS[@]}"; do
+        # Setup: Reset WORKDIR to original location (cert_dir is created at original location)
+        WORKDIR="${ORIGINAL_WORKDIR}"
+        
+        # Start KMIP server for this type
         echo "Starting KMIP server for: $kmip_type"
-        start_kmip_server "$kmip_type"
+        if ! start_kmip_server "$kmip_type"; then
+            echoit "ERROR: Failed to start KMIP server for type: $kmip_type" >&2
+            exit 1
+        fi
 
-        # Create a unique RUNDIR for each KMIP type
-        RUNDIR=/tmp/$RANDOMD/"kmip_${kmip_type}"
+        # Configure directories for this KMIP type
+        # Use the original RUNDIR base path instead of hardcoding /tmp
+        RUNDIR="${RUNDIR_BASE}/$RANDOMD/kmip_${kmip_type}"
+        WORKDIR="${ORIGINAL_WORKDIR}/kmip_${kmip_type}"
+        KMIP_RUNDIRS+=("${RUNDIR}")
+        mkdir -p ${WORKDIR} ${WORKDIR}/log ${RUNDIR}
 
+        # Run trials for this KMIP type
+        TRIAL=0
         COUNT=0
-        for X in $(seq 0 ${TRIALS}); do
-          TRIAL=$X    # Set TRIAL based on loop counter
-          pstress_test
-          COUNT=$[ $COUNT + 1 ]
+        for X in $(seq 1 ${TRIALS}); do
+            pstress_test
+            COUNT=$[ $COUNT + 1 ]
         done
 
-        container_name="${kmip_config[name]}"
-        if [ -n "$container_name" ]; then
-          echoit "Stopping kmip server $container_name"
-          docker stop "$container_name" >/dev/null 2>&1
-          docker rm "$container_name" >/dev/null 2>&1
+        # Cleanup: Stop and remove container for this KMIP type
+        if ! stop_kmip_container "${kmip_config[name]}"; then
+            echoit "WARNING: Failed to stop/remove container ${kmip_config[name]}, but continuing..."
+        fi
+    done
+    # Restore original WORKDIR and RUNDIR after KMIP loop completes
+    WORKDIR="${ORIGINAL_WORKDIR}"
+    RUNDIR="${ORIGINAL_RUNDIR}"
+    # Clean up all KMIP RUNDIRs after all trials are complete and saved
+    for kmip_rundir in "${KMIP_RUNDIRS[@]}"; do
+        if [ -d "${kmip_rundir}" ]; then
+            echoit "Cleaning up rundir ${kmip_rundir}..."
+            rm -Rf "${kmip_rundir}"
         fi
     done
 else
@@ -2132,8 +2202,11 @@ else
   (ps -ef | grep 'node[0-9]_socket' | grep ${RUNDIR} | grep -v grep | awk '{print $2}' | xargs kill -9 >/dev/null 2>&1 || true)
   sleep 2; sync
 fi
-echoit "Done. Attempting to cleanup the pstress rundir ${RUNDIR}..."
-rm -Rf ${RUNDIR}
+# Only cleanup RUNDIR if not in KMIP mode (KMIP RUNDIRs are cleaned up separately)
+if [[ ${COMPONENT_KEYRING_KMIP} -ne 1 ]]; then
+    echoit "Done. Attempting to cleanup the pstress rundir ${RUNDIR}..."
+    rm -Rf ${RUNDIR}
+fi
 if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
     echoit "Stopping vault server"
     killall vault > /dev/null 2>&1
