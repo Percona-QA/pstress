@@ -20,11 +20,25 @@ if [ "$ERROR_LOG" == "" ]; then
   fi
 fi
 
+VERSION=$(grep -m1 -oE 'mysqld [0-9]+\.[0-9]+(\.[0-9]+)?' "$ERROR_LOG" | awk '{print $2}')
+
 ASSERTION_FLAG=0;
 ERROR_FLAG=0;
 SEARCH_ERROR_PATTERN="\[ERROR\].*"
 SEARCH_ASSERT_PATTERN="Assertion failure:|Failing assertion:|Assertion.*failed|mysqld got signal 11";
 SEARCH_FILE=exclude_patterns.txt
+
+if [[ "$VERSION" == 5.7* ]]; then
+  VERSION_SEARCH_FILE=exclude_patterns_57.txt
+elif [[ "$VERSION" == 9.* ]]; then
+  VERSION_SEARCH_FILE=exclude_patterns_9.txt
+fi
+
+if [[ -n "$VERSION_SEARCH_FILE" ]]; then
+  SEARCH_FILE=$(mktemp)
+  trap 'rm -f "$SEARCH_FILE"' EXIT
+  cat exclude_patterns.txt "$VERSION_SEARCH_FILE" > "$SEARCH_FILE"
+fi
 
 # Search assertion string in Error log
 PATTERN=$(egrep "$SEARCH_ASSERT_PATTERN" $ERROR_LOG |
@@ -57,12 +71,16 @@ if [ $ASSERTION_FLAG -eq 1 ]; then
       do
         if [[ $line =~ ${SigTag} ]]; then
           echo "Known Bug reported in JIRA found. Please check the Bug status for more details";
-          egrep -B1 "${SigTag}" $SEARCH_FILE
+          echo "$sigtag_prior_line"
+          echo "$line"
           ASSERT_FOUND=1
           break;
-      fi
-    done < <(egrep -v '^#|^$' $SEARCH_FILE)
+        else
+          sigtag_prior_line=${SigTag}
+        fi
+    done < <(grep -v '^$' $SEARCH_FILE)
   if [[ $ASSERT_FOUND -eq 0 ]]; then
+    echo "New Assertion/Crash found in error log(s). Potentially a Bug, please investigate";
     echo "$line"
   fi
   done < <(printf '%s\n' "$ASSERT_STRING")

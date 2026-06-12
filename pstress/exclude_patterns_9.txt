@@ -1,0 +1,19 @@
+############################################################################################                                                       #
+# Note:                                                                                    #
+# (1). This file is used by search_string.sh along with exclude_patterns.txt to exclude    #
+#      issues related to 9.x version which doesn't exist on other versions.                #
+# (2). The file contains list of regular expressions to tag a particular error.            #
+# (3). Any known crash/error can be included in this file with a unique signature (regex)  #
+# (4). Line starting with a (#) will be treated as a comment & shall be ignored            #
+#                                                                                          #
+# How to use:                                                                              #
+# (1). Add a comment with the Bug# and tag it against the signature                        #
+# (2). Do not write anything after the signature                                           #
+#                                                                                          #
+# For ex:                                                                                  #
+#        # PS-6848                                                                         #
+#        Assertion failure.*fsp0fsp.cc.*encryption_op_in_progress                          #
+############################################################################################
+
+# PS-11023
+.*handler::ha_index_end\(\):.*Assertion.*inited.*==.*INDEX.*
