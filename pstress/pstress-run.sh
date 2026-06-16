@@ -84,7 +84,7 @@ fi
 
 # Check no two encryption types are enabled at the same time
 if [ ${ENCRYPTION_RUN} -eq 1 ]; then
-  enabled_count=$(( ${COMPONENT_KEYRING_FILE} + ${COMPONENT_KEYRING_VAULT} + ${PLUGIN_KEYRING_VAULT} + ${PLUGIN_KEYRING_FILE} + ${COMPONENT_KEYRING_KMIP} ))
+  enabled_count=$(( ${COMPONENT_KEYRING_FILE:-0} + ${COMPONENT_KEYRING_VAULT:-0} + ${PLUGIN_KEYRING_VAULT:-0} + ${PLUGIN_KEYRING_FILE:-0} + ${COMPONENT_KEYRING_KMIP:-0} ))
   if [ "$enabled_count" -gt 1 ]; then
     echo "Enable one encryption(keyring_file|keyring_vault|keyring_kmip) type(plugin|component) at a time"
     exit 1
