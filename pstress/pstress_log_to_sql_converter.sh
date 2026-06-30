@@ -23,6 +23,7 @@ Help() {
   echo "usage: $BASH_SOURCE --logfile <val>"
   echo "usage: $BASH_SOURCE --logfile <val> --mysql-client <val> --socket <val>"
   echo "--logfile: Full path to the pstress log file"
+  echo "--output-files-dir: Directory to save the converted SQL files (default: Script directory)"
   echo "--mysql-client: Path to MySQL client"
   echo "--socket: Path to socket file to connect to running server"
   echo "--user: Database username. If not provided, it defaults to root user"
@@ -35,6 +36,7 @@ fi
 
 ARGUMENT_LIST=(
     "logfile"
+    "output-files-dir"
     "mysql-client"
     "socket"
     "user"
@@ -78,6 +80,10 @@ while true; do
 	shift
 	USER_NAME=$1
 	;;
+    --output-files-dir)
+	shift
+	OUTPUT_FILES_DIR=$1
+	;;
     --)
 	break
 	;;
@@ -93,7 +99,10 @@ fi
 SCRIPT=$(readlink -f $0)
 SCRIPT_PATH=$(dirname $SCRIPT)
 LOGFILE=$(basename $LOG_FILENAME)
-OUTPUT_FILENAME=$SCRIPT_PATH/reduced_"$LOGFILE"
+if [ -z "$OUTPUT_FILES_DIR" ]; then
+  OUTPUT_FILES_DIR=$SCRIPT_PATH
+fi
+OUTPUT_FILENAME="$OUTPUT_FILES_DIR"/reduced_"$LOGFILE"
 
 echo "Reading the pstress logfile: $LOG_FILENAME"
 

@@ -18,18 +18,15 @@
 ############################################################################################
 
 # Error reported by Mysqlx plugin when the socket is not free.
-.*\\[Server\\].*Plugin mysqlx reported.*
+.*\[Server\].*Plugin mysqlx reported.*
 
 # Error reported by InnoDB when an active undo tablespace is dropped.
 .*Cannot drop undo tablespace.*
 
-# PS-6848
-.*Assertion failure.*fsp0fsp.cc.*encryption_op_in_progress.*
-
-# PS-6847
+# PS-6847 : legacy issue closed without fix. If noticed again report new bug.
 .*Assertion failure.*btr0btr.ic:.*level.*
 
-# PS-7148
+# PS-7148 : legacy issue closed without fix. If noticed again report new bug.
 .*buf0buf.cc.*buf_pool.*init_flush.*
 
 # PS-7663
@@ -72,7 +69,13 @@
 .*Error_code: 1488.*
 .*Error_code: 1176.*
 
-# PS-7865 Dropping a table with discarded tablespace crashes the server.
-.*Assertion failure.*btr0sea.cc:.*page.id.space.*
+.*\[MY-012585\].*Linux Native AIO interface.*
 
-.*[MY-012585].*Linux Native AIO interface.*
+# PXC-4556
+.*Assertion.*state\(\) == s_certifying.*
+
+# PXC-4549
+.*Assertion.*state\(\) == s_aborting \|\| state\(\) == s_must_replay.*
+
+# PXC-4491
+.*Assertion.*state\(\) == s_executing \|\| state\(\) == s_preparing \|\| state\(\) == s_prepared \|\| state\(\) == s_must_abort \|\| state\(\) == s_aborting \|\| state\(\) == s_cert_failed \|\| state\(\) == s_must_replay.*

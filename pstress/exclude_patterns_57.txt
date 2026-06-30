@@ -1,0 +1,70 @@
+############################################################################################                                                            #
+# Note:                                                                                    #
+# (1). This file is used by search_string.sh along with exclude_patterns.txt to exclude    #
+#      issues related to 5.7 version which doesn't exist on other versions.                #
+# (2). The file contains list of regular expressions to tag a particular error.            #
+# (3). Any known crash/error can be included in this file with a unique signature (regex)  #
+# (4). Line starting with a (#) will be treated as a comment & shall be ignored            #
+#                                                                                          #
+# How to use:                                                                              #
+# (1). Add a comment with the Bug# and tag it against the signature                        #
+# (2). Do not write anything after the signature                                           #
+#                                                                                          #
+# For ex:                                                                                  #
+#        # PS-6848                                                                         #
+#        Assertion failure.*fsp0fsp.cc.*encryption_op_in_progress                          #
+############################################################################################
+
+# PS-6848
+.*Assertion failure.*fsp0fsp.cc.*encryption_op_in_progress.*
+
+# PS-7865 Dropping a table with discarded tablespace crashes the server.
+.*Assertion failure.*btr0sea.cc:.*page.id.space.*
+
+.*In ALTER TABLE `test`.`tt_4_fk` has or is referenced in foreign key constraints which are not compatible with the new table definition.*
+.*InnoDB: Flagged corruption of.*in table .* in CHECK TABLE; Wrong count.*
+.*Got error 180 when reading table.*
+.*InnoDB: Table .* contains .* indexes inside InnoDB, which is different from the number of indexes .* defined in MySQL.*
+.*InnoDB: Table .* does not exist in the InnoDB internal data dictionary though MySQL is trying to drop it. Have you copied the .frm file of the table to the MySQL database directory from another database\?.*
+.*InnoDB: Cannot create file .*
+.*InnoDB: The file .* already exists though the corresponding table did not exist in the InnoDB data dictionary. Have you moved InnoDB .ibd files around without using the SQL commands DISCARD TABLESPACE and IMPORT TABLESPACE, or did mysqld crash in the middle of CREATE TABLE\? You can resolve the problem by removing the file .* under the.*datadir.*of MySQL.*
+.*Cannot find index .* in InnoDB index dictionary.*
+.*Build InnoDB index translation table for Table .* failed.*
+.*InnoDB could not find key no .* with name .* from dict cache for table .*
+.*Table .* contains fewer indexes inside InnoDB than are defined in the MySQL .frm file. Have you mixed up .frm files from different installations.*
+.*InnoDB: Index .* of table .* is corrupted.*
+.*InnoDB: Cannot delete tablespace .* because it is not found in the tablespace memory cache.*
+.*Cannot find index .* in InnoDB index dictionary.*
+.*Build InnoDB index translation table for Table .* failed.*
+.*InnoDB could not find key no .* with name .* from dict cache for table .*
+.*Table .* contains fewer indexes inside InnoDB than are defined in the MySQL .frm file. Have you mixed up .frm files from different installations.*
+
+.*Failing assertion:.*table->n_foreign_key_checks_running.*==.*0.*
+
+.*handler0alter.cc:.*:.*virtual.*bool.*ha_innobase::commit_inplace_alter_table\(TABLE\*, Alter_inplace_info\*, bool\):.*Assertion.*!index->to_be_dropped.*
+
+.*handler0alter.cc:.*:.*bool.*rollback_inplace_alter_table\(Alter_inplace_info\*, const TABLE\*, row_prebuilt_t\*\):.*Assertion.*!clust_index->online_log.*
+
+# PXC-4301 in file ha_innodb.cc line 5571
+.*InnoDB:.*Failing assertion:.*!ut_strcmp\(name, field->field_name\).*
+
+# https://github.com/percona/percona-server/pull/4587
+.*ha_innodb.cc:.*:.*void.*ha_innobase::update_thd\(THD\*\):.*Assertion.*m_prebuilt->table->n_ref_count > 0.*
+
+
+# PS-5943 in file ha_innodb.cc line 20752
+.*InnoDB:.*Failing assertion:.*!ret.*
+
+# PS-5658 in file btr0sea.cc line 1570
+.*InnoDB:.*Failing assertion:.*os_atomic_increment_ulint\(&\(block\)->n_pointers, 0\).*==.*0.*
+
+# PS-8003 in file buf0buf.cc line 3101
+.*InnoDB:.*Failing assertion:.*buf_block_get_state\(block\).*==.*BUF_BLOCK_FILE_PAGE.*
+
+# PS-5781
+.*\[FATAL\].*InnoDB:.*Missing.*MLOG_FILE_NAME.*or.*MLOG_FILE_DELETE.*for.*redo.*log.*record.*
+.*InnoDB:.*Assertion failure in thread .* in file ut0ut.cc.*
+
+# PS-8002
+.*sql/field.cc:.*:.*virtual.*longlong.*Field_long::val_int\(\):.*Assertion.*!table \|\| \(!table->read_set \|\| bitmap_is_set\(table->read_set, field_index\)\).*
+.*sql/field.cc:.*:.*virtual.*String.*Field_float::val_str\(String\*, String\*\): Assertion.*!table \|\| \(!table->read_set \|\| bitmap_is_set\(table->read_set, field_index\)\).*
