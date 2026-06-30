@@ -155,6 +155,22 @@ stop_kmip_container() {
     return 0
 }
 
+stop_all_kmip_containers() {
+    local kmip_type
+
+    [[ ${COMPONENT_KEYRING_KMIP} -ne 1 ]] && return 0
+    if ! declare -p KMIP_CONFIGS &>/dev/null || [[ ${#KMIP_CONFIGS[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    for kmip_type in "${!KMIP_CONFIGS[@]}"; do
+        parse_config "$kmip_type"
+        if ! stop_kmip_container "${kmip_config[name]}"; then
+            echoit "WARNING: Failed to stop/remove container ${kmip_config[name]}"
+        fi
+    done
+}
+
 validate_port_available() {
     local port="$1"
     # Check if port is provided
@@ -366,7 +382,7 @@ setup_hashicorp() {
     # Download first, then execute the hashicorp setup
     script=$(curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
       --connect-timeout 5 --max-time 30 \
-     https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/"$setup_script")
+     https://raw.githubusercontent.com/Percona-QA/percona-qa/master/"$setup_script")
 
     curl_exit_code=$?
 
@@ -392,7 +408,7 @@ setup_hashicorp() {
         echoit "ERROR: sudo requires password. Please configure passwordless sudo or run with appropriate privileges" >&2
         return 1
     fi
-    echo "$script" | sudo -n bash -s -- --cert-dir="$cert_dir" --license="${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE}"
+    echo "$script" | python3 - --cert-dir="$cert_dir" --license="${COMPONENT_KEYRING_KMIP_HASHICORP_LICENSE}"
     exit_code=$?
     if [ $exit_code -ne 0 ]; then
         echoit "Failed to execute script $setup_script, (exit code: $exit_code)"
@@ -2210,6 +2226,9 @@ fi
 if [ ${COMPONENT_KEYRING_VAULT} -eq 1 ]; then
     echoit "Stopping vault server"
     killall vault > /dev/null 2>&1
+fi
+if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
+    stop_all_kmip_containers
 fi
 echoit "The results of this run can be found in the workdir ${WORKDIR}..."
 echoit "Done. Exiting $0 with exit code 0..."
