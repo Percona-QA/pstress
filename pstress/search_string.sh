@@ -67,7 +67,7 @@ if [ $ASSERTION_FLAG -eq 1 ]; then
   while IFS= read -r line
   do
     ASSERT_FOUND=0
-    while read SigTag
+    while read -r SigTag
       do
         if [[ $line =~ ${SigTag} ]]; then
           echo "Known Bug reported in JIRA found. Please check the Bug status for more details";
@@ -91,7 +91,7 @@ if [ $ERROR_FLAG -eq 1 ]; then
   while IFS= read -r line
   do
     ERROR_FOUND=0
-    while read SigTag
+    while read -r SigTag
       do
         if [[ $line =~ ${SigTag} ]]; then
           ERROR_FOUND=1;

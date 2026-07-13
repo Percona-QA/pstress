@@ -79,3 +79,6 @@
 
 # PXC-4491
 .*Assertion.*state\(\) == s_executing \|\| state\(\) == s_preparing \|\| state\(\) == s_prepared \|\| state\(\) == s_must_abort \|\| state\(\) == s_aborting \|\| state\(\) == s_cert_failed \|\| state\(\) == s_must_replay.*
+
+# PS-8574
+.*os0file.cc:.*:slot->type.is_read().*
