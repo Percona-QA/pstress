@@ -5,6 +5,11 @@
 # (2). The file contains list of regular expressions to tag a particular error.            #
 # (3). Any known crash/error can be included in this file with a unique signature (regex)  #
 # (4). Line starting with a (#) will be treated as a comment & shall be ignored            #
+# (5). For assertion signatures: search_string.sh strips everything before the literal     #
+#      word "Assertion"/"Failing assertion:" before matching (to normalize log-line        #
+#      prefixes), so a pattern must NOT rely on file/function text appearing before that   #
+#      word (e.g. "field.cc:...:some_func():.*Assertion..." can never match) - start the   #
+#      pattern at "Assertion"/"Failing assertion:" itself instead.                         #
 #                                                                                          #
 # How to use:                                                                              #
 # (1). Add a comment with the Bug# and tag it against the signature                        #
@@ -41,30 +46,29 @@
 
 .*Failing assertion:.*table->n_foreign_key_checks_running.*==.*0.*
 
-.*handler0alter.cc:.*:.*virtual.*bool.*ha_innobase::commit_inplace_alter_table\(TABLE\*, Alter_inplace_info\*, bool\):.*Assertion.*!index->to_be_dropped.*
+.*Assertion.*!index->to_be_dropped.*
 
-.*handler0alter.cc:.*:.*bool.*rollback_inplace_alter_table\(Alter_inplace_info\*, const TABLE\*, row_prebuilt_t\*\):.*Assertion.*!clust_index->online_log.*
+.*Assertion.*!clust_index->online_log.*
 
 # PXC-4301 in file ha_innodb.cc line 5571
-.*InnoDB:.*Failing assertion:.*!ut_strcmp\(name, field->field_name\).*
+.*Failing assertion:.*!ut_strcmp\(name, field->field_name\).*
 
 # https://github.com/percona/percona-server/pull/4587
-.*ha_innodb.cc:.*:.*void.*ha_innobase::update_thd\(THD\*\):.*Assertion.*m_prebuilt->table->n_ref_count > 0.*
+.*Assertion.*m_prebuilt->table->n_ref_count > 0.*
 
 
 # PS-5943 in file ha_innodb.cc line 20752
-.*InnoDB:.*Failing assertion:.*!ret.*
+.*Failing assertion:.*!ret.*
 
 # PS-5658 in file btr0sea.cc line 1570
-.*InnoDB:.*Failing assertion:.*os_atomic_increment_ulint\(&\(block\)->n_pointers, 0\).*==.*0.*
+.*Failing assertion:.*os_atomic_increment_ulint\(&\(block\)->n_pointers, 0\).*==.*0.*
 
 # PS-8003 in file buf0buf.cc line 3101
-.*InnoDB:.*Failing assertion:.*buf_block_get_state\(block\).*==.*BUF_BLOCK_FILE_PAGE.*
+.*Failing assertion:.*buf_block_get_state\(block\).*==.*BUF_BLOCK_FILE_PAGE.*
 
 # PS-5781
 .*\[FATAL\].*InnoDB:.*Missing.*MLOG_FILE_NAME.*or.*MLOG_FILE_DELETE.*for.*redo.*log.*record.*
-.*InnoDB:.*Assertion failure in thread .* in file ut0ut.cc.*
+.*Assertion failure in thread .* in file ut0ut.cc.*
 
-# PS-8002
-.*sql/field.cc:.*:.*virtual.*longlong.*Field_long::val_int\(\):.*Assertion.*!table \|\| \(!table->read_set \|\| bitmap_is_set\(table->read_set, field_index\)\).*
-.*sql/field.cc:.*:.*virtual.*String.*Field_float::val_str\(String\*, String\*\): Assertion.*!table \|\| \(!table->read_set \|\| bitmap_is_set\(table->read_set, field_index\)\).*
+# PS-8002 (covers Field_long::val_int, Field_float::val_str, and any other Field::* accessor hitting this read_set check)
+.*Assertion.*!table \|\| \(!table->read_set \|\| bitmap_is_set\(table->read_set, field_index\)\).*

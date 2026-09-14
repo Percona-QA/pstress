@@ -162,6 +162,22 @@ kill_server(){
   { kill -$SIG ${MPID} && wait ${MPID}; } 2>/dev/null
 }
 
+# Check whether this trial's ASan/Sanitizer log(s) reported an error.
+# ASAN_OPTIONS log_path=.../asan.log sends sanitizer diagnostics to asan.log.<pid>
+# instead of the mysqld error log, so master.err/search_string.sh never see them;
+# this scans those separate log(s) for the universal sanitizer report marker.
+check_asan_error(){
+  local ASAN_LOGS
+  ASAN_LOGS=$(ls ${RUNDIR}/${TRIAL}/asan.log.* 2>/dev/null)
+  [ -n "${ASAN_LOGS}" ] && grep -lE "==[0-9]+==ERROR:" ${ASAN_LOGS} >/dev/null 2>&1
+}
+
+# Print the ASan/Sanitizer error line(s) for this trial, prefixed with file:line
+# (grep -n), so the report can be traced back to the exact asan.log.<pid> location.
+get_asan_error_lines(){
+  grep -nE "==[0-9]+==ERROR:" ${RUNDIR}/${TRIAL}/asan.log.* 2>/dev/null
+}
+
 # Start vault server
 start_vault_server(){
   echoit "Setting up vault server"
@@ -1702,6 +1718,22 @@ pstress_test(){
         --log-output=none --log-error-verbosity=3 --log-error=${RUNDIR}/${TRIAL}/log/master.err"
     fi
 
+    if [ -n "${LIBASAN_SO}" ]; then
+        if [ ${GDB_MODE} -eq 1 ]; then
+            # Do not redirect via log_path here: leave ASan diagnostics on stderr so they
+            # print directly in the gdb terminal (alongside the trapped SIGABRT from
+            # abort_on_error=1), instead of being siloed into a file nobody is watching.
+            RUN_ASAN_OPTIONS="${ASAN_OPTIONS}"
+        elif [ -n "${ASAN_OPTIONS}" ]; then
+            RUN_ASAN_OPTIONS="${ASAN_OPTIONS}:log_path=${RUNDIR}/${TRIAL}/asan.log"
+        else
+            RUN_ASAN_OPTIONS="log_path=${RUNDIR}/${TRIAL}/asan.log"
+        fi
+        INLINE_ENV_VARS="setarch $(uname -m) -R env LD_PRELOAD=${LIBASAN_SO} ASAN_OPTIONS=${RUN_ASAN_OPTIONS}"
+    else
+        INLINE_ENV_VARS=""
+    fi
+
     if [ $RR_MODE -ge 1 ]; then
       if [ $RR_MODE -eq 2 ]; then
         RR_TRACE_DIR=${RUNDIR}/${TRIAL}/rr_data
@@ -2126,6 +2158,10 @@ EOF
         elif [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null)" != "" ]; then
           echoit "mysqld error detected in the log via search_string.sh scan"
           ISSUE_FOUND=1
+        elif check_asan_error; then
+          echoit "ASan issue detected in $(ls ${RUNDIR}/${TRIAL}/asan.log.* 2>/dev/null)"
+          echoit "Bug found (as per ASan log): $(get_asan_error_lines)"
+          ISSUE_FOUND=1
         fi
         if [ $ISSUE_FOUND = 1 ]; then
           echoit "Bug found (as per error log): $(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err)"
@@ -2151,6 +2187,11 @@ EOF
         fi
         if [ "$(${SCRIPT_PWD}/search_string.sh ${RUNDIR}/${TRIAL}/log/master.err 2>/dev/null)" != "" ]; then
           echoit "mysqld error detected in the log via search_string.sh scan"
+          ISSUE_FOUND=1
+        fi
+        if check_asan_error; then
+          echoit "ASan issue detected in $(ls ${RUNDIR}/${TRIAL}/asan.log.* 2>/dev/null)"
+          echoit "Bug found (as per ASan log): $(get_asan_error_lines)"
           ISSUE_FOUND=1
         fi
         if [ $ISSUE_FOUND = 1 ]; then

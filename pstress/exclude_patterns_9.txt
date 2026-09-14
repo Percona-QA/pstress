@@ -5,6 +5,11 @@
 # (2). The file contains list of regular expressions to tag a particular error.            #
 # (3). Any known crash/error can be included in this file with a unique signature (regex)  #
 # (4). Line starting with a (#) will be treated as a comment & shall be ignored            #
+# (5). For assertion signatures: search_string.sh strips everything before the literal     #
+#      word "Assertion"/"Failing assertion:" before matching (to normalize log-line        #
+#      prefixes), so a pattern must NOT rely on file/function text appearing before that   #
+#      word (e.g. "field.cc:...:some_func():.*Assertion..." can never match) - start the   #
+#      pattern at "Assertion"/"Failing assertion:" itself instead.                         #
 #                                                                                          #
 # How to use:                                                                              #
 # (1). Add a comment with the Bug# and tag it against the signature                        #
@@ -16,4 +21,4 @@
 ############################################################################################
 
 # PS-11023
-.*handler::ha_index_end\(\):.*Assertion.*inited.*==.*INDEX.*
+.*Assertion.*inited.*==.*INDEX.*
