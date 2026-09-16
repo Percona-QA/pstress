@@ -106,6 +106,23 @@ def bash_index(seq, idx):
     return seq[idx] if 0 <= idx < len(seq) else ""
 
 
+def bash_unreadable(value):
+    """Mimic `[ ! -r ${value} ]` (unquoted) from pstress-run.sh.
+
+    When `value` is empty, the unquoted expansion vanishes from the command
+    line entirely, degenerating the test to `[ ! -r ]` -- a 2-argument test
+    that POSIX evaluates as "negate whether the literal string -r is
+    non-empty", i.e. always false. So bash treats an unset/empty variable as
+    "readable" (the check is skipped), not as "unreadable". Several
+    pstress-run-*.conf files (all PXC/GR ones) rely on exactly this to leave
+    OPTIONS_INFILE unset. A naive os.access("", ...) check would say
+    "unreadable" and abort where the shell script would not.
+    """
+    if value == "":
+        return False
+    return not os.access(value, os.R_OK)
+
+
 def pids_matching(*substrings, exclude_grep=True):
     """Roughly equivalent to: ps -ef | grep <substrings...> | awk '{print $2}'."""
     try:
@@ -787,7 +804,13 @@ class PstressRun:
                 f"sed -i 's|safe_to_bootstrap:.*$|safe_to_bootstrap: 1|' {workdir}/{self.trial}/node1/grastate.dat\n",
             )
 
-        pxc_laddrs = []
+        # PXC_LADDRS in the shell script starts life as PXC_LADDRS="" (a plain
+        # scalar) and is then grown with PXC_LADDRS+=("$LADDR1"). Bash's `+=`
+        # on a variable that is not already an array keeps the prior scalar
+        # value as index 0 and appends new elements from index 1 onward, so
+        # the three loop iterations land at indices 1, 2, 3 (not 0, 1, 2) --
+        # matching how pxc_startup() later reads ${PXC_LADDRS[1..3]}.
+        pxc_laddrs = [""]
         datadir = None
         for i in range(1, 4):
             if is_startup == "startup":
@@ -2036,11 +2059,11 @@ class PstressRun:
         if re.match(r"^/pstress", pstress_bin):
             print(f"Assert! $PSTRESS_BIN == '{pstress_bin}' - is it missing the $SCRIPT_PWD prefix?")
             sys.exit(1)
-        if not os.access(pstress_bin, os.R_OK):
+        if bash_unreadable(pstress_bin):
             print(f"{pstress_bin} specified in the configuration file used ({config_path}) cannot be found/read")
             sys.exit(1)
         options_infile = self.s("OPTIONS_INFILE")
-        if not os.access(options_infile, os.R_OK):
+        if bash_unreadable(options_infile):
             print(f"{options_infile} specified in the configuration file used ({config_path}) cannot be found/read")
             sys.exit(1)
         self.pstress_bin = pstress_bin
