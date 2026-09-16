@@ -305,6 +305,7 @@ class PstressRun:
         self.count = 0
         self.isstarted = 0
         self.timeout_increment_applied = 0
+        self._tracked_procs = {}
 
     # ------------------------------------------------------------------
     # Config accessors (bash variables are always strings; these coerce)
@@ -355,20 +356,37 @@ class PstressRun:
     def kill_server(self, sig, pid, proc=None):
         if not pid:
             return
+        pid = int(pid)
         try:
-            os.kill(int(pid), sig)
+            os.kill(pid, sig)
         except (ProcessLookupError, PermissionError, ValueError, TypeError):
+            self._tracked_procs.pop(pid, None)
             return
+
+        # `kill_server 9 $PID && wait $PID` in pstress-run.sh only really
+        # *blocks* when $PID is a genuine job-control child of the running
+        # shell (e.g. the mysqld it just backgrounded with `&`); for a PID
+        # discovered via a fresh `ps -ef` scan (someone else's process, or
+        # this shell's own but already exited) `wait` returns immediately.
+        # subprocess.Popen.wait() only works for our own tracked children
+        # too, so mirror that split rather than always doing a best-effort
+        # poll: a tracked child gets a real, confirmed wait (matching bash's
+        # guarantee that the port is released before the caller continues);
+        # anything else gets the best-effort existence poll.
+        if proc is None:
+            proc = self._tracked_procs.get(pid)
         if proc is not None:
             try:
                 proc.wait(timeout=60)
             except Exception:
                 pass
+            self._tracked_procs.pop(pid, None)
             return
+
         # Best-effort: PID may not be our child, so just poll briefly.
         for _ in range(60):
             try:
-                os.kill(int(pid), 0)
+                os.kill(pid, 0)
             except (ProcessLookupError, ValueError, TypeError):
                 return
             time.sleep(0.5)
@@ -951,13 +969,15 @@ class PstressRun:
         return self.i("ENCRYPTION_RUN") == 1
 
     def _spawn(self, cmd, out_path=None, env=None):
-        """Start a background shell command; returns the child's PID and keeps a handle."""
+        """Start a background shell command; returns the child's PID and keeps
+        a handle so kill_server() can later do a real, confirmed wait()
+        instead of a best-effort existence poll (see kill_server)."""
         if out_path:
             f = open(out_path, "ab")
             proc = subprocess.Popen(["/bin/bash", "-c", cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
         else:
             proc = subprocess.Popen(["/bin/bash", "-c", cmd], env=env)
-        self._last_proc = proc
+        self._tracked_procs[proc.pid] = proc
         return proc.pid
 
     # ------------------------------------------------------------------
