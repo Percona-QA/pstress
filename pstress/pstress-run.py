@@ -2417,8 +2417,43 @@ class PstressRun:
         ]
         write_text(f"{basedir}/my.cnf", "\n".join(lines) + "\n")
 
+    def _kill_stale_template_processes(self, basedir):
+        """Safety net with no equivalent in pstress-run.sh: the template
+        listen ports are drawn from the same tiny 21-value pool used for
+        every trial (see pxc_startup()/gr_startup()), but template creation
+        runs exactly once per invocation with nothing upstream to kill
+        leftovers from a *previous* invocation that never shut its own
+        templates down cleanly (crashed, was kill -9'd, OOM-killed, etc).
+        Each invocation's WORKDIR embeds a fresh $RANDOMD, so those leftover
+        processes can't be found by path -- match on basedir + ".template"
+        instead, which is stable across invocations of the same conf file.
+        """
+        pids = pids_matching(basedir, ".template")
+        if pids:
+            self.echoit(
+                f"Found {len(pids)} leftover *.template server process(es) from a previous run "
+                f"(basedir={basedir}); cleaning up before creating new templates..."
+            )
+            for pid in pids:
+                self.kill_server(9, pid)
+
+    def _shutdown_template_node(self, basedir, workdir, n):
+        socket = f"{workdir}/node{n}.template/node{n}_socket.sock"
+        sh(f"{basedir}/bin/mysqladmin -uroot -S{socket} shutdown > /dev/null 2>&1")
+        # Confirm the server actually stopped responding (and so released its
+        # ports) rather than trusting `mysqladmin shutdown` alone -- that
+        # command can return before mysqld has fully exited, which is
+        # exactly the kind of gap that leaves the next invocation's random
+        # port draw colliding with this run's own still-dying template node.
+        for _ in range(30):
+            if sh_status(f"{basedir}/bin/mysqladmin -uroot -S{socket} ping > /dev/null 2>&1") != 0:
+                return
+            time.sleep(1)
+        self.echoit(f"WARNING: node{n}.template did not stop responding to ping within 30s of shutdown")
+
     def _create_cluster_templates(self, basedir, workdir):
         if self.pxc == 1:
+            self._kill_stale_template_processes(basedir)
             self.echoit("Ensuring PXC templates created for pstress run..")
             self.pxc_startup("startup")
             time.sleep(5)
@@ -2427,12 +2462,14 @@ class PstressRun:
                     self.echoit(f"PXC node{n}.template started")
                 else:
                     self.echoit(f"Assert: PXC data template{n} creation failed..")
+                    self._kill_stale_template_processes(basedir)
                     sys.exit(1)
                 time.sleep(2)
             self.echoit("Created PXC data templates for pstress run..")
             for n in (3, 2, 1):
-                sh(f"{basedir}/bin/mysqladmin -uroot -S{workdir}/node{n}.template/node{n}_socket.sock shutdown > /dev/null 2>&1")
+                self._shutdown_template_node(basedir, workdir, n)
         elif self.grp_rpl == 1:
+            self._kill_stale_template_processes(basedir)
             self.echoit("Ensuring Group Replication templates created for pstress run..")
             self.gr_startup("startup")
             time.sleep(5)
@@ -2441,10 +2478,11 @@ class PstressRun:
                     self.echoit(f"Group Replication node{n}.template started")
                 else:
                     self.echoit("Assert: GR data template creation failed..")
+                    self._kill_stale_template_processes(basedir)
                     sys.exit(1)
             self.echoit("Created Group Replication data templates for pstress run..")
             for n in (3, 2, 1):
-                sh(f"{basedir}/bin/mysqladmin -uroot -S{workdir}/node{n}.template/node{n}_socket.sock shutdown > /dev/null 2>&1")
+                self._shutdown_template_node(basedir, workdir, n)
 
     def _run_kmip_trials(self, rundir, workdir):
         if not self.kmip_configs:
