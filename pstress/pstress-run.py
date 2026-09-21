@@ -789,6 +789,25 @@ class PstressRun:
             self.err_file = f"{rundir}/{self.trial}/node{nr}/node{nr}.err"
             self.socket = f"{rundir}/{self.trial}/node{nr}/node{nr}_socket.sock"
 
+    def _kill_cluster_startup_siblings(self):
+        """Kill every node already spawned by the in-progress pxc_startup()/
+        gr_startup() call before a startup failure hard-exits the script.
+
+        Without this, a node that fails to start (port conflict, crash, ...)
+        left its already-started siblings running: sys.exit() only tears
+        down this Python process, and subprocess children are not killed
+        automatically when their parent exits -- they're simply re-parented
+        to init and keep running, still bound to their gmcast/mysqld ports.
+        That leaked node then sits there indefinitely, available to collide
+        with some *future* trial's (or future run's) random port draw --
+        which is exactly the delayed, hard-to-reproduce "Address already in
+        use" failures reported several trials (or runs) after the original
+        failure, not at the failure itself.
+        """
+        for pid in getattr(self, "_cluster_node_pids", []):
+            self.kill_server(9, pid)
+        self._cluster_node_pids = []
+
     def pxc_startup_status(self, nr):
         basedir = self.s("BASEDIR")
         for x in range(0, self.pxc_start_timeout + 1):
@@ -797,6 +816,7 @@ class PstressRun:
                 return
             if x == self.pxc_start_timeout:
                 print(f"Node{nr} failed to start. Exiting")
+                self._kill_cluster_startup_siblings()
                 sys.exit(1)
 
     def pxc_startup(self, is_startup=""):
@@ -809,6 +829,7 @@ class PstressRun:
         self.socket1 = f"{rundir}/{self.trial}/node1/node1_socket.sock"
         self.socket2 = f"{rundir}/{self.trial}/node2/node2_socket.sock"
         self.socket3 = f"{rundir}/{self.trial}/node3/node3_socket.sock"
+        self._cluster_node_pids = []
 
         if check_for_version(mysql_version, "5.7.0"):
             mid = f"{self.mysqld_bin} --no-defaults --initialize-insecure --basedir={basedir}"
@@ -915,16 +936,19 @@ class PstressRun:
         self.get_error_socket_file(1, is_startup == "startup")
         cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n1.cnf {ps_extra} {pxc_extra} --wsrep-new-cluster > {shlex.quote(self.err_file)} 2>&1"
         self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd)
+        self._cluster_node_pids.append(self.mpid)
         self.pxc_startup_status(1)
 
         self.get_error_socket_file(2, is_startup == "startup")
         cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n2.cnf {ps_extra} {pxc_extra} > {shlex.quote(self.err_file)} 2>&1"
         self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd)
+        self._cluster_node_pids.append(self.mpid)
         self.pxc_startup_status(2)
 
         self.get_error_socket_file(3, is_startup == "startup")
         cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n3.cnf {ps_extra} {pxc_extra} > {shlex.quote(self.err_file)} 2>&1"
         self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd)
+        self._cluster_node_pids.append(self.mpid)
         self.pxc_startup_status(3)
 
         if is_startup == "startup":
@@ -1024,6 +1048,7 @@ class PstressRun:
         self.socket1 = f"{rundir}/{self.trial}/node1/node1_socket.sock"
         self.socket2 = f"{rundir}/{self.trial}/node2/node2_socket.sock"
         self.socket3 = f"{rundir}/{self.trial}/node3/node3_socket.sock"
+        self._cluster_node_pids = []
 
         mid = f"{self.mysqld_bin} --no-defaults --initialize-insecure --basedir={basedir}"
         ps_extra = self.ps_extra
@@ -1099,6 +1124,7 @@ class PstressRun:
                 if x == self.grp_rpl_start_timeout:
                     self.echoit(f"ERROR: Node{nr} failed to start within the stipulated {self.grp_rpl_start_timeout}s timeout period")
                     self.echoit(f"Check error logs: {self.err_file}")
+                    self._kill_cluster_startup_siblings()
                     sys.exit(1)
 
         encryption_run = self.b_encryption_run()
@@ -1124,10 +1150,11 @@ class PstressRun:
                     sys.exit(1)
             else:
                 cmd = base
-            self._spawn(f"{cmd} > {shlex.quote(self.err_file)} 2>&1")
+            self._cluster_node_pids.append(self._spawn(f"{cmd} > {shlex.quote(self.err_file)} 2>&1"))
             gr_startup_status(nr)
             if sh_status(f"{basedir}/bin/mysqladmin -uroot -S{shlex.quote(self.socket)} ping > /dev/null 2>&1") != 0:
                 self.echoit(f"ERROR: Unable to ping Node {nr}")
+                self._kill_cluster_startup_siblings()
                 sys.exit(1)
 
         start_node(1, datadir1, rbase1)
