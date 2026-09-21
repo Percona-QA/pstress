@@ -971,12 +971,29 @@ class PstressRun:
     def _spawn(self, cmd, out_path=None, env=None):
         """Start a background shell command; returns the child's PID and keeps
         a handle so kill_server() can later do a real, confirmed wait()
-        instead of a best-effort existence poll (see kill_server)."""
+        instead of a best-effort existence poll (see kill_server).
+
+        The command is run as `bash -c "exec <cmd>"`, not `bash -c "<cmd>"`.
+        Without `exec`, bash *forks* a child to run <cmd> (verified: a plain
+        `bash -c "sleep 30 > f 2>&1"` leaves both a bash process and a
+        separate sleep child running, with Popen.pid pointing at the bash
+        wrapper, not sleep). That means every PID this class tracks as
+        "the server" -- self.mpid, and everything kill_server()/pids_matching()
+        later act on -- was actually the bash wrapper's PID. Killing the
+        wrapper orphans the real mysqld (re-parented to init) instead of
+        killing it, so it keeps its gmcast/wsrep listen port bound; the next
+        trial's random port draw then hits "Address already in use" as soon
+        as it collides with that leaked process. `exec` makes bash replace
+        itself with <cmd> (confirmed empirically: PID is identical before and
+        after), so Popen.pid is always the real server PID and killing it is
+        guaranteed to reach the actual process.
+        """
+        bash_cmd = f"exec {cmd}"
         if out_path:
             f = open(out_path, "ab")
-            proc = subprocess.Popen(["/bin/bash", "-c", cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
+            proc = subprocess.Popen(["/bin/bash", "-c", bash_cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
         else:
-            proc = subprocess.Popen(["/bin/bash", "-c", cmd], env=env)
+            proc = subprocess.Popen(["/bin/bash", "-c", bash_cmd], env=env)
         self._tracked_procs[proc.pid] = proc
         return proc.pid
 
