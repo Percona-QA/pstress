@@ -819,13 +819,43 @@ class PstressRun:
                 self._kill_cluster_startup_siblings()
                 sys.exit(1)
 
+    def _pick_free_port_base(self, ports_for_base, label, max_attempts=30):
+        """Draw a random `(RANDOM%21+10)*1000` port base and confirm every
+        port this trial will actually bind -- mysqld's own port and whatever
+        `ports_for_base(base)` adds per node (e.g. PXC's gcomm rbase+8, or
+        GR's group_replication_local_address rbase+100+i) -- is genuinely
+        free before committing to it. Not just "should be free by now"
+        because we killed the previous occupant.
+
+        Reuses validate_port_available() (originally written for KMIP), which
+        itself retries for up to ~20s per port. That matters here for exactly
+        the failure this is fixing: a port that's technically free of a live
+        process but still draining (TIME_WAIT) or a leftover from a run this
+        cleanup didn't reach gets a real chance to clear instead of failing
+        the bind immediately. If a whole port base is still busy after that,
+        we draw a *different* random base and try again, rather than looping
+        on the same doomed one.
+        """
+        for attempt in range(1, max_attempts + 1):
+            base = (random.randint(0, 32767) % 21 + 10) * 1000
+            candidate_ports = sorted(set(ports_for_base(base)))
+            if all(self.validate_port_available(p) for p in candidate_ports):
+                return base
+            self.echoit(
+                f"{label} port base {base} ({candidate_ports}) still in use after waiting; "
+                f"picking a different base (attempt {attempt}/{max_attempts})..."
+            )
+        self.echoit(f"ERROR: Could not find a free {label} port range after {max_attempts} attempts")
+        sys.exit(1)
+
     def pxc_startup(self, is_startup=""):
         basedir = self.s("BASEDIR")
         rundir = self.s("RUNDIR")
         workdir = self.s("WORKDIR")
         mysql_version = getattr(self, "mysql_version", "")
         addr = "127.0.0.1"
-        rport = (random.randint(0, 32767) % 21 + 10) * 1000
+        rport = self._pick_free_port_base(
+            lambda base: [base + (100 * i) + off for i in (1, 2, 3) for off in (0, 8)], "PXC")
         self.socket1 = f"{rundir}/{self.trial}/node1/node1_socket.sock"
         self.socket2 = f"{rundir}/{self.trial}/node2/node2_socket.sock"
         self.socket3 = f"{rundir}/{self.trial}/node3/node3_socket.sock"
@@ -1032,8 +1062,12 @@ class PstressRun:
 
         if is_startup == "startup":
             addr = "127.0.0.1"
-            rport = random.randint(0, 32767) % 21 + 10
-            rbase = rport * 1000
+            # Chosen once here and reused for every trial's node for the life
+            # of the run (see the `else` branch below), so -- unlike PXC,
+            # which redraws per trial -- there's no per-trial recheck to add;
+            # just make sure the one-time draw isn't already busy.
+            rbase = self._pick_free_port_base(
+                lambda base: [base + i for i in (1, 2, 3)] + [base + 100 + i for i in (1, 2, 3)], "GR")
             rbase1, rbase2, rbase3 = rbase + 1, rbase + 2, rbase + 3
             laddr1 = f"{addr}:{rbase + 101}"
             laddr2 = f"{addr}:{rbase + 102}"
