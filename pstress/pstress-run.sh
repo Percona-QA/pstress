@@ -2442,7 +2442,11 @@ elif [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
 fi
 
 # Start actual pstress testing
-echoit "Starting pstress testing iterations..."
+if [ ${EXECUTE_SQL_FILES_MODE} -eq 0 ]; then
+  echoit "Starting pstress testing iterations..."
+else
+  echoit "Starting SQL files execution..."
+fi
 if [[ ${COMPONENT_KEYRING_KMIP} -eq 1 ]]; then
     # Check if KMIP_CONFIGS has any types defined.
     if [[ ${#KMIP_CONFIGS[@]} -eq 0 ]]; then
@@ -2509,17 +2513,6 @@ else
     done
 fi
 
-if [ ${EXECUTE_SQL_FILES_MODE} -eq 0 ]; then
-  # Start actual pstress testing
-  echoit "Starting pstress testing iterations..."
-else
-  echoit "Starting SQL files execution..."
-fi
-COUNT=0
-for X in $(seq 1 ${TRIALS}); do
-  pstress_test
-  COUNT=$[ $COUNT + 1 ]
-done
 # All done, wrap up pstress run
 echoit "pstress finished requested number of trials (${TRIALS})... Terminating..."
 if [[ ${PXC} -eq 1 || ${GRP_RPL} -eq 1 ]]; then
