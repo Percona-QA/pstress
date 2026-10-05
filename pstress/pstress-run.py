@@ -37,6 +37,7 @@ import signal
 import string
 import subprocess
 import sys
+import threading
 import time
 import uuid as uuid_module
 from pathlib import Path
@@ -1506,19 +1507,47 @@ class PstressRun:
             if not single_threaded:
                 self.echoit(f"Started {len(procs)} SQL file execution processes: {' '.join(str(p.pid) for p in procs)}")
 
-                def timeout_watcher():
-                    time.sleep(sql_timeout)
+                # pstress-run.sh's watcher is a `( ... ) &` *subshell* -- a
+                # forked child process with its own copy-on-write snapshot of
+                # `pids` taken at fork time, so a late-firing watcher from
+                # loop i can never see loop i+1's reassigned array; they're
+                # separate processes with independent memory. A Python
+                # thread shares this interpreter's memory, so closing over
+                # the *variable* `procs` (reassigned fresh every loop
+                # iteration) instead of *this* iteration's list would let a
+                # watcher still asleep when the next loop starts act on the
+                # wrong iteration's processes -- or on none at all once this
+                # function has returned. Binding `procs` as a default
+                # argument (evaluated once, at this exact point) gives this
+                # watcher its own fixed reference, matching the subshell's
+                # snapshot semantics.
+                def timeout_watcher(procs=procs):
                     if kill_and_restart:
+                        # bash: the subshell always sleeps the full
+                        # SQL_FILES_TIMEOUT unconditionally before checking
+                        # SQL_FILES_KILL_AND_RESTART_SERVER -- i.e. with
+                        # restart enabled, every loop iteration takes at
+                        # least that long and always restarts the server,
+                        # regardless of whether the SQL jobs finished early.
+                        # No early-cancel here matches that on purpose.
+                        time.sleep(sql_timeout)
                         self.echoit("Timeout reached. Killing and restarting server")
                         self.kill_and_restart_server()
+                    else:
+                        # bash: same subshell, but the parent explicitly
+                        # `kill`s it the moment all jobs finish naturally --
+                        # there's nothing left to kill, so no reason to sleep
+                        # out the rest of the timeout first. stop_event
+                        # mirrors that early cancellation.
+                        if stop_event.wait(timeout=sql_timeout):
+                            return
                     self.echoit("Killing remaining SQL execution jobs...")
                     for p in procs:
                         if p.poll() is None:
                             p.terminate()
                             self.echoit(f"Killed SQL file execution process {p.pid}")
 
-                import threading
-
+                stop_event = threading.Event()
                 watcher = threading.Thread(target=timeout_watcher, daemon=True)
                 watcher.start()
 
@@ -1526,8 +1555,19 @@ class PstressRun:
                     p.wait()
 
                 if kill_and_restart:
-                    watcher.join(timeout=1)
-                # else: nothing to kill, watcher thread will exit on its own.
+                    # bash: unconditional `wait $timeout_pid` -- the watcher
+                    # may currently be mid-restart (it always runs once its
+                    # full sleep elapses), so wait for it to actually finish
+                    # rather than racing ahead while it's still restarting
+                    # the server out from under the next loop iteration.
+                    watcher.join()
+                else:
+                    # bash: `kill "$timeout_pid"`. We can't force-kill a
+                    # Python thread, so signal it to stop instead -- it
+                    # should wake within microseconds -- then confirm with a
+                    # short join rather than just assuming it worked.
+                    stop_event.set()
+                    watcher.join(timeout=5)
 
             self.echoit(f"Loop {loop_i} of {number_of_times} completed")
 
