@@ -199,15 +199,32 @@ set -a
 SCRIPT_PWD="$1"
 RANDOMD="$2"
 CONFIG_FILE="$3"
-before_vars=$(compgen -v)
+# Snapshot every scalar's *value* (not just its name) before sourcing. A
+# name-only before/after diff (the previous approach) misses a conf file
+# reassigning a variable whose name was already present in the calling
+# environment -- e.g. a Jenkins build exporting BASEDIR/THREADS/TRIALS as
+# build parameters -- since the name exists in both snapshots even though
+# bash's `source` did overwrite its value. Comparing values catches that
+# reassignment while still excluding genuinely untouched ambient variables.
+declare -A __before_val
+for __v in $(compgen -v); do
+  case "$__v" in
+    __before_val|__v|BASH_COMMAND|BASH_SUBSHELL|BASHPID|EPOCHREALTIME|EPOCHSECONDS|LINENO|RANDOM|SRANDOM|SECONDS) continue ;;
+  esac
+  __before_val["$__v"]="${!__v}"
+done
 source "$CONFIG_FILE"
-after_vars=$(compgen -v)
 FS=$'\x1f'
 RS=$'\x1e'
-new_vars=$(comm -13 <(echo "$before_vars" | sort) <(echo "$after_vars" | sort))
-for v in $new_vars; do
+for v in $(compgen -v); do
   case "$v" in
-    before_vars|after_vars|new_vars|FS|RS|v|SCRIPT_PWD|RANDOMD|CONFIG_FILE) continue ;;
+    # Driver-internal names, plus bash's own dynamically-computed special
+    # variables (their value differs on every read regardless of whether
+    # the conf touched them, which would otherwise look like a "change"
+    # to the value-based diff below and leak them into the parsed config
+    # as noise).
+    __before_val|__v|FS|RS|v|SCRIPT_PWD|RANDOMD|CONFIG_FILE) continue ;;
+    BASH_COMMAND|BASH_SUBSHELL|BASHPID|EPOCHREALTIME|EPOCHSECONDS|LINENO|RANDOM|SRANDOM|SECONDS) continue ;;
   esac
   decl=$(declare -p "$v" 2>/dev/null)
   case "$decl" in
@@ -229,7 +246,9 @@ for v in $new_vars; do
       ;;
     *)
       val="${!v}"
-      printf 'VAR%s%s%s%s%s' "$FS" "$v" "$FS" "$val" "$RS"
+      if [ -z "${__before_val[$v]+x}" ] || [ "$val" != "${__before_val[$v]}" ]; then
+        printf 'VAR%s%s%s%s%s' "$FS" "$v" "$FS" "$val" "$RS"
+      fi
       ;;
   esac
 done
@@ -964,20 +983,20 @@ class PstressRun:
         pxc_extra = self.pxc_extra
 
         self.get_error_socket_file(1, is_startup == "startup")
-        cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n1.cnf {ps_extra} {pxc_extra} --wsrep-new-cluster > {shlex.quote(self.err_file)} 2>&1"
-        self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd)
+        cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n1.cnf {ps_extra} {pxc_extra} --wsrep-new-cluster"
+        self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd, out_path=self.err_file)
         self._cluster_node_pids.append(self.mpid)
         self.pxc_startup_status(1)
 
         self.get_error_socket_file(2, is_startup == "startup")
-        cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n2.cnf {ps_extra} {pxc_extra} > {shlex.quote(self.err_file)} 2>&1"
-        self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd)
+        cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n2.cnf {ps_extra} {pxc_extra}"
+        self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd, out_path=self.err_file)
         self._cluster_node_pids.append(self.mpid)
         self.pxc_startup_status(2)
 
         self.get_error_socket_file(3, is_startup == "startup")
-        cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n3.cnf {ps_extra} {pxc_extra} > {shlex.quote(self.err_file)} 2>&1"
-        self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd)
+        cmd = f"{self.mysqld_bin} --defaults-file={datadir}/n3.cnf {ps_extra} {pxc_extra}"
+        self.mpid = self._spawn(("rr " + cmd) if rr_mode >= 1 else cmd, out_path=self.err_file)
         self._cluster_node_pids.append(self.mpid)
         self.pxc_startup_status(3)
 
@@ -1023,31 +1042,47 @@ class PstressRun:
         return self.i("ENCRYPTION_RUN") == 1
 
     def _spawn(self, cmd, out_path=None, env=None):
-        """Start a background shell command; returns the child's PID and keeps
-        a handle so kill_server() can later do a real, confirmed wait()
-        instead of a best-effort existence poll (see kill_server).
+        """Start a backgrounded server process directly (argv, no shell);
+        returns the child's PID and keeps a handle so kill_server() can
+        later do a real, confirmed wait() instead of a best-effort
+        existence poll (see kill_server). `cmd` must have no shell
+        redirection embedded in it -- pass `out_path` instead.
 
-        The command is run as `bash -c "exec <cmd>"`, not `bash -c "<cmd>"`.
-        Without `exec`, bash *forks* a child to run <cmd> (verified: a plain
-        `bash -c "sleep 30 > f 2>&1"` leaves both a bash process and a
-        separate sleep child running, with Popen.pid pointing at the bash
-        wrapper, not sleep). That means every PID this class tracks as
-        "the server" -- self.mpid, and everything kill_server()/pids_matching()
-        later act on -- was actually the bash wrapper's PID. Killing the
-        wrapper orphans the real mysqld (re-parented to init) instead of
-        killing it, so it keeps its gmcast/wsrep listen port bound; the next
-        trial's random port draw then hits "Address already in use" as soon
-        as it collides with that leaked process. `exec` makes bash replace
-        itself with <cmd> (confirmed empirically: PID is identical before and
-        after), so Popen.pid is always the real server PID and killing it is
-        guaranteed to reach the actual process.
+        This used to run `bash -c "exec <cmd>"` (with redirection embedded
+        in the string at some call sites). Two real bugs came from that:
+
+        1. Without `exec`, bash *forks* a child to run <cmd> instead of
+           replacing itself, so Popen.pid was the bash wrapper's PID, not
+           the server's -- killing it orphaned the real mysqld instead of
+           killing it, leaking its gmcast/wsrep port to collide with a
+           later trial's random port draw. `exec` fixed this, but only by
+           relying on bash's "replace instead of fork" optimization.
+        2. Routing an already-built command *string* through a fresh
+           `bash -c` re-tokenizes it from scratch, so any shell
+           metacharacter embedded in config-file-controlled data -- e.g. a
+           literal `;` inside a RocksDB option value such as
+           `--loose-rocksdb_default_cf_options=write_buffer_size=256m;max_write_buffer_number=1`
+           in rocksdb_options_8042.txt -- gets reinterpreted as a command
+           separator. `exec` only replaced the shell with the part of the
+           string *before* that `;`, silently dropping every flag after it
+           (--basedir, --datadir, --socket, --port, --log-error, ...), so
+           mysqld started against compiled-in defaults instead and the
+           trial failed to start.
+
+        Splitting on whitespace and calling Popen directly (no shell at
+        all) fixes both at once: Popen.pid is always the real process
+        (nothing to orphan), and a literal `;`/`|`/`&` inside a token is
+        never special -- it stays part of that one argv entry, exactly
+        as it would when the original bash script expanded an *already
+        built* command string unquoted (word-splitting on whitespace, no
+        re-parsing for shell metacharacters or quote removal).
         """
-        bash_cmd = f"exec {cmd}"
+        argv = cmd.split()
         if out_path:
             f = open(out_path, "ab")
-            proc = subprocess.Popen(["/bin/bash", "-c", bash_cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
+            proc = subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, env=env)
         else:
-            proc = subprocess.Popen(["/bin/bash", "-c", bash_cmd], env=env)
+            proc = subprocess.Popen(argv, env=env)
         self._tracked_procs[proc.pid] = proc
         return proc.pid
 
@@ -1074,7 +1109,15 @@ class PstressRun:
             laddr3 = f"{addr}:{rbase + 103}"
         else:
             addr = getattr(self, "gr_addr", "127.0.0.1")
-            rbase1 = rbase2 = rbase3 = 0
+            # Must match the ports mysqld actually bound to during the
+            # one-time startup draw above (gr_rbase1-3), not 0 -- mysqld
+            # does not treat --port=0 as "reuse whatever port this node
+            # had before", it binds the literal port 0 (effectively the
+            # compiled-in default), so every node collided on the same
+            # port and every trial after the first failed to start.
+            rbase1 = getattr(self, "gr_rbase1", 0)
+            rbase2 = getattr(self, "gr_rbase2", 0)
+            rbase3 = getattr(self, "gr_rbase3", 0)
             laddr1 = getattr(self, "gr_laddr1", "")
             laddr2 = getattr(self, "gr_laddr2", "")
             laddr3 = getattr(self, "gr_laddr3", "")
@@ -1094,6 +1137,7 @@ class PstressRun:
             self.ps_extra = ps_extra
             self.gr_addr = addr
             self.gr_laddr1, self.gr_laddr2, self.gr_laddr3 = laddr1, laddr2, laddr3
+            self.gr_rbase1, self.gr_rbase2, self.gr_rbase3 = rbase1, rbase2, rbase3
 
         if is_startup == "startup":
             datadir1 = f"{workdir}/node1.template"
@@ -1184,7 +1228,7 @@ class PstressRun:
                     sys.exit(1)
             else:
                 cmd = base
-            self._cluster_node_pids.append(self._spawn(f"{cmd} > {shlex.quote(self.err_file)} 2>&1"))
+            self._cluster_node_pids.append(self._spawn(cmd, out_path=self.err_file))
             gr_startup_status(nr)
             if sh_status(f"{basedir}/bin/mysqladmin -uroot -S{shlex.quote(self.socket)} ping > /dev/null 2>&1") != 0:
                 self.echoit(f"ERROR: Unable to ping Node {nr}")
@@ -2037,8 +2081,8 @@ class PstressRun:
 
         self.echoit(cmd)
         pstress_log = f"{trial_dir}/pstress.log"
-        pqproc = subprocess.Popen(["/bin/bash", "-c", cmd], stdout=open(pstress_log, "ab"), stderr=subprocess.STDOUT)
-        self.pqpid = pqproc.pid
+        self.pqpid = self._spawn(cmd, out_path=pstress_log)
+        pqproc = self._tracked_procs[self.pqpid]
         self.timeout_reached = 0
         self.echoit(f"pstress running (Max duration: {pstress_run_timeout}s)...")
         for x in range(1, pstress_run_timeout + 1):
