@@ -376,11 +376,6 @@ class PstressRun:
         if not pid:
             return
         pid = int(pid)
-        try:
-            os.kill(pid, sig)
-        except (ProcessLookupError, PermissionError, ValueError, TypeError):
-            self._tracked_procs.pop(pid, None)
-            return
 
         # `kill_server 9 $PID && wait $PID` in pstress-run.sh only really
         # *blocks* when $PID is a genuine job-control child of the running
@@ -394,6 +389,25 @@ class PstressRun:
         # anything else gets the best-effort existence poll.
         if proc is None:
             proc = self._tracked_procs.get(pid)
+
+        # For a process we ourselves spawned (via _spawn(), which sets
+        # start_new_session=True), pid is also its process-group id -- kill
+        # the whole group so helper processes it forked on its own (PXC's
+        # SST handlers: wsrep_sst_xtrabackup-v2, socat, xtrabackup) go down
+        # with it instead of surviving as orphans that still hold ports/
+        # files. For anything else (a PID merely discovered via a ps -ef
+        # scan, whose group membership we can't vouch for), stick to a
+        # plain single-process kill -- using killpg there risks hitting an
+        # unrelated process sharing that PID's inherited group.
+        try:
+            if proc is not None:
+                os.killpg(pid, sig)
+            else:
+                os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError, ValueError, TypeError, OSError):
+            self._tracked_procs.pop(pid, None)
+            return
+
         if proc is not None:
             try:
                 proc.wait(timeout=60)
@@ -1078,11 +1092,17 @@ class PstressRun:
         re-parsing for shell metacharacters or quote removal).
         """
         argv = cmd.split()
+        # start_new_session=True makes this process its own session/process-
+        # group leader (pid == pgid), instead of inheriting this Python
+        # process's group. That's what lets kill_server() below reach helper
+        # processes a server forks on its own -- e.g. PXC's SST handlers
+        # (wsrep_sst_xtrabackup-v2, socat, xtrabackup) -- by killing the
+        # whole group, not just the mysqld PID we actually launched.
         if out_path:
             f = open(out_path, "ab")
-            proc = subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, env=env)
+            proc = subprocess.Popen(argv, stdout=f, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         else:
-            proc = subprocess.Popen(argv, env=env)
+            proc = subprocess.Popen(argv, env=env, start_new_session=True)
         self._tracked_procs[proc.pid] = proc
         return proc.pid
 
@@ -1512,6 +1532,47 @@ class PstressRun:
         def handler(signum, frame):
             self.ctrl_c()
         signal.signal(signal.SIGINT, handler)
+        # A Jenkins/CI abort sends SIGTERM, not SIGINT -- without this, that
+        # path had NO handler at all (the original bash only trapped
+        # SIGINT too, but bash orphans its background jobs on a plain
+        # SIGTERM-caused exit same as this would without a handler; worth
+        # closing here since it's the same cleanup we already have).
+        signal.signal(signal.SIGTERM, handler)
+
+    def emergency_cleanup(self):
+        """Best-effort safety net, run once no matter *how* run() stops --
+        a sys.exit() from deep in some validation check, an unhandled
+        exception (a missing file, a bad path, anything not explicitly
+        caught), or a normal successful completion. None of those except
+        SIGINT/SIGTERM (handled by ctrl_c()) previously killed anything:
+        subprocess children are not killed automatically just because
+        their parent process exits, so a crash midway through e.g.
+        template creation or the pstress shared-library-error path left
+        every server it had already started running as an orphan.
+
+        Deliberately narrower than ctrl_c(): kills stray processes and
+        drops the ephemeral RUNDIR, but never touches WORKDIR -- that's
+        where real results live, and this runs on *every* exit path
+        (including the normal successful one), so it must never be the
+        thing deciding whether to delete results.
+        """
+        for pid, proc in list(self._tracked_procs.items()):
+            self.kill_server(9, pid, proc=proc)
+        try:
+            stray = pids_matching(self.randomd)
+        except Exception:
+            stray = []
+        for pid in stray:
+            try:
+                os.killpg(pid, 9)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    os.kill(pid, 9)
+                except (ProcessLookupError, PermissionError):
+                    pass
+        rundir = self.s("RUNDIR")
+        if rundir:
+            shutil.rmtree(rundir, ignore_errors=True)
 
     def ctrl_c(self):
         self.echoit("CTRL+C Was pressed. Attempting to terminate running processes...")
@@ -2649,7 +2710,16 @@ def main():
     args = parser.parse_args()
 
     runner = PstressRun(args.configuration_file)
-    runner.run()
+    try:
+        runner.run()
+    finally:
+        # Covers every exit path run() itself doesn't already handle: a
+        # sys.exit() from a validation check, an unhandled exception, or
+        # (harmlessly, since there's nothing left to do by then) a normal
+        # successful return. SIGINT/SIGTERM go through ctrl_c() instead
+        # (installed by run() itself), which additionally decides whether
+        # to also remove WORKDIR -- this does not.
+        runner.emergency_cleanup()
 
 
 if __name__ == "__main__":
