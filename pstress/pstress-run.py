@@ -47,6 +47,15 @@ SCRIPT_PWD = SCRIPT_PATH.parent
 
 DEFAULT_CONFIGURATION_FILE = "pstress-run-80.conf"
 
+# How long kill_server() will wait for a signaled server to actually exit
+# before giving up and moving on regardless. A large ASan build or a big
+# buffer pool can take a while to finish writing a core file after SIGNAL=4;
+# too short a cap risks saving a truncated core (the trial directory gets
+# mv'd while the core is still being written). Not currently exposed as a
+# .conf variable -- this is a single constant set once at script start, not
+# tied to SQL_FILES_TIMEOUT (a separate, SQL-files-mode-only setting).
+WAIT_FOR_SERVER_TO_DISAPPEAR = 120
+
 # Field/record separators used to move data out of the bash config-loading
 # subprocess without fighting bash's own quoting rules in declare -p output.
 _FS = "\x1f"
@@ -410,19 +419,46 @@ class PstressRun:
 
         if proc is not None:
             try:
-                proc.wait(timeout=60)
+                proc.wait(timeout=WAIT_FOR_SERVER_TO_DISAPPEAR)
             except Exception:
                 pass
             self._tracked_procs.pop(pid, None)
             return
 
         # Best-effort: PID may not be our child, so just poll briefly.
-        for _ in range(60):
+        deadline = time.monotonic() + WAIT_FOR_SERVER_TO_DISAPPEAR
+        while time.monotonic() < deadline:
             try:
                 os.kill(pid, 0)
             except (ProcessLookupError, ValueError, TypeError):
                 return
             time.sleep(0.5)
+
+    def _reap_zombies(self):
+        """Reap (and stop tracking) any of our own spawned processes that
+        has already exited on its own.
+
+        A node that crashes by itself -- exactly the kind of crash pstress
+        exists to find -- becomes a <defunct> zombie: `ps -ef` shows no
+        argv for it any more (the kernel only keeps a minimal entry until
+        something collects its exit status), so the scan-based discovery
+        used elsewhere (pids_matching(".cnf", rundir) in the end-of-trial
+        cluster kill) can never find it to call kill_server() on, and
+        nothing else ever waits on it either. Left unreaped, it just sits
+        in _tracked_procs for the rest of the whole run.
+
+        Popen.poll() does a WNOHANG waitpid() internally, which reaps the
+        process from the kernel's process table immediately if it has
+        already exited -- so simply polling every tracked process (no
+        signal needed for ones already gone) is enough. Called at the
+        start of every trial so these can't accumulate across a long
+        campaign and eventually exhaust RLIMIT_NPROC (raised to 7000 at
+        startup) for this user on the host.
+        """
+        for pid in list(self._tracked_procs):
+            proc = self._tracked_procs[pid]
+            if proc.poll() is not None:
+                del self._tracked_procs[pid]
 
     # ------------------------------------------------------------------
     # ASan/Sanitizer detection
@@ -502,6 +538,25 @@ class PstressRun:
     def validate_port_available(self, port):
         if not port:
             return False
+        # netstat/docker are called unconditionally below (their absence
+        # degrades silently -- the shell command just fails and sh_out()
+        # returns an empty string, which matches no "in use" pattern); only
+        # lsof is explicitly gated on command_exists(). If NONE of the three
+        # are actually installed, every check below silently evaluates to
+        # "not in use" and this function always reports a port as available
+        # on its very first attempt -- i.e. port-collision protection is
+        # completely inert, with nothing to indicate that. Warn once (not
+        # on every call/every port, to avoid spamming the log) so that's
+        # visible in pstress-run.log instead of failing silently.
+        if not getattr(self, "_warned_no_port_check_tools", False):
+            self._warned_no_port_check_tools = True
+            if not (command_exists("netstat") or command_exists("docker") or command_exists("lsof")):
+                self.echoit(
+                    "WARNING: none of netstat, docker, or lsof are installed -- port-availability "
+                    "checks cannot verify anything on this host and will always report every port "
+                    "as free. Install at least one of these to get real protection against the "
+                    "port collisions this check exists to catch."
+                )
         for i in range(1, 11):
             port_in_use = False
             if re.search(rf":{re.escape(str(port))} ", sh_out("netstat -tuln")):
@@ -1639,6 +1694,8 @@ class PstressRun:
             self.echoit(f"====== SQL FILES STEP #{self.s('SQL_FILES_STEP_NUM')} ======")
         else:
             self.echoit(f"====== TRIAL #{self.trial} ======")
+
+        self._reap_zombies()
 
         self.echoit("Ensuring there are no relevant servers running...")
         for pid in pids_matching(rundir):
