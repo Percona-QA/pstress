@@ -301,6 +301,12 @@ class PstressRun:
         self.workdiractive = False
         self.saved = 0
         self.trial = 0
+        # Trial numbers saved specifically because a real issue was detected
+        # (not merely as a rolling baseline/SAVE_TRIALS_WITH_CORE_ONLY=0/
+        # CRASH_CHECK save) -- removelasttrial() checks this before deleting
+        # anything, so a later routine trial's cleanup can never silently
+        # discard an earlier trial that actually reproduced a bug.
+        self.issue_trial_numbers = set()
         self.mysqld_start_timeout = 60
         self.pxc = 0
         self.grp_rpl = 0
@@ -829,11 +835,18 @@ class PstressRun:
     # PXC/GR bug reporting
     # ------------------------------------------------------------------
     def pxc_bug_found(self, node_count):
+        """Logs any search_string.sh match across the given node count, and
+        returns whether anything was actually found -- so callers can fold
+        this into their own issue-detection decision instead of assuming a
+        bug exists just because this function was called."""
+        any_found = False
         for i in range(1, node_count + 1):
             err = f"{self.s('RUNDIR')}/{self.trial}/node{i}/node{i}.err"
             found = sh_out(f"{self.script_pwd}/search_string.sh {shlex.quote(err)} 2>/dev/null")
             if found:
                 self.echoit(f"Bug found in PXC/GR node#{i}(as per error log): {found}")
+                any_found = True
+        return any_found
 
     # ------------------------------------------------------------------
     # Component manifest/config helpers
@@ -1594,8 +1607,11 @@ class PstressRun:
 
     def removelasttrial(self):
         if self.trial > 2:
-            workdir = self.s("WORKDIR")
             prev = self.trial - 2
+            if prev in self.issue_trial_numbers:
+                self.echoit(f"Keeping trial {prev} (it was saved for a detected issue, not just as a rolling baseline)")
+                return
+            workdir = self.s("WORKDIR")
             self.echoit(f"Removing last successful trial workdir {workdir}/{prev}")
             path = f"{workdir}/{prev}/"
             if workdir and self.trial and os.path.isdir(path):
@@ -2125,26 +2141,42 @@ class PstressRun:
             self.removetrial()
 
     def _decide_trial_save(self, rundir, workdir, signal_val):
-        """Mirrors pstress-run.sh's save-decision if/elif chain verbatim.
+        """Save-decision chain, fixed to make SAVE_TRIALS_WITH_CORE_ONLY
+        actually have an effect (see commit history / conversation for the
+        full analysis -- this used to be a faithful bug-for-bug port of
+        pstress-run.sh's version, which has TWO stacked exhaustive-branch-
+        pair bugs: `SIGNAL != 4` / `SIGNAL == 4` cover every valid SIGNAL and
+        both unconditionally saved, and -- even after fixing that --
+        `TRIAL > 1` / `TRIAL == 1` are *also* jointly exhaustive (TRIAL is
+        always >= 1 here), so every later elif (SAVE_TRIALS_WITH_CORE_ONLY,
+        CRASH_CHECK, the SQL-only fallback) was still dead code regardless.
 
-        In the shell script this is a *single* if/elif/.../else chain keyed
-        first on `SIGNAL != 4` and then on `SIGNAL == 4`. Since SIGNAL is
-        validated earlier to always be one of {9, 4, 15}, one of those two
-        top branches always matches and unconditionally saves the trial --
-        which makes every later elif in that chain (SIGKILL-myself,
-        "MySQL server has gone away" >=200, ERROR: count, and in particular
-        the SAVE_TRIALS_WITH_CORE_ONLY / TRIAL>1 / CRASH_CHECK gating) dead,
-        unreachable code. This is the SAVE_TRIALS_WITH_CORE_ONLY gap already
-        tracked in the pstress_run_save_trials_dead_code memory -- ported
-        here bug-for-bug rather than "fixed", since the ask was a faithful
-        migration and the fix is tracked separately as a deferred change to
-        pstress-run.sh itself.
+        `SIGNAL != 4` / `SIGNAL == 4` were never really a save/don't-save
+        decision -- they're two different *detection heuristics* for the
+        same `issue_found` flag, suited to whether a core is expected by
+        design (SIGNAL=4 deliberately forces one via SIGILL on every
+        routine shutdown, so its mere existence means nothing -- only
+        "mysqld got signal 4" being ABSENT from the error log, meaning it
+        crashed via something else first, is the real signal) or inherently
+        unexpected (SIGNAL=9/15 don't normally produce a core at all, so
+        any core, or a search_string.sh/ASan hit, is itself the signal).
+
+        By design (confirmed, not assumed): SAVE_TRIALS_WITH_CORE_ONLY=1
+        keeps a rolling baseline (trial 1, plus a sliding most-recent trial
+        via removelasttrial()) *in addition to* any trial with an actually
+        detected issue -- it does not mean "discard everything without an
+        issue". To make sure a routine baseline rotation can never discard
+        an earlier trial that actually reproduced something, every trial
+        saved for a real detected reason (issue_found, "SIGKILL myself",
+        excessive "MySQL server has gone away", or an ERROR: in the log) is
+        recorded in self.issue_trial_numbers, which removelasttrial() checks
+        before deleting anything.
         """
         trial_dir = f"{rundir}/{self.trial}"
+        issue_found = False
 
         if signal_val != 4:
             if self.pxc == 0 and self.grp_rpl == 0:
-                issue_found = False
                 if glob.glob(f"{trial_dir}/*/*core*"):
                     self.echoit(f"mysqld coredump detected at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
                     issue_found = True
@@ -2160,40 +2192,91 @@ class PstressRun:
             else:
                 if glob.glob(f"{trial_dir}/*/*core*"):
                     self.echoit(f"mysqld coredump detected at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
+                    issue_found = True
                 else:
                     self.echoit("mysqld error detected in the log via search_string.sh scan")
-                    self.pxc_bug_found(3)
+                    if self.pxc_bug_found(3):
+                        issue_found = True
+        else:
+            if self.pxc == 0 and self.grp_rpl == 0:
+                if grep_count("mysqld got signal 4", f"{trial_dir}/log/master.err") >= 1:
+                    self.echoit(f"mysqld coredump detected due to SIGNAL(kill -4) at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
+                else:
+                    self.echoit(f"mysqld coredump detected at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
+                    issue_found = True
+                if sh_out(f"{self.script_pwd}/search_string.sh {trial_dir}/log/master.err 2>/dev/null"):
+                    self.echoit("mysqld error detected in the log via search_string.sh scan")
+                    issue_found = True
+                if self.check_asan_error():
+                    self.echoit(f"ASan issue detected in {' '.join(glob.glob(f'{trial_dir}/asan.log.*'))}")
+                    self.echoit(f"Bug found (as per ASan log): {self.get_asan_error_lines()}")
+                    issue_found = True
+                if issue_found:
+                    self.echoit(f"Bug found (as per error log): {sh_out(f'{self.script_pwd}/search_string.sh {trial_dir}/log/master.err')}")
+            else:
+                sig4 = any(
+                    grep_count("mysqld got signal 4", f"{trial_dir}/node{n}/node{n}.err") >= 1 for n in (1, 2, 3)
+                )
+                if sig4:
+                    self.echoit(f"mysqld coredump detected due to SIGNAL(kill -4) at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
+                else:
+                    self.echoit(f"mysqld coredump detected at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
+                    issue_found = True
+                if self.pxc_bug_found(3):
+                    issue_found = True
+
+        def save_for_issue():
             self.savetrial()
+            self.issue_trial_numbers.add(self.trial)
             return True
 
-        # signal_val == 4
-        if self.pxc == 0 and self.grp_rpl == 0:
-            issue_found = False
-            if grep_count("mysqld got signal 4", f"{trial_dir}/log/master.err") >= 1:
-                self.echoit(f"mysqld coredump detected due to SIGNAL(kill -4) at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
-            else:
-                self.echoit(f"mysqld coredump detected at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
-                issue_found = True
-            if sh_out(f"{self.script_pwd}/search_string.sh {trial_dir}/log/master.err 2>/dev/null"):
-                self.echoit("mysqld error detected in the log via search_string.sh scan")
-                issue_found = True
-            if self.check_asan_error():
-                self.echoit(f"ASan issue detected in {' '.join(glob.glob(f'{trial_dir}/asan.log.*'))}")
-                self.echoit(f"Bug found (as per ASan log): {self.get_asan_error_lines()}")
-                issue_found = True
-            if issue_found:
-                self.echoit(f"Bug found (as per error log): {sh_out(f'{self.script_pwd}/search_string.sh {trial_dir}/log/master.err')}")
+        if issue_found:
+            return save_for_issue()
+        if grep_count("SIGKILL myself", f"{trial_dir}/log/master.err") >= 1:
+            self.echoit("'SIGKILL myself' detected in the mysqld error log for this trial; saving this trial")
+            return save_for_issue()
+        if grep_count("MySQL server has gone away", f"{trial_dir}/*.sql") >= 200 and self.timeout_reached == 0:
+            self.echoit("'MySQL server has gone away' detected >=200 times for this trial, and the pstress timeout was not reached; saving this trial for further analysis")
+            return save_for_issue()
+        if grep_count("ERROR:", f"{trial_dir}/log/master.err") >= 1:
+            self.echoit("ASAN issue detected in the mysqld error log for this trial; saving this trial")
+            return save_for_issue()
+        if self.i("SAVE_TRIALS_WITH_CORE_ONLY") == 0:
+            self.echoit("Saving full trial outcome (as SAVE_TRIALS_WITH_CORE_ONLY=0 and so trials are saved irrespective of whether an issue was detected or not)")
+            self.savetrial()
+            return True
+        # Checked ahead of the TRIAL>1/TRIAL==1 rolling-baseline pair below
+        # (unlike pstress-run.sh's own ordering) because that pair is
+        # jointly exhaustive -- TRIAL is always >= 1 here, so one of them
+        # always fires -- which left CRASH_CHECK dead code in bash too, not
+        # just a casualty of the SIGNAL>1/SIGNAL==4 bug. CRASH_CHECK models
+        # a one-shot "save this specific trial for backup-restore analysis"
+        # request, distinct from the generic rolling baseline; it deserves
+        # to actually be reachable.
+        if self.i("CRASH_CHECK") == 1:
+            self.echoit("Saving this trial for backup restore analysis")
+            self.savetrial()
+            self.set_cfg("CRASH_CHECK", 0)
+            return True
+        if self.trial > 1:
+            self.savetrial()
+            self.removelasttrial()
+            return True
+        if self.trial == 1:
+            self.savetrial()
+            return True
+        # Unreachable under this design (TRIAL is always >= 1, so TRIAL>1 or
+        # TRIAL==1 above always already saved something as a rolling
+        # baseline) -- kept only because pstress-run.sh's own "nothing
+        # saved, no issue was seen" messages describe it, in case a future
+        # change to the rolling-baseline behavior above ever makes this
+        # reachable again.
+        if self.i("SAVE_SQL") == 1:
+            self.echoit("Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1, and no issue was seen), except the SQL trace (as SAVE_SQL=1)")
+            self.savesql()
         else:
-            sig4 = any(
-                grep_count("mysqld got signal 4", f"{trial_dir}/node{n}/node{n}.err") >= 1 for n in (1, 2, 3)
-            )
-            if sig4:
-                self.echoit(f"mysqld coredump detected due to SIGNAL(kill -4) at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
-            else:
-                self.echoit(f"mysqld coredump detected at {' '.join(glob.glob(f'{trial_dir}/*/*core*'))}")
-        self.pxc_bug_found(3)
-        self.savetrial()
-        return True
+            self.echoit("Not saving anything for this trial (as SAVE_TRIALS_WITH_CORE_ONLY=1 and SAVE_SQL=0, and no issue was seen)")
+        return False
 
     def _run_pstress_and_wait(self, rundir, workdir):
         trial_dir = f"{rundir}/{self.trial}"
@@ -2767,6 +2850,7 @@ class PstressRun:
             os.makedirs(new_rundir, exist_ok=True)
 
             self.trial = 0
+            self.issue_trial_numbers = set()
             self.count = 0
             for _ in range(1, self.i("TRIALS") + 1):
                 self.pstress_test()
