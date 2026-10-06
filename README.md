@@ -172,6 +172,23 @@ nohup ./pstress-run.sh pstress-run.conf 2>&1 &
 ```
 Check run logs through tail -f nohup.out
 
+## Python driver script (pstress-run.py)
+
+`pstress-run.py` is a from-scratch Python port of `pstress-run.sh` (same
+behavior, same trial loop, same PXC/Group Replication/KMIP/Vault/SQL-file
+support). It reads the exact same bash-syntax configuration files
+unmodified -- `pstress-run.sh` is sourced by the shell itself, while
+`pstress-run.py` sources the conf file via a bash subprocess and reads back
+the resulting variables, so no conf file needs to change to work with
+either script. The configuration file is passed the same way, as the
+script's only argument.
+
+cd pstress/pstress
+```bash
+nohup ./pstress-run.py pstress-run-80.conf 2>&1 &
+```
+Check run logs the same way, through `tail -f nohup.out`, or via
+`pstress-run.log` inside the run's WORKDIR once the run is underway.
 
 # Contributors
 * Alexey Bychko - C++ code, cmake extensions
