@@ -2370,6 +2370,27 @@ class PstressRun:
         self.cfg = scalars
         self.kmip_configs = arrays.get("KMIP_CONFIGS", {})
 
+        # These five are "internal variable" defaults in bash -- set before
+        # the conf file is sourced, so an ordinary bash variable assignment
+        # in the conf silently overrides them. Since self.mysqld_start_timeout
+        # etc. are separate Python attributes from self.cfg (the parsed conf
+        # dict), nothing was ever copying a conf-provided value into them --
+        # setting e.g. GCACHE_ENCRYPTION=1 or GDB_MODE=1 in a conf file had
+        # no effect at all, silently. Only override when the conf actually
+        # set the value (self.s() is non-empty even for a deliberately-set
+        # "0") -- otherwise keep the Python-side default, matching bash's
+        # own "conf didn't touch it, keep the pre-source default" behavior.
+        if self.s("MYSQLD_START_TIMEOUT"):
+            self.mysqld_start_timeout = self.i("MYSQLD_START_TIMEOUT")
+        if self.s("PXC_START_TIMEOUT"):
+            self.pxc_start_timeout = self.i("PXC_START_TIMEOUT")
+        if self.s("GRP_RPL_START_TIMEOUT"):
+            self.grp_rpl_start_timeout = self.i("GRP_RPL_START_TIMEOUT")
+        if self.s("GCACHE_ENCRYPTION"):
+            self.gcache_encryption = self.i("GCACHE_ENCRYPTION")
+        if self.s("GDB_MODE"):
+            self.gdb_mode = self.i("GDB_MODE")
+
         if not self.s("SEED"):
             self.set_cfg("SEED", self.randomd)
 
