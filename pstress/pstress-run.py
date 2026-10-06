@@ -237,7 +237,14 @@ for __v in $(compgen -v); do
   esac
   __before_val["$__v"]="${!__v}"
 done
-source "$CONFIG_FILE"
+# Redirect the conf file's OWN stdout (e.g. a stray `echo` for user
+# feedback) to stderr, not mixed into the stdout stream below. Without
+# this, any such output lands in the middle of our FS/RS-delimited
+# records -- it has no RS terminator of its own, so it glues onto
+# whichever record comes right after it, corrupting that one record
+# (silently dropping that one variable from the parsed config, since the
+# corrupted "kind" then matches none of VAR/KV/ITEM/ARRAY/LIST below).
+source "$CONFIG_FILE" >&2
 FS=$'\x1f'
 RS=$'\x1e'
 for v in $(compgen -v); do
@@ -262,10 +269,14 @@ for v in $(compgen -v); do
       ;;
     "declare -a"*)
       printf 'LIST%s%s%s' "$FS" "$v" "$RS"
-      eval "n=\${#$v[@]}"
-      for ((i=0; i<n; i++)); do
-        eval "val=\"\${$v[$i]}\""
-        printf 'ITEM%s%s%s%s%s' "$FS" "$v" "$FS" "$val" "$RS"
+      # ${!v[@]} (actual indices present), not a 0..${#v[@]} count-based
+      # loop -- a sparse array (e.g. declare -a arr=([2]="a" [5]="b"),
+      # ${#arr[@]}==2) would otherwise read arr[0]/arr[1] instead of the
+      # real arr[2]/arr[5], missing the actual data entirely.
+      eval "keys=(\"\${!$v[@]}\")"
+      for k in "${keys[@]}"; do
+        eval "val=\"\${$v[\$k]}\""
+        printf 'ITEM%s%s%s%s%s%s%s' "$FS" "$v" "$FS" "$k" "$FS" "$val" "$RS"
       done
       ;;
     *)
@@ -276,6 +287,26 @@ for v in $(compgen -v); do
       ;;
   esac
 done
+# Variables present before sourcing that the conf explicitly `unset` --
+# distinct from "the conf never mentioned this name" (which should still
+# fall back to the inherited environment, see _cfg_lookup below). Without
+# this, an unset name simply stops appearing in compgen -v, so no VAR
+# record is ever emitted for it either way, and Python's _cfg_lookup
+# can't tell "never touched" from "explicitly cleared" apart -- it would
+# fall back to the stale os.environ value either way, making `unset FOO`
+# in a conf silently not stick.
+for __name in "${!__before_val[@]}"; do
+  if ! declare -p "$__name" >/dev/null 2>&1; then
+    printf 'UNSET%s%s%s' "$FS" "$__name" "$RS"
+  fi
+done
+# Marks that this script ran to completion. Without it, a bare `exit`
+# inside the conf file (e.g. its own internal validation) terminates this
+# whole subprocess immediately -- possibly with status 0, if the conf's
+# last command before exiting happened to succeed -- so the `returncode
+# != 0` check below would not catch it, and load_bash_config would
+# silently return a totally empty config instead of reporting an error.
+printf 'OK%s' "$RS"
 """
     proc = subprocess.run(
         ["bash", "-c", driver, "bash_config_loader", str(script_pwd), str(randomd), str(config_path)],
@@ -285,9 +316,16 @@ done
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         raise RuntimeError(f"Failed to source configuration file {config_path}")
+    if proc.stderr:
+        # The conf file's own stdout (redirected to stderr above, see
+        # comment at the `source` call) -- surface it instead of silently
+        # discarding it, matching what the user would have seen if this
+        # conf were sourced directly instead of via this probe subprocess.
+        sys.stderr.write(proc.stderr)
 
     scalars = {}
     arrays = {}
+    saw_ok_marker = False
     for record in proc.stdout.split(_RS):
         if not record:
             continue
@@ -297,11 +335,24 @@ done
             scalars[fields[1]] = fields[2]
         elif kind == "KV" and len(fields) >= 4:
             arrays.setdefault(fields[1], {})[fields[2]] = fields[3]
-        elif kind == "ITEM" and len(fields) >= 3:
-            lst = arrays.setdefault(fields[1], {})
-            lst[str(len(lst))] = fields[2]
+        elif kind == "ITEM" and len(fields) >= 4:
+            arrays.setdefault(fields[1], {})[fields[2]] = fields[3]
         elif kind in ("ARRAY", "LIST"):
             arrays.setdefault(fields[1], {})
+        elif kind == "UNSET" and len(fields) >= 2:
+            # Explicit sentinel for "the conf unset this name" -- distinct
+            # from "key absent from scalars", which still falls back to
+            # os.environ in _cfg_lookup. None here means s()/i()/b() all
+            # correctly treat it as cleared (their existing `in (None, "")`
+            # checks), not as "ask the environment instead".
+            scalars[fields[1]] = None
+        elif kind == "OK":
+            saw_ok_marker = True
+    if not saw_ok_marker:
+        raise RuntimeError(
+            f"Configuration file {config_path} did not finish loading -- it likely called `exit` "
+            f"(or otherwise terminated) partway through being sourced. Check it for an early exit/return."
+        )
     return scalars, arrays
 
 
