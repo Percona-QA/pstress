@@ -420,17 +420,38 @@ class PstressRun:
         if proc is None:
             proc = self._tracked_procs.get(pid)
 
+        # proc.returncode is set (by an earlier proc.poll()/proc.wait(), e.g.
+        # from _reap_zombies()) once the process has actually been reaped --
+        # at that point this exact PID number is eligible for the OS to hand
+        # out to a brand new, unrelated process. Signaling it again would
+        # risk hitting whatever that PID has become, not our (long-gone)
+        # child. Nothing to kill and nothing to wait for either way.
+        if proc is not None and proc.returncode is not None:
+            self._tracked_procs.pop(pid, None)
+            return
+
         # For a process we ourselves spawned (via _spawn(), which sets
-        # start_new_session=True), pid is also its process-group id -- kill
-        # the whole group so helper processes it forked on its own (PXC's
-        # SST handlers: wsrep_sst_xtrabackup-v2, socat, xtrabackup) go down
-        # with it instead of surviving as orphans that still hold ports/
-        # files. For anything else (a PID merely discovered via a ps -ef
-        # scan, whose group membership we can't vouch for), stick to a
-        # plain single-process kill -- using killpg there risks hitting an
+        # start_new_session=True) AND being killed with SIGKILL specifically,
+        # pid is also its process-group id -- kill the whole group so helper
+        # processes it forked on its own (PXC's SST handlers:
+        # wsrep_sst_xtrabackup-v2, socat, xtrabackup) go down with it instead
+        # of surviving as orphans that still hold ports/files. Restricted to
+        # SIGKILL (every *cleanup* call site -- failed-start, sibling
+        # cleanup, emergency_cleanup, kill_and_restart_server -- already
+        # passes 9 explicitly) rather than every signal: the normal
+        # end-of-trial kill uses the user-configured SIGNAL, which can be 4
+        # specifically to make mysqld dump a core for analysis. Group-killing
+        # *that* would also deliver SIGILL to any SST helper currently
+        # running and let it dump its own (irrelevant) core into the same
+        # trial directory, polluting the saved trial. bash's equivalent
+        # (`kill -$SIG $MPID`) only ever signaled the single PID.
+        #
+        # For anything else (a PID merely discovered via a ps -ef scan,
+        # whose group membership we can't vouch for), stick to a plain
+        # single-process kill -- using killpg there risks hitting an
         # unrelated process sharing that PID's inherited group.
         try:
-            if proc is not None:
+            if proc is not None and sig == signal.SIGKILL:
                 os.killpg(pid, sig)
             else:
                 os.kill(pid, sig)
@@ -441,6 +462,12 @@ class PstressRun:
         if proc is not None:
             try:
                 proc.wait(timeout=WAIT_FOR_SERVER_TO_DISAPPEAR)
+            except subprocess.TimeoutExpired:
+                self.echoit(
+                    f"WARNING: process {pid} did not exit within {WAIT_FOR_SERVER_TO_DISAPPEAR}s of "
+                    f"being signaled (signal {sig}); giving up waiting. If this was a core dump "
+                    f"(SIGNAL=4) that core may still be being written -- check before relying on it."
+                )
             except Exception:
                 pass
             self._tracked_procs.pop(pid, None)
@@ -454,6 +481,8 @@ class PstressRun:
             except (ProcessLookupError, ValueError, TypeError):
                 return
             time.sleep(0.5)
+        self.echoit(f"WARNING: process {pid} still appears to be running {WAIT_FOR_SERVER_TO_DISAPPEAR}s after "
+                    f"being signaled (signal {sig}); giving up waiting.")
 
     def _reap_zombies(self):
         """Reap (and stop tracking) any of our own spawned processes that
@@ -1726,7 +1755,22 @@ class PstressRun:
         where real results live, and this runs on *every* exit path
         (including the normal successful one), so it must never be the
         thing deciding whether to delete results.
+
+        Guarded on self.workdiractive (set only after run()'s own safety
+        asserts on WORKDIR/RUNDIR -- e.g. that RUNDIR actually contains
+        $RANDOMD, not a shared path like /tmp -- have already passed and
+        RUNDIR has actually been created by this run). Without this guard,
+        main()'s `finally` calls this even when one of those asserts itself
+        is what made run() exit via sys.exit(1): self.s("RUNDIR") still
+        returns whatever the misconfigured conf set (e.g. plain "/tmp"),
+        and shutil.rmtree() would delete it anyway -- the exact outcome
+        those asserts exist to prevent, defeated by the cleanup meant to
+        make things safer. Before workdiractive is set there is also
+        nothing of ours to clean up yet (no trial has started, nothing has
+        been spawned), so skipping entirely here loses nothing.
         """
+        if not self.workdiractive:
+            return
         for pid, proc in list(self._tracked_procs.items()):
             self.kill_server(9, pid, proc=proc)
         try:
