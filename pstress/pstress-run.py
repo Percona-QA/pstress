@@ -133,21 +133,35 @@ def bash_unreadable(value):
     return not os.access(value, os.R_OK)
 
 
-def pids_matching(*substrings, exclude_grep=True):
-    """Roughly equivalent to: ps -ef | grep <substrings...> | awk '{print $2}'."""
+def pids_matching(*substrings, regex=None, exclude_grep=True):
+    """Roughly equivalent to: ps -ef | grep <substrings...> | awk '{print $2}'.
+
+    `regex`, when given, is an ADDITIONAL `re.search()` requirement -- use
+    this instead of a plain substring for anything bash matched with
+    `grep -e 'pattern'` (e.g. `n[0-9]\\.cnf`, `node[0-9]_socket`). A bare
+    single-character substring like "n" is true of nearly every ps -ef
+    line, so plain substring-AND matching for those patterns would catch
+    far more than the intended PXC/GR node processes -- anything else
+    under RUNDIR whose command line happens to contain ".cnf" (a keyring
+    component config reader, `tail -f`, an editor, ...).
+    """
     try:
         out = subprocess.run(["ps", "-ef"], capture_output=True, text=True).stdout
     except OSError:
         return []
+    rx = re.compile(regex) if regex else None
     pids = []
     for line in out.splitlines():
-        if all(s in line for s in substrings):
-            parts = line.split()
-            if len(parts) > 1:
-                try:
-                    pids.append(int(parts[1]))
-                except ValueError:
-                    continue
+        if not all(s in line for s in substrings):
+            continue
+        if rx is not None and not rx.search(line):
+            continue
+        parts = line.split()
+        if len(parts) > 1:
+            try:
+                pids.append(int(parts[1]))
+            except ValueError:
+                continue
     return pids
 
 
@@ -647,6 +661,15 @@ class PstressRun:
         image = c.get("image")
         cert_dir = f"{self.s('WORKDIR')}/{c.get('cert_dir')}"
 
+        if not image:
+            # Without this check, shlex.quote(image) below raises a raw
+            # TypeError (it only accepts str) for a config mistake that
+            # deserves a clear message instead -- bash would have just run
+            # `docker run ... ""` and let docker itself report the error,
+            # which this matches in spirit (fail clearly, don't crash).
+            self.echoit("ERROR: KMIP_CONFIGS entry for 'pykmip' is missing required key image=")
+            return False
+
         try:
             os.makedirs(cert_dir, exist_ok=True)
             os.chmod(cert_dir, 0o700)
@@ -851,23 +874,34 @@ class PstressRun:
     # ------------------------------------------------------------------
     # Component manifest/config helpers
     # ------------------------------------------------------------------
+    def _write_text_or_warn(self, path, content):
+        """Like write_text(), but a missing parent directory (e.g. BASEDIR's
+        lib/plugin not existing for this build) logs and continues instead
+        of raising -- matching bash's own behavior for the equivalent `cat
+        << EOF > path`: a failed redirection just prints an error and the
+        script carries on, it doesn't abort the whole run."""
+        try:
+            write_text(path, content)
+        except OSError as e:
+            self.echoit(f"ERROR: Could not write {path}: {e}")
+
     def create_local_manifest(self, cmp_name, node=""):
         self.echoit("Creating local manifest file mysqld.my")
-        write_text(f"{self.s('BASEDIR')}/bin/mysqld.my", '{\n  "read_local_manifest": true\n}\n')
+        self._write_text_or_warn(f"{self.s('BASEDIR')}/bin/mysqld.my", '{\n  "read_local_manifest": true\n}\n')
         target_dir = f"{self.s('RUNDIR')}/{self.trial}/data" if not node else f"{self.s('RUNDIR')}/{self.trial}/node{node}"
-        write_text(f"{target_dir}/mysqld.my", '{\n "components": "file://%s"\n}\n' % cmp_name)
+        self._write_text_or_warn(f"{target_dir}/mysqld.my", '{\n "components": "file://%s"\n}\n' % cmp_name)
 
     def create_local_config(self, cmp_name, node=""):
         self.echoit(f"Creating local configuration file {cmp_name}.cnf")
-        write_text(f"{self.s('BASEDIR')}/lib/plugin/{cmp_name}.cnf", '{\n  "read_local_config": true\n}\n')
+        self._write_text_or_warn(f"{self.s('BASEDIR')}/lib/plugin/{cmp_name}.cnf", '{\n  "read_local_config": true\n}\n')
         target_dir = f"{self.s('RUNDIR')}/{self.trial}/data" if not node else f"{self.s('RUNDIR')}/{self.trial}/node{node}"
         if cmp_name == "component_keyring_file":
-            write_text(
+            self._write_text_or_warn(
                 f"{target_dir}/{cmp_name}.cnf",
                 '{\n "path": "%s/%s",\n "read_only": false\n}\n' % (target_dir, cmp_name),
             )
         elif cmp_name == "component_keyring_vault":
-            write_text(
+            self._write_text_or_warn(
                 f"{target_dir}/{cmp_name}.cnf",
                 '{\n"vault_url" : "%s",\n"secret_mount_point" : "%s",\n"token" : "%s",\n"vault_ca" : "%s"\n}\n'
                 % (getattr(self, "vault_url", ""), getattr(self, "secret_mount_point", ""),
@@ -924,10 +958,19 @@ class PstressRun:
     def _pick_free_port_base(self, ports_for_base, label, max_attempts=30):
         """Draw a random `(RANDOM%21+10)*1000` port base and confirm every
         port this trial will actually bind -- mysqld's own port and whatever
-        `ports_for_base(base)` adds per node (e.g. PXC's gcomm rbase+8, or
-        GR's group_replication_local_address rbase+100+i) -- is genuinely
-        free before committing to it. Not just "should be free by now"
-        because we killed the previous occupant.
+        `ports_for_base(base)` adds per node (e.g. PXC's gcomm rbase+8 and
+        IST receiver rbase+9, or GR's group_replication_local_address
+        rbase+100+i) -- is genuinely free before committing to it. Not just
+        "should be free by now" because we killed the previous occupant.
+
+        This does NOT cover a fixed, non-base-derived port like PXC's SST
+        listener (conventionally 4444) -- callers that need one checked
+        should validate it separately, since redrawing a different base
+        here can't help a port that isn't a function of the base at all.
+        Nor does it close the gap between this check and the actual bind:
+        node 3 can bind up to ~2x PXC_START_TIMEOUT after this check runs,
+        and with only 21 possible bases, a concurrent run on the same host
+        can still claim one of these ports in between.
 
         Reuses validate_port_available() (originally written for KMIP), which
         itself retries for up to ~20s per port. That matters here for exactly
@@ -956,8 +999,19 @@ class PstressRun:
         workdir = self.s("WORKDIR")
         mysql_version = getattr(self, "mysql_version", "")
         addr = "127.0.0.1"
+        # SST's listener (conventionally port 4444) is fixed, not derived
+        # from the per-node base below -- check it once on its own; a
+        # different base draw can't help if this specific port is busy, so
+        # just warn (loudly, in pstress-run.log) and continue rather than
+        # failing the trial outright for a port we have no alternative for.
+        if not self.validate_port_available(4444):
+            self.echoit("WARNING: PXC's SST listener port 4444 still appears to be in use after waiting; "
+                        "cluster startup may fail with an SST error")
         rport = self._pick_free_port_base(
-            lambda base: [base + (100 * i) + off for i in (1, 2, 3) for off in (0, 8)], "PXC")
+            # 0 = mysqld's own port, 8 = gcomm (group communication), 9 = IST
+            # (Incremental State Transfer) receiver, which Galera defaults
+            # to gmcast's port + 1 unless explicitly configured otherwise.
+            lambda base: [base + (100 * i) + off for i in (1, 2, 3) for off in (0, 8, 9)], "PXC")
         self.socket1 = f"{rundir}/{self.trial}/node1/node1_socket.sock"
         self.socket2 = f"{rundir}/{self.trial}/node2/node2_socket.sock"
         self.socket3 = f"{rundir}/{self.trial}/node3/node3_socket.sock"
@@ -1300,9 +1354,15 @@ class PstressRun:
 
         def start_node(nr, datadir, rbase):
             self.get_error_socket_file(nr, is_startup == "startup")
+            # No shlex.quote() here: this string is handed to _spawn(), which
+            # runs it via Popen(cmd.split(), ...) with no shell at all -- any
+            # quote characters shlex.quote() decides to add (e.g. if a path
+            # ever contains a space) would end up as literal characters in
+            # mysqld's argv instead of being stripped, since there's no shell
+            # to interpret them.
             base = (
                 f"{self.mysqld_bin} --defaults-file={datadir}/n{nr}.cnf --basedir={basedir} --datadir={datadir} "
-                f"--core-file --log-error={shlex.quote(self.err_file)} --socket={shlex.quote(self.socket)} "
+                f"--core-file --log-error={self.err_file} --socket={self.socket} "
                 f"--port={rbase} {ps_extra}"
             )
             if encryption_run:
@@ -1412,7 +1472,7 @@ class PstressRun:
                     return False
 
         if self.pxc == 1 or self.grp_rpl == 1:
-            for pid in pids_matching("n", ".cnf", rundir):
+            for pid in pids_matching(rundir, regex=r"n[0-9]\.cnf"):
                 self.kill_server(9, pid)
             time.sleep(2)
             if self.pxc == 1:
@@ -1686,6 +1746,20 @@ class PstressRun:
             shutil.rmtree(rundir, ignore_errors=True)
 
     def ctrl_c(self):
+        # Ignore further SIGINT/SIGTERM for the rest of this handler. Without
+        # this, a second ^C (or a CI SIGTERM arriving right after an initial
+        # SIGINT) during the slow `mv` of the trial dir below re-enters this
+        # same handler: the nested call starts ANOTHER mv of the same tree
+        # concurrently, then rmtree()s rundir out from under the still-
+        # running first mv, and its own sys.exit() unwinds back through the
+        # outer (still in-flight) subprocess.run() call -- leaving a
+        # partially-saved trial. Bash doesn't have this problem since it
+        # only runs trap handlers once the current foreground child exits;
+        # SIG_IGN here is the direct Python equivalent for the signal-handler
+        # part of that (this method's own cleanup still runs to completion
+        # and exits normally either way).
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         self.echoit("CTRL+C Was pressed. Attempting to terminate running processes...")
         kill_pids = pids_matching(self.randomd)
         if kill_pids:
@@ -2064,9 +2138,19 @@ class PstressRun:
                 sql_file = self.s("SQL_FILE")
                 if sql_file:
                     self.echoit(f"Executing the queries from file {sql_file}")
-                    with open(f"{self.script_pwd}/{sql_file}") as fh:
-                        with open(f"{workdir}/sql_file_step_{self.trial}.result", "wb") as out:
-                            subprocess.run([f"{basedir}/bin/mysql", "-uroot", "-S", setup_socket, "-f"], stdin=fh, stdout=out, stderr=subprocess.STDOUT)
+                    # bash: `mysql ... < ${SCRIPT_PWD}/${SQL_FILE} > result 2>&1` --
+                    # a missing input file is just a failed redirection (bash
+                    # prints "No such file or directory" and the mysql command
+                    # never runs), not fatal to the script. An unguarded open()
+                    # here would raise and abort the whole run instead.
+                    try:
+                        fh = open(f"{self.script_pwd}/{sql_file}")
+                    except OSError as e:
+                        self.echoit(f"ERROR: Could not open SQL_FILE {self.script_pwd}/{sql_file}: {e}")
+                    else:
+                        with fh:
+                            with open(f"{workdir}/sql_file_step_{self.trial}.result", "wb") as out:
+                                subprocess.run([f"{basedir}/bin/mysql", "-uroot", "-S", setup_socket, "-f"], stdin=fh, stdout=out, stderr=subprocess.STDOUT)
 
             if self.i("EXECUTE_SQL_FILES_MODE") == 1:
                 self.echoit("SQL file execution mode enabled. Will execute the configured dump and SQL files instead of running pstress.")
@@ -2086,7 +2170,7 @@ class PstressRun:
                     self.reinit_datadir = 1
             elif self.pxc == 1:
                 self.echoit(f"3 Node PXC Cluster failed to start after {self.pxc_start_timeout} seconds. Will issue an extra cleanup to ensure nothing remains...")
-                for pid in pids_matching("n", ".cnf", rundir):
+                for pid in pids_matching(rundir, regex=r"n[0-9]\.cnf"):
                     self.kill_server(9, pid)
                 self.server_fail_to_start_count += 1
                 if self.server_fail_to_start_count > 0:
@@ -2094,7 +2178,7 @@ class PstressRun:
                     self.reinit_datadir = 1
             elif self.grp_rpl == 1:
                 self.echoit(f"3 Node Group Replication Cluster failed to start after {self.grp_rpl_start_timeout} seconds. Will issue an extra cleanup to ensure nothing remains...")
-                for pid in pids_matching("n", ".cnf", rundir):
+                for pid in pids_matching(rundir, regex=r"n[0-9]\.cnf"):
                     self.kill_server(9, pid)
                 self.server_fail_to_start_count += 1
                 if self.server_fail_to_start_count > 0:
@@ -2119,7 +2203,7 @@ class PstressRun:
                     print(f"[INFO] Wait until the following PID(s) end: {' '.join(str(p) for p in remaining)}")
                     time.sleep(5)
         else:
-            pids = pids_matching("n", ".cnf", rundir)
+            pids = pids_matching(rundir, regex=r"n[0-9]\.cnf")
             if self.pxc == 1:
                 self.echoit(f"Killing the PXC servers with Signal {signal_val}")
             else:
@@ -2232,13 +2316,20 @@ class PstressRun:
 
         if issue_found:
             return save_for_issue()
-        if grep_count("SIGKILL myself", f"{trial_dir}/log/master.err") >= 1:
+        # bash uses plain `grep` (no -i) for these three -- case-sensitive,
+        # unlike the "mysqld got signal 4" checks above (bash: `grep -i`,
+        # matching grep_count's ignore_case=True default). Getting this
+        # wrong matters now that this branch is actually live: a lowercase
+        # "error:" would otherwise mark a trial as an issue (and exempt it
+        # from rolling-baseline rotation) when bash's own check would not
+        # have matched it at all.
+        if grep_count("SIGKILL myself", f"{trial_dir}/log/master.err", ignore_case=False) >= 1:
             self.echoit("'SIGKILL myself' detected in the mysqld error log for this trial; saving this trial")
             return save_for_issue()
-        if grep_count("MySQL server has gone away", f"{trial_dir}/*.sql") >= 200 and self.timeout_reached == 0:
+        if grep_count("MySQL server has gone away", f"{trial_dir}/*.sql", ignore_case=False) >= 200 and self.timeout_reached == 0:
             self.echoit("'MySQL server has gone away' detected >=200 times for this trial, and the pstress timeout was not reached; saving this trial for further analysis")
             return save_for_issue()
-        if grep_count("ERROR:", f"{trial_dir}/log/master.err") >= 1:
+        if grep_count("ERROR:", f"{trial_dir}/log/master.err", ignore_case=False) >= 1:
             self.echoit("ASAN issue detected in the mysqld error log for this trial; saving this trial")
             return save_for_issue()
         if self.i("SAVE_TRIALS_WITH_CORE_ONLY") == 0:
@@ -2720,7 +2811,10 @@ class PstressRun:
         elif self.pxc == 1 or self.grp_rpl == 1:
             self._create_cluster_templates(basedir, workdir)
 
-        self.echoit("Starting pstress testing iterations...")
+        if self.i("EXECUTE_SQL_FILES_MODE") == 0:
+            self.echoit("Starting pstress testing iterations...")
+        else:
+            self.echoit("Starting SQL files execution...")
         if self.i("COMPONENT_KEYRING_KMIP") == 1:
             self._run_kmip_trials(rundir, workdir)
         else:
@@ -2741,7 +2835,7 @@ class PstressRun:
                     except OSError:
                         pass
         else:
-            for pid in pids_matching("node", "_socket", rundir):
+            for pid in pids_matching(rundir, regex=r"node[0-9]_socket"):
                 try:
                     os.kill(pid, 9)
                 except OSError:
