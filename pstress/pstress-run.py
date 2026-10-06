@@ -1468,6 +1468,15 @@ class PstressRun:
         mysql = f"{basedir}/bin/mysql"
         if is_startup == "startup":
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"SET SQL_LOG_BIN=0;CREATE USER rpl_user@'%' IDENTIFIED BY 'rpl_pass' REQUIRE SSL;GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';FLUSH PRIVILEGES;SET SQL_LOG_BIN=1;\" > /dev/null 2>&1")
+            # DIVERGENCE from pstress-run.sh, believed desirable: bash
+            # compares the FULL version string against the literal "8.0"/
+            # "5.7" (e.g. `[ "$MYSQL_VERSION" == "8.0" ]`), which never
+            # matches a real x.y.z version like "8.0.41" -- so in bash
+            # these CHANGE REPLICATION SOURCE TO / CHANGE MASTER TO calls
+            # never actually run for any real build, for any of the 3
+            # nodes. mysql_version.startswith(...) here DOES match, so
+            # this port actually configures the recovery replication
+            # channel's credentials where bash silently never did.
             if mysql_version.startswith("8.0"):
                 sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
             elif mysql_version.startswith("5.7"):
@@ -1481,6 +1490,7 @@ class PstressRun:
         start_node(2, datadir2, rbase2)
         if is_startup == "startup":
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"SET SQL_LOG_BIN=0;CREATE USER rpl_user@'%' IDENTIFIED BY 'rpl_pass' REQUIRE SSL;GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';FLUSH PRIVILEGES;SET SQL_LOG_BIN=1;\" > /dev/null 2>&1")
+            # Same bash-vs-port version-comparison divergence as node 1 above.
             if mysql_version.startswith("8.0"):
                 sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
             elif mysql_version.startswith("5.7"):
@@ -1493,6 +1503,7 @@ class PstressRun:
         start_node(3, datadir3, rbase3)
         if is_startup == "startup":
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"SET SQL_LOG_BIN=0;CREATE USER rpl_user@'%' IDENTIFIED BY 'rpl_pass' REQUIRE SSL;GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';FLUSH PRIVILEGES;SET SQL_LOG_BIN=1;\" > /dev/null 2>&1")
+            # Same bash-vs-port version-comparison divergence as node 1 above.
             if mysql_version.startswith("8.0"):
                 sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
             elif mysql_version.startswith("5.7"):
@@ -1501,6 +1512,25 @@ class PstressRun:
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"START GROUP_REPLICATION;\" > /dev/null 2>&1")
             time.sleep(5)
 
+        # DIVERGENCE from pstress-run.sh, believed desirable (like the
+        # grp_rpl_startup note elsewhere in this file): bash's equivalent
+        # check is `if [ ${IS_STARTUP} != "startup" ]` -- UNQUOTED. For a
+        # normal per-trial call, IS_STARTUP is empty, so ${IS_STARTUP}
+        # vanishes from the command line entirely (unquoted expansion of
+        # an empty variable), leaving `[ != "startup" ]` -- a malformed
+        # 2-argument test ("!=" is not a valid unary operator), which bash
+        # reports as a "unary operator expected" error and treats as
+        # false. So in bash this branch -- the one that sets ISSTARTED=1
+        # for Group Replication -- NEVER runs for a normal trial; only
+        # PXC's equivalent check (`[ "$IS_STARTUP" != "startup" ]`,
+        # correctly QUOTED in bash) is unaffected. Net effect in the
+        # original script: ISSTARTED stays 0 for every GR trial, every GR
+        # trial is treated as "server failed to start", and pstress itself
+        # never actually runs against a GR cluster. This Python comparison
+        # (`is_startup != "startup"`) has no such quoting pitfall and
+        # evaluates correctly, so GR trials here really do report
+        # ISSTARTED=1 and run pstress once the cluster is healthy -- at
+        # the cost of the ~10-30s/trial this health-check loop takes.
         if is_startup != "startup":
             self.echoit("Checking 3 node Group Replication Cluster startup...")
             for x in range(1, 4):
@@ -1746,6 +1776,14 @@ class PstressRun:
             shutil.rmtree(path, ignore_errors=True)
 
     def removelasttrial(self):
+        """Called right after savetrial() for a routine (non-issue) trial
+        under SAVE_TRIALS_WITH_CORE_ONLY=1: deletes the trial from *two*
+        trials ago, keeping a sliding window of just the last two routine
+        trials on disk at any time (not a fixed "trial 1 is always kept"
+        anchor -- see _decide_trial_save's docstring) -- unless that older
+        trial was itself flagged as having a detected issue, in which case
+        it's kept regardless of how many newer routine trials roll past it.
+        """
         if self.trial > 2:
             prev = self.trial - 2
             if prev in self.issue_trial_numbers:
@@ -2341,15 +2379,51 @@ class PstressRun:
         any core, or a search_string.sh/ASan hit, is itself the signal).
 
         By design (confirmed, not assumed): SAVE_TRIALS_WITH_CORE_ONLY=1
-        keeps a rolling baseline (trial 1, plus a sliding most-recent trial
-        via removelasttrial()) *in addition to* any trial with an actually
-        detected issue -- it does not mean "discard everything without an
-        issue". To make sure a routine baseline rotation can never discard
-        an earlier trial that actually reproduced something, every trial
-        saved for a real detected reason (issue_found, "SIGKILL myself",
-        excessive "MySQL server has gone away", or an ERROR: in the log) is
-        recorded in self.issue_trial_numbers, which removelasttrial() checks
-        before deleting anything.
+        keeps a rolling window of the *last two* non-issue trials (see
+        removelasttrial(): it deletes TRIAL-2 every time a new one is
+        saved) *in addition to* every trial with an actually detected
+        issue, kept forever -- it does not mean "discard everything
+        without an issue". To make sure a routine window rotation can
+        never discard an earlier trial that actually reproduced something,
+        every trial saved for a real detected reason (issue_found,
+        "SIGKILL myself", excessive "MySQL server has gone away", or an
+        ERROR: in the log) is recorded in self.issue_trial_numbers, which
+        removelasttrial() checks before deleting anything.
+
+        IMPORTANT, easy to misread: trial 1 is NOT a permanent anchor
+        despite being the first one saved with no removelasttrial() call.
+        It is simply the oldest trial in the same two-trial sliding window
+        as everything else, and gets deleted the first time the window
+        rotates past it -- at trial 3 (removelasttrial() there targets
+        TRIAL-2 = 1) -- unless trial 1 itself happened to be flagged as an
+        issue trial. Don't rely on trial 1 surviving past trial 2 of a run
+        with SAVE_TRIALS_WITH_CORE_ONLY=1 and no issues detected.
+
+        Three behavioral DIVERGENCES from pstress-run.sh, all introduced by
+        this fix and all believed desirable, but flagged here rather than
+        silently changed -- see git history for the original discussion:
+
+        - CRASH_CHECK is checked ahead of the TRIAL>1/TRIAL==1 pair (see
+          below) so it is actually reachable. In bash it sits after that
+          pair in the elif chain, which is jointly exhaustive (TRIAL is
+          always >= 1), so bash's CRASH_CHECK branch can never fire at
+          all -- permanently dead code there, live here.
+        - The PXC/GR branch of the SIGNAL != 4 detection above now calls
+          self.pxc_bug_found(3) and uses ITS return value to help decide
+          issue_found (and therefore whether this trial becomes
+          permanently exempt from window rotation). In bash this branch
+          calls pxc_bug_found unconditionally for its logging side effect
+          only -- the save already happened unconditionally regardless of
+          what it found, so its return value was never consulted (the
+          bash function doesn't even return one). Whether a given PXC/GR
+          trial is treated as "has an issue" now genuinely depends on
+          what pxc_bug_found's search_string.sh scan reports.
+        - Making any of the above reachable at all is itself a departure
+          from bash's actual (buggy) behavior of saving literally every
+          trial unconditionally -- see the two-exhaustive-branch-pairs
+          analysis above. If pstress-run.sh is ever fixed to match, this
+          port's behavior should be re-compared against it rather than
+          assumed still equivalent.
         """
         trial_dir = f"{rundir}/{self.trial}"
         issue_found = False
