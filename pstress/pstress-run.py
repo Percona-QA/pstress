@@ -1906,14 +1906,13 @@ class PstressRun:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         self.echoit("CTRL+C Was pressed. Attempting to terminate running processes...")
+        for pid, proc in list(self._tracked_procs.items()):
+            self.kill_server(9, pid, proc=proc)
         kill_pids = pids_matching(self.randomd)
         if kill_pids:
             self.echoit(f"Terminating the following PID's: {' '.join(str(p) for p in kill_pids)}")
             for pid in kill_pids:
-                try:
-                    os.kill(pid, 9)
-                except OSError:
-                    pass
+                self.kill_server(9, pid)
         rundir = self.s("RUNDIR")
         workdir = self.s("WORKDIR")
         trial_dir = f"{rundir}/{self.trial}/"
