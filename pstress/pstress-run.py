@@ -152,16 +152,18 @@ def pids_matching(*substrings, regex=None, exclude_grep=True):
     rx = re.compile(regex) if regex else None
     pids = []
     for line in out.splitlines():
-        if not all(s in line for s in substrings):
+        parts = line.split(None, 7)
+        if len(parts) < 8:
             continue
-        if rx is not None and not rx.search(line):
+        command = parts[7]
+        if not all(s in command for s in substrings):
             continue
-        parts = line.split()
-        if len(parts) > 1:
-            try:
-                pids.append(int(parts[1]))
-            except ValueError:
-                continue
+        if rx is not None and not rx.search(command):
+            continue
+        try:
+            pids.append(int(parts[1]))
+        except ValueError:
+            continue
     return pids
 
 
