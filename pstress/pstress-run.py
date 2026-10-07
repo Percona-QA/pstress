@@ -246,7 +246,7 @@ done
 # whichever record comes right after it, corrupting that one record
 # (silently dropping that one variable from the parsed config, since the
 # corrupted "kind" then matches none of VAR/KV/ITEM/ARRAY/LIST below).
-source "$CONFIG_FILE" >&2
+source "$CONFIG_FILE" >&2 || exit $?
 FS=$'\x1f'
 RS=$'\x1e'
 for v in $(compgen -v); do
