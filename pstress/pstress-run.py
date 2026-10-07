@@ -213,13 +213,28 @@ def check_for_version(local_version, required_version):
 
 
 def load_bash_config(script_pwd, config_path, randomd):
-    """Source config_path with bash and return (scalars, arrays) dicts.
+    """Source config_path with bash, apply any environment changes it makes
+    to this process's os.environ, and return (scalars, arrays) dicts.
 
     `arrays` maps associative/indexed array names to dict[key] -> value
     (indexed arrays use string indices "0", "1", ...).
+
+    Conf files can `export` real environment variables -- LD_LIBRARY_PATH,
+    PATH, etc. -- meaning to affect every subprocess this script launches
+    afterward, same as if the conf were sourced directly into
+    pstress-run.sh's own shell. Capturing scalars/arrays into `self.cfg`
+    (for this script's OWN `self.s()`/`self.i()` lookups) says nothing
+    about the actual OS-level environment subprocesses inherit -- without
+    this, `export LD_LIBRARY_PATH=...` or `export PATH=...` in a conf had
+    no effect on library/binary lookup at all, and `unset FOO` for an
+    inherited variable didn't remove it from child environments either.
+    Mutating os.environ here, before any subprocess is launched, is what
+    makes this automatic for every subprocess call in the file: every
+    `sh()`/`sh_out()`/`sh_status()` shell helper and every direct
+    subprocess.run()/Popen() call (including _spawn()) passes no explicit
+    `env=`, so each already inherits the current os.environ at call time.
     """
     driver = r"""
-set -a
 SCRIPT_PWD="$1"
 RANDOMD="$2"
 CONFIG_FILE="$3"
@@ -236,6 +251,18 @@ for __v in $(compgen -v); do
     __before_val|__v|BASH_COMMAND|BASH_SUBSHELL|BASHPID|EPOCHREALTIME|EPOCHSECONDS|LINENO|RANDOM|SRANDOM|SECONDS) continue ;;
   esac
   __before_val["$__v"]="${!__v}"
+done
+# Snapshot of *exported* variable names/values before sourcing -- this
+# subprocess inherits Python's current os.environ, so this is the real
+# environment the run started with. Deliberately separate from
+# __before_val above and NOT using `set -a`: without `set -a`, only a
+# conf's actual `export FOO=...` shows up here, the same distinction bash
+# itself makes between "a plain scripting variable" and "a real
+# environment variable meant for child processes" -- `set -a` would
+# auto-export every plain assignment too, erasing that distinction.
+declare -A __before_env
+for __e in $(compgen -e); do
+  __before_env["$__e"]="${!__e}"
 done
 # Redirect the conf file's OWN stdout (e.g. a stray `echo` for user
 # feedback) to stderr, not mixed into the stdout stream below. Without
@@ -254,7 +281,7 @@ for v in $(compgen -v); do
     # the conf touched them, which would otherwise look like a "change"
     # to the value-based diff below and leak them into the parsed config
     # as noise).
-    __before_val|__v|FS|RS|v|SCRIPT_PWD|RANDOMD|CONFIG_FILE) continue ;;
+    __before_val|__v|__before_env|__e|FS|RS|v|SCRIPT_PWD|RANDOMD|CONFIG_FILE) continue ;;
     BASH_COMMAND|BASH_SUBSHELL|BASHPID|EPOCHREALTIME|EPOCHSECONDS|LINENO|RANDOM|SRANDOM|SECONDS) continue ;;
   esac
   decl=$(declare -p "$v" 2>/dev/null)
@@ -299,6 +326,31 @@ for __name in "${!__before_val[@]}"; do
   if ! declare -p "$__name" >/dev/null 2>&1; then
     printf 'UNSET%s%s%s' "$FS" "$__name" "$RS"
   fi
+done
+# New/changed EXPORTED variables -- these are real environment variables
+# (LD_LIBRARY_PATH, PATH, ...) the conf meant for child processes, applied
+# to Python's os.environ by the caller. Same value-diff logic as the
+# scalar loop above, scoped to compgen -e instead of compgen -v.
+for __e in $(compgen -e); do
+  case "$__e" in
+    __before_val|__v|__before_env|__e|FS|RS|v|SCRIPT_PWD|RANDOMD|CONFIG_FILE) continue ;;
+  esac
+  val="${!__e}"
+  if [ -z "${__before_env[$__e]+x}" ] || [ "$val" != "${__before_env[$__e]}" ]; then
+    printf 'ENV%s%s%s%s%s' "$FS" "$__e" "$FS" "$val" "$RS"
+  fi
+done
+# Previously-exported variables the conf `unset` or `export -n`'d --
+# applied as os.environ removals, not just dropped from this process's
+# config. declare -p's output is prefixed "declare -x" only while still
+# exported, whether or not the name still exists at all as a plain
+# (non-exported) variable -- one check covers both "unset" and
+# "export -n'd but still assigned" the same way.
+for __name in "${!__before_env[@]}"; do
+  case "$(declare -p "$__name" 2>/dev/null)" in
+    "declare -x"*) : ;;
+    *) printf 'ENVUNSET%s%s%s' "$FS" "$__name" "$RS" ;;
+  esac
 done
 # Marks that this script ran to completion. Without it, a bare `exit`
 # inside the conf file (e.g. its own internal validation) terminates this
@@ -346,6 +398,10 @@ printf 'OK%s' "$RS"
             # correctly treat it as cleared (their existing `in (None, "")`
             # checks), not as "ask the environment instead".
             scalars[fields[1]] = None
+        elif kind == "ENV" and len(fields) >= 3:
+            os.environ[fields[1]] = fields[2]
+        elif kind == "ENVUNSET" and len(fields) >= 2:
+            os.environ.pop(fields[1], None)
         elif kind == "OK":
             saw_ok_marker = True
     if not saw_ok_marker:
@@ -406,6 +462,11 @@ class PstressRun:
         self.isstarted = 0
         self.timeout_increment_applied = 0
         self._tracked_procs = {}
+        self._owned_pgids = set()
+        # KMIP containers THIS run has actually started (via setup_pykmip()),
+        # tracked the moment `docker run` succeeds -- not derived from the
+        # conf file's declared KMIP_CONFIGS. See _stop_started_kmip_containers().
+        self._started_kmip_containers = set()
 
     # ------------------------------------------------------------------
     # Config accessors (bash variables are always strings; these coerce)
@@ -453,6 +514,41 @@ class PstressRun:
     # ------------------------------------------------------------------
     # kill_server(): send SIG to PID and wait for it if it is a direct child
     # ------------------------------------------------------------------
+    def _cleanup_owned_group(self, pgid):
+        """Final sweep: SIGKILL any survivors in a process group we own,
+        even after its leader has already exited (reaped or otherwise).
+
+        A reaped leader does NOT mean its whole process group has exited:
+        PXC's SST helpers (wsrep_sst_xtrabackup-v2, socat, xtrabackup) can
+        keep running and keep their ports open after mysqld itself is
+        gone. This matters most for the *normal* end-of-trial kill with
+        SIGNAL=4/15, which deliberately signals only the leader (see
+        kill_server()) to avoid delivering a core-inducing signal to a
+        helper too -- but that leaves any helper alive on purpose, and
+        without this follow-up sweep it would just stay alive indefinitely.
+        It also covers a leader that crashed and was reaped by
+        _reap_zombies() without kill_server() ever being called on it at
+        all, and a helper whose own command line happens to contain
+        neither RUNDIR nor RANDOMD (so the scan-based safety nets
+        elsewhere -- pids_matching() against either marker -- can't find
+        it either).
+
+        Safe against PID reuse, same guarantee as the PID-reuse guard in
+        kill_server(): a pgid number can only be handed to an unrelated
+        new process/group once EVERY member of the original group
+        (leader included) has exited. As long as a surviving helper here
+        is still alive, the OS hasn't reused the number yet -- it's still
+        genuinely ours. If the whole group is already gone, this is a
+        harmless no-op (ESRCH).
+        """
+        if pgid is None:
+            return
+        self._owned_pgids.discard(pgid)
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
     def kill_server(self, sig, pid, proc=None):
         if not pid:
             return
@@ -470,70 +566,83 @@ class PstressRun:
         # anything else gets the best-effort existence poll.
         if proc is None:
             proc = self._tracked_procs.get(pid)
+        owned_pgid = pid if pid in self._owned_pgids else None
 
-        # proc.returncode is set (by an earlier proc.poll()/proc.wait(), e.g.
-        # from _reap_zombies()) once the process has actually been reaped --
-        # at that point this exact PID number is eligible for the OS to hand
-        # out to a brand new, unrelated process. Signaling it again would
-        # risk hitting whatever that PID has become, not our (long-gone)
-        # child. Nothing to kill and nothing to wait for either way.
-        if proc is not None and proc.returncode is not None:
-            self._tracked_procs.pop(pid, None)
-            return
-
-        # For a process we ourselves spawned (via _spawn(), which sets
-        # start_new_session=True) AND being killed with SIGKILL specifically,
-        # pid is also its process-group id -- kill the whole group so helper
-        # processes it forked on its own (PXC's SST handlers:
-        # wsrep_sst_xtrabackup-v2, socat, xtrabackup) go down with it instead
-        # of surviving as orphans that still hold ports/files. Restricted to
-        # SIGKILL (every *cleanup* call site -- failed-start, sibling
-        # cleanup, emergency_cleanup, kill_and_restart_server -- already
-        # passes 9 explicitly) rather than every signal: the normal
-        # end-of-trial kill uses the user-configured SIGNAL, which can be 4
-        # specifically to make mysqld dump a core for analysis. Group-killing
-        # *that* would also deliver SIGILL to any SST helper currently
-        # running and let it dump its own (irrelevant) core into the same
-        # trial directory, polluting the saved trial. bash's equivalent
-        # (`kill -$SIG $MPID`) only ever signaled the single PID.
-        #
-        # For anything else (a PID merely discovered via a ps -ef scan,
-        # whose group membership we can't vouch for), stick to a plain
-        # single-process kill -- using killpg there risks hitting an
-        # unrelated process sharing that PID's inherited group.
         try:
-            if proc is not None and sig == signal.SIGKILL:
-                os.killpg(pid, sig)
-            else:
-                os.kill(pid, sig)
-        except (ProcessLookupError, PermissionError, ValueError, TypeError, OSError):
-            self._tracked_procs.pop(pid, None)
-            return
-
-        if proc is not None:
-            try:
-                proc.wait(timeout=WAIT_FOR_SERVER_TO_DISAPPEAR)
-            except subprocess.TimeoutExpired:
-                self.echoit(
-                    f"WARNING: process {pid} did not exit within {WAIT_FOR_SERVER_TO_DISAPPEAR}s of "
-                    f"being signaled (signal {sig}); giving up waiting. If this was a core dump "
-                    f"(SIGNAL=4) that core may still be being written -- check before relying on it."
-                )
-            except Exception:
-                pass
-            self._tracked_procs.pop(pid, None)
-            return
-
-        # Best-effort: PID may not be our child, so just poll briefly.
-        deadline = time.monotonic() + WAIT_FOR_SERVER_TO_DISAPPEAR
-        while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, ValueError, TypeError):
+            # proc.returncode is set (by an earlier proc.poll()/proc.wait(),
+            # e.g. from _reap_zombies()) once the process has actually been
+            # reaped -- at that point this exact PID number is eligible for
+            # the OS to hand out to a brand new, unrelated process.
+            # Signaling it again would risk hitting whatever that PID has
+            # become, not our (long-gone) child. Nothing to kill and
+            # nothing to wait for on the leader either way -- but its
+            # process group, swept in `finally` below, may still need one.
+            if proc is not None and proc.returncode is not None:
+                self._tracked_procs.pop(pid, None)
                 return
-            time.sleep(0.5)
-        self.echoit(f"WARNING: process {pid} still appears to be running {WAIT_FOR_SERVER_TO_DISAPPEAR}s after "
-                    f"being signaled (signal {sig}); giving up waiting.")
+
+            # For a process we ourselves spawned (via _spawn(), which sets
+            # start_new_session=True) AND being killed with SIGKILL
+            # specifically, pid is also its process-group id -- kill the
+            # whole group so helper processes it forked on its own go down
+            # with it immediately instead of relying solely on the
+            # `finally` sweep below. Restricted to SIGKILL (every *cleanup*
+            # call site -- failed-start, sibling cleanup, emergency_cleanup,
+            # kill_and_restart_server -- already passes 9 explicitly)
+            # rather than every signal: the normal end-of-trial kill uses
+            # the user-configured SIGNAL, which can be 4 specifically to
+            # make mysqld dump a core for analysis. Group-killing *that*
+            # would also deliver SIGILL to any SST helper currently running
+            # and let it dump its own (irrelevant) core into the same
+            # trial directory, polluting the saved trial. bash's
+            # equivalent (`kill -$SIG $MPID`) only ever signaled the single
+            # PID -- the `finally` sweep (SIGKILL only, after the leader is
+            # confirmed gone) is what cleans up any helper that survives
+            # this deliberately-narrower signal.
+            #
+            # For anything else (a PID merely discovered via a ps -ef scan,
+            # whose group membership we can't vouch for), stick to a plain
+            # single-process kill -- using killpg there risks hitting an
+            # unrelated process sharing that PID's inherited group.
+            try:
+                if proc is not None and sig == signal.SIGKILL:
+                    os.killpg(pid, sig)
+                else:
+                    os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError, ValueError, TypeError, OSError):
+                self._tracked_procs.pop(pid, None)
+                return
+
+            if proc is not None:
+                try:
+                    proc.wait(timeout=WAIT_FOR_SERVER_TO_DISAPPEAR)
+                except subprocess.TimeoutExpired:
+                    self.echoit(
+                        f"WARNING: process {pid} did not exit within {WAIT_FOR_SERVER_TO_DISAPPEAR}s of "
+                        f"being signaled (signal {sig}); giving up waiting. If this was a core dump "
+                        f"(SIGNAL=4) that core may still be being written -- check before relying on it."
+                    )
+                except Exception:
+                    pass
+                self._tracked_procs.pop(pid, None)
+                return
+
+            # Best-effort: PID may not be our child, so just poll briefly.
+            deadline = time.monotonic() + WAIT_FOR_SERVER_TO_DISAPPEAR
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except (ProcessLookupError, ValueError, TypeError):
+                    return
+                time.sleep(0.5)
+            self.echoit(f"WARNING: process {pid} still appears to be running {WAIT_FOR_SERVER_TO_DISAPPEAR}s after "
+                        f"being signaled (signal {sig}); giving up waiting.")
+        finally:
+            # Runs on every exit path above -- reaped-already, killed
+            # cleanly, timed out, whatever -- so a surviving SST helper can
+            # never be left behind just because the leader itself needed
+            # no further action.
+            self._cleanup_owned_group(owned_pgid)
 
     def _reap_zombies(self):
         """Reap (and stop tracking) any of our own spawned processes that
@@ -555,11 +664,20 @@ class PstressRun:
         start of every trial so these can't accumulate across a long
         campaign and eventually exhaust RLIMIT_NPROC (raised to 7000 at
         startup) for this user on the host.
+
+        Also sweeps that process's group (see _cleanup_owned_group()): a
+        leader crashing and dying on its own says nothing about whether
+        any SST helper it forked is also gone -- without this, a node that
+        crashed by itself (not killed via kill_server() at all) would have
+        its group ownership silently discarded here, right along with any
+        surviving helper's chance of ever being cleaned up.
         """
         for pid in list(self._tracked_procs):
             proc = self._tracked_procs[pid]
             if proc.poll() is not None:
                 del self._tracked_procs[pid]
+                if pid in self._owned_pgids:
+                    self._cleanup_owned_group(pid)
 
     # ------------------------------------------------------------------
     # ASan/Sanitizer detection
@@ -629,34 +747,66 @@ class PstressRun:
         return True
 
     def stop_all_kmip_containers(self):
-        if self.i("COMPONENT_KEYRING_KMIP") != 1 or not self.kmip_configs:
-            return
-        for kmip_type in list(self.kmip_configs.keys()):
-            self.parse_config(kmip_type)
-            if not self.stop_kmip_container(self.kmip_config.get("name")):
-                self.echoit(f"WARNING: Failed to stop/remove container {self.kmip_config.get('name')}")
+        self._stop_started_kmip_containers()
+
+    def _stop_started_kmip_containers(self):
+        """Stop every KMIP container THIS run actually started -- tracked
+        in self._started_kmip_containers the moment `docker run` succeeded
+        (see setup_pykmip()), not derived from the conf file's declared
+        KMIP_CONFIGS. Call on every exit path: normal completion,
+        exception, sys.exit(), or a signal (see ctrl_c()/emergency_cleanup()).
+
+        Fixes two gaps in the old conf-declared approach (iterate
+        self.kmip_configs, stop whatever container name each type
+        declares): (1) a container successfully started by setup_pykmip()
+        but abandoned by a LATER failure in that same function (a
+        cert-copy or config-generation error, say) was never reached --
+        the old sweep only ran from specific success/end-of-run call
+        sites, none of which fire on that path; (2) iterating every
+        conf-declared type regardless of whether THIS run actually
+        started it risked stopping a DIFFERENT run's still-active
+        container, if it happened to share the same configured name
+        (e.g. two runs started from the same conf file).
+        """
+        for name in list(self._started_kmip_containers):
+            if not self.stop_kmip_container(name):
+                self.echoit(f"WARNING: Failed to stop/remove container {name}")
+            self._started_kmip_containers.discard(name)
 
     def validate_port_available(self, port):
         if not port:
             return False
-        # netstat/docker are called unconditionally below (their absence
-        # degrades silently -- the shell command just fails and sh_out()
-        # returns an empty string, which matches no "in use" pattern); only
-        # lsof is explicitly gated on command_exists(). If NONE of the three
-        # are actually installed, every check below silently evaluates to
-        # "not in use" and this function always reports a port as available
-        # on its very first attempt -- i.e. port-collision protection is
-        # completely inert, with nothing to indicate that. Warn once (not
-        # on every call/every port, to avoid spamming the log) so that's
-        # visible in pstress-run.log instead of failing silently.
+        # Only netstat/lsof are real HOST-level probes -- they can see a
+        # native (non-containerized) process bound to a port, which is
+        # what actually occupies an mysqld/gcomm/IST/SST port. `docker ps`
+        # only reports *published container port mappings*; it has zero
+        # visibility into a native listener, so a host with Docker but
+        # neither netstat nor lsof would have every native-port collision
+        # go completely undetected -- yet still look "verified" if docker
+        # were treated as an equally-good alternative here. An installed-
+        # but-unreachable docker daemon makes this worse silently too: a
+        # failed `docker ps` just returns empty output (sh_out() doesn't
+        # distinguish "daemon down" from "no containers"), which matches
+        # no "in use" pattern below regardless -- so docker contributes
+        # nothing in exactly the case it would have most mattered. Keep
+        # using the docker check below for what it's actually good for
+        # (catching a port claimed by a KMIP container), but never count
+        # its presence toward "we have SOME way to verify this host" for
+        # the warning below, and never let it carry a whole run's
+        # port-collision protection on its own.
+        #
+        # Warn once (not on every call/every port, to avoid spamming the
+        # log) so an unverifiable host is explicit in pstress-run.log
+        # instead of silently claiming every port is free.
         if not getattr(self, "_warned_no_port_check_tools", False):
             self._warned_no_port_check_tools = True
-            if not (command_exists("netstat") or command_exists("docker") or command_exists("lsof")):
+            if not (command_exists("netstat") or command_exists("lsof")):
                 self.echoit(
-                    "WARNING: none of netstat, docker, or lsof are installed -- port-availability "
-                    "checks cannot verify anything on this host and will always report every port "
-                    "as free. Install at least one of these to get real protection against the "
-                    "port collisions this check exists to catch."
+                    "WARNING: neither netstat nor lsof is installed on this host -- port-availability "
+                    "checks cannot verify a native (non-Docker) process occupying a port, and will "
+                    "always report every such port as free, regardless of whether Docker is installed. "
+                    "Install at least one of these to get real protection against the port collisions "
+                    "this check exists to catch."
                 )
         for i in range(1, 11):
             port_in_use = False
@@ -781,6 +931,12 @@ class PstressRun:
         if rc != 0:
             self.echoit("Failed")
             return False
+        # Tracked immediately, before any further setup step that could
+        # still fail (cert copy, config generation below) -- an exception
+        # or sys.exit() after this point must not skip cleanup of a
+        # container that's already actually running and holding its
+        # published port. See _stop_started_kmip_containers().
+        self._started_kmip_containers.add(container_name)
         container_id = sh_out(f"docker inspect --format '{{{{.Id}}}}' {shlex.quote(container_name)}")
         self.echoit(f"Started (ID: {container_id})")
 
@@ -1307,6 +1463,13 @@ class PstressRun:
         else:
             proc = subprocess.Popen(argv, env=env, start_new_session=True)
         self._tracked_procs[proc.pid] = proc
+        # Tracked separately from _tracked_procs/leader status (see
+        # kill_server()'s _cleanup_owned_group() call): the leader process
+        # exiting -- on its own, or because we signaled it -- says nothing
+        # about whether the process GROUP it led has exited. This is what
+        # lets kill_server() still sweep for survivors even once the
+        # leader itself is already gone.
+        self._owned_pgids.add(proc.pid)
         return proc.pid
 
     # ------------------------------------------------------------------
@@ -1352,12 +1515,25 @@ class PstressRun:
 
         mid = f"{self.mysqld_bin} --no-defaults --initialize-insecure --basedir={basedir}"
         ps_extra = self.ps_extra
+        # The group_replication plugin must be loaded on EVERY trial's
+        # mysqld launch, not just the one-time template startup call.
+        # pstress_test() resets self.ps_extra to the raw MYEXTRA conf
+        # value before every trial, and the generated .cnf files don't
+        # load the plugin either -- command-line plugin loading isn't
+        # persisted anywhere a normal trial would pick it up again. With
+        # this previously gated behind `is_startup == "startup"`, and the
+        # shipped MYEXTRA empty, every normal trial's mysqld came up with
+        # no group_replication plugin at all: START GROUP_REPLICATION
+        # fails outright, and no GR trial ever actually ran pstress
+        # against a working cluster -- a separate, compounding bug from
+        # the is_startup quoting issue (see the ISSTARTED note below) that
+        # fix alone wasn't sufficient to make GR mode work.
+        if self.i("GRP_RPL_CLUSTER_RUN") == 1:
+            ps_extra = f"{ps_extra} --plugin-load=group_replication.so --group_replication_single_primary_mode=OFF"
+        else:
+            ps_extra = f"{ps_extra} --plugin-load=group_replication.so"
+        self.ps_extra = ps_extra
         if is_startup == "startup":
-            if self.i("GRP_RPL_CLUSTER_RUN") == 1:
-                ps_extra = f"{ps_extra} --plugin-load=group_replication.so --group_replication_single_primary_mode=OFF"
-            else:
-                ps_extra = f"{ps_extra} --plugin-load=group_replication.so"
-            self.ps_extra = ps_extra
             self.gr_addr = addr
             self.gr_laddr1, self.gr_laddr2, self.gr_laddr3 = laddr1, laddr2, laddr3
             self.gr_rbase1, self.gr_rbase2, self.gr_rbase3 = rbase1, rbase2, rbase3
@@ -1464,6 +1640,26 @@ class PstressRun:
                 self._kill_cluster_startup_siblings()
                 sys.exit(1)
 
+        def set_recovery_channel_credentials():
+            # CHANGE REPLICATION SOURCE TO was only introduced in MySQL
+            # 8.0.23 (replacing CHANGE MASTER TO, removed entirely in a
+            # later release) -- a plain startswith("8.0") would wrongly
+            # pick the new syntax for 8.0.0-8.0.22 (a SQL syntax error
+            # there, since the statement doesn't exist yet), and would
+            # match neither branch at all for anything past 8.0.x (8.1+,
+            # 8.4, ...), silently skipping the credentials setup for those
+            # entirely. check_for_version(..., "8.0.23") is the correct,
+            # single threshold: true for every release that supports the
+            # modern syntax (8.0.23 through 8.4+), false for every release
+            # that needs the old one (5.7.x and 8.0.0-8.0.22) -- applied
+            # identically to all three nodes, including node 2, which
+            # previously also made this same call a second time
+            # unconditionally regardless of version.
+            if check_for_version(mysql_version, "8.0.23"):
+                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
+            else:
+                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE MASTER TO MASTER_USER='rpl_user', MASTER_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
+
         start_node(1, datadir1, rbase1)
         mysql = f"{basedir}/bin/mysql"
         if is_startup == "startup":
@@ -1472,15 +1668,12 @@ class PstressRun:
             # compares the FULL version string against the literal "8.0"/
             # "5.7" (e.g. `[ "$MYSQL_VERSION" == "8.0" ]`), which never
             # matches a real x.y.z version like "8.0.41" -- so in bash
-            # these CHANGE REPLICATION SOURCE TO / CHANGE MASTER TO calls
-            # never actually run for any real build, for any of the 3
-            # nodes. mysql_version.startswith(...) here DOES match, so
-            # this port actually configures the recovery replication
-            # channel's credentials where bash silently never did.
-            if mysql_version.startswith("8.0"):
-                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
-            elif mysql_version.startswith("5.7"):
-                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE MASTER TO MASTER_USER='rpl_user', MASTER_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
+            # this never actually runs for any real build, for any of the
+            # 3 nodes. This port actually configures the recovery
+            # replication channel's credentials where bash silently never
+            # did (see set_recovery_channel_credentials() above for the
+            # version threshold used).
+            set_recovery_channel_credentials()
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"SET GLOBAL group_replication_bootstrap_group=ON;START GROUP_REPLICATION;SET GLOBAL group_replication_bootstrap_group=OFF;SELECT SLEEP(10);\" > /dev/null 2>&1")
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"CREATE DATABASE IF NOT EXISTS test\" > /dev/null 2>&1")
         else:
@@ -1490,12 +1683,7 @@ class PstressRun:
         start_node(2, datadir2, rbase2)
         if is_startup == "startup":
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"SET SQL_LOG_BIN=0;CREATE USER rpl_user@'%' IDENTIFIED BY 'rpl_pass' REQUIRE SSL;GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';FLUSH PRIVILEGES;SET SQL_LOG_BIN=1;\" > /dev/null 2>&1")
-            # Same bash-vs-port version-comparison divergence as node 1 above.
-            if mysql_version.startswith("8.0"):
-                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
-            elif mysql_version.startswith("5.7"):
-                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE MASTER TO MASTER_USER='rpl_user', MASTER_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
-            sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
+            set_recovery_channel_credentials()
         else:
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"START GROUP_REPLICATION;\" > /dev/null 2>&1")
             time.sleep(5)
@@ -1503,11 +1691,7 @@ class PstressRun:
         start_node(3, datadir3, rbase3)
         if is_startup == "startup":
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"SET SQL_LOG_BIN=0;CREATE USER rpl_user@'%' IDENTIFIED BY 'rpl_pass' REQUIRE SSL;GRANT REPLICATION SLAVE ON *.* TO rpl_user@'%';FLUSH PRIVILEGES;SET SQL_LOG_BIN=1;\" > /dev/null 2>&1")
-            # Same bash-vs-port version-comparison divergence as node 1 above.
-            if mysql_version.startswith("8.0"):
-                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE REPLICATION SOURCE TO SOURCE_USER='rpl_user', SOURCE_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
-            elif mysql_version.startswith("5.7"):
-                sh(f"{mysql} -uroot -S{self.socket} -Bse \"CHANGE MASTER TO MASTER_USER='rpl_user', MASTER_PASSWORD='rpl_pass' FOR CHANNEL 'group_replication_recovery';\" > /dev/null 2>&1")
+            set_recovery_channel_credentials()
         else:
             sh(f"{mysql} -uroot -S{self.socket} -Bse \"START GROUP_REPLICATION;\" > /dev/null 2>&1")
             time.sleep(5)
@@ -1874,6 +2058,10 @@ class PstressRun:
                     os.kill(pid, 9)
                 except (ProcessLookupError, PermissionError):
                     pass
+        # A KMIP container is never found by the pids_matching() sweep above
+        # (it's not a child process of ours at all, just a docker-managed
+        # container), so it needs its own cleanup call on every exit path.
+        self._stop_started_kmip_containers()
         rundir = self.s("RUNDIR")
         if rundir:
             shutil.rmtree(rundir, ignore_errors=True)
@@ -1902,6 +2090,10 @@ class PstressRun:
                     os.kill(pid, 9)
                 except OSError:
                     pass
+        # Not found by the PID sweep above -- a KMIP container isn't a
+        # child process of ours, just a docker-managed container -- so it
+        # needs its own stop call here too.
+        self._stop_started_kmip_containers()
         rundir = self.s("RUNDIR")
         workdir = self.s("WORKDIR")
         trial_dir = f"{rundir}/{self.trial}/"
