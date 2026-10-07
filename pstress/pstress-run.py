@@ -1924,6 +1924,8 @@ class PstressRun:
             self.echoit(f"Done. Moving the trial {SCRIPT_NAME} was currently working on to workdir as {workdir}/{self.trial}/...")
             proc = subprocess.run(["mv", trial_dir, f"{workdir}/"], capture_output=True, text=True)
             append_text(f"{workdir}/pstress-run.log", (proc.stdout or "") + (proc.stderr or ""))
+            if proc.returncode == 0:
+                self.saved += 1
         self.echoit(f"Attempting to cleanup the pstress rundir {rundir}...")
         shutil.rmtree(rundir, ignore_errors=True)
         if self.saved == 0 and self.i("SAVE_SQL") == 0:
