@@ -2029,15 +2029,24 @@ class PstressRun:
 
     def removelasttrial(self):
         """Called right after savetrial() for a routine (non-issue) trial
-        under SAVE_TRIALS_WITH_CORE_ONLY=1: deletes the trial from *two*
-        trials ago, keeping a sliding window of just the last two routine
-        trials on disk at any time (not a fixed "trial 1 is always kept"
-        anchor -- see _decide_trial_save's docstring) -- unless that older
-        trial was itself flagged as having a detected issue, in which case
-        it's kept regardless of how many newer routine trials roll past it.
+        under SAVE_TRIALS_WITH_CORE_ONLY=1: deletes the immediately
+        preceding trial (TRIAL-1), keeping only the single most recent
+        routine trial on disk at any time (not a fixed "trial 1 is always
+        kept" anchor -- see _decide_trial_save's docstring) -- unless that
+        preceding trial was itself flagged as having a detected issue, in
+        which case it's kept regardless of how many later routine trials
+        roll past it -- since each trial has exactly one immediate
+        successor, that TRIAL-1 check only ever happens once for it, so
+        being spared here means being kept for the rest of the run. This
+        method is only ever reached for a routine (no issue found) trial
+        in the first place -- an issue trial returns early via
+        save_for_issue() in _decide_trial_save(), before this would be
+        called -- so an issue trial's own predecessor is never swept by
+        that issue trial's completion either; it's only ever at risk when
+        the NEXT trial after it completes with no issue of its own.
         """
-        if self.trial > 2:
-            prev = self.trial - 2
+        if self.trial > 1:
+            prev = self.trial - 1
             if prev in self.issue_trial_numbers:
                 self.echoit(f"Keeping trial {prev} (it was saved for a detected issue, not just as a rolling baseline)")
                 return
@@ -2654,25 +2663,27 @@ class PstressRun:
         any core, or a search_string.sh/ASan hit, is itself the signal).
 
         By design (confirmed, not assumed): SAVE_TRIALS_WITH_CORE_ONLY=1
-        keeps a rolling window of the *last two* non-issue trials (see
-        removelasttrial(): it deletes TRIAL-2 every time a new one is
-        saved) *in addition to* every trial with an actually detected
-        issue, kept forever -- it does not mean "discard everything
-        without an issue". To make sure a routine window rotation can
-        never discard an earlier trial that actually reproduced something,
-        every trial saved for a real detected reason (issue_found,
-        "SIGKILL myself", excessive "MySQL server has gone away", or an
-        ERROR: in the log) is recorded in self.issue_trial_numbers, which
-        removelasttrial() checks before deleting anything.
+        keeps only the single most recent non-issue trial on disk at a
+        time (see removelasttrial(): it deletes TRIAL-1 every time a new
+        routine trial is saved) *in addition to* every trial with an
+        actually detected issue, kept forever -- it does not mean
+        "discard everything without an issue". To make sure this routine
+        rotation can never discard an earlier trial that actually
+        reproduced something, every trial saved for a real detected reason
+        (issue_found, "SIGKILL myself", excessive "MySQL server has gone
+        away", or an ERROR: in the log) is recorded in
+        self.issue_trial_numbers, which removelasttrial() checks before
+        deleting anything.
 
         IMPORTANT, easy to misread: trial 1 is NOT a permanent anchor
         despite being the first one saved with no removelasttrial() call.
-        It is simply the oldest trial in the same two-trial sliding window
-        as everything else, and gets deleted the first time the window
-        rotates past it -- at trial 3 (removelasttrial() there targets
-        TRIAL-2 = 1) -- unless trial 1 itself happened to be flagged as an
-        issue trial. Don't rely on trial 1 surviving past trial 2 of a run
-        with SAVE_TRIALS_WITH_CORE_ONLY=1 and no issues detected.
+        It is simply the oldest (and, until trial 2 completes, only)
+        trial in this same rolling window, and gets deleted the moment
+        the next trial completes with no issue of its own -- at trial 2
+        (removelasttrial() there targets TRIAL-1 = 1) -- unless trial 1
+        itself happened to be flagged as an issue trial. Don't rely on
+        trial 1 surviving past trial 2 of a run with
+        SAVE_TRIALS_WITH_CORE_ONLY=1 and no issues detected.
 
         Three behavioral DIVERGENCES from pstress-run.sh, all introduced by
         this fix and all believed desirable, but flagged here rather than
