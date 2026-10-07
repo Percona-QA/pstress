@@ -523,7 +523,8 @@ class PstressRun:
                 )
             except Exception:
                 pass
-            self._tracked_procs.pop(pid, None)
+            if proc.returncode is not None:
+                self._tracked_procs.pop(pid, None)
             return
 
         # Best-effort: PID may not be our child, so just poll briefly.
