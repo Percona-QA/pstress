@@ -2640,6 +2640,8 @@ class PstressRun:
         scalars, arrays = load_bash_config(self.script_pwd, config_path, self.randomd)
         self.cfg = scalars
         self.kmip_configs = arrays.get("KMIP_CONFIGS", {})
+        self.pxc = self.i("PXC")
+        self.grp_rpl = self.i("GRP_RPL")
 
         # These five are "internal variable" defaults in bash -- set before
         # the conf file is sourced, so an ordinary bash variable assignment
