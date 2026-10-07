@@ -152,16 +152,18 @@ def pids_matching(*substrings, regex=None, exclude_grep=True):
     rx = re.compile(regex) if regex else None
     pids = []
     for line in out.splitlines():
-        if not all(s in line for s in substrings):
+        parts = line.split(None, 7)
+        if len(parts) < 8:
             continue
-        if rx is not None and not rx.search(line):
+        command = parts[7]
+        if not all(s in command for s in substrings):
             continue
-        parts = line.split()
-        if len(parts) > 1:
-            try:
-                pids.append(int(parts[1]))
-            except ValueError:
-                continue
+        if rx is not None and not rx.search(command):
+            continue
+        try:
+            pids.append(int(parts[1]))
+        except ValueError:
+            continue
     return pids
 
 
@@ -271,7 +273,7 @@ done
 # whichever record comes right after it, corrupting that one record
 # (silently dropping that one variable from the parsed config, since the
 # corrupted "kind" then matches none of VAR/KV/ITEM/ARRAY/LIST below).
-source "$CONFIG_FILE" >&2
+source "$CONFIG_FILE" >&2 || exit $?
 FS=$'\x1f'
 RS=$'\x1e'
 for v in $(compgen -v); do
@@ -624,7 +626,14 @@ class PstressRun:
                     )
                 except Exception:
                     pass
-                self._tracked_procs.pop(pid, None)
+                # A TimeoutExpired above means the process is still
+                # alive (proc.returncode stays None) -- only drop it from
+                # tracking once it has actually been reaped, otherwise a
+                # later call here would wrongly treat this same live PID
+                # as "not ours" and fall through to the best-effort poll
+                # path below, which can't killpg its process group.
+                if proc.returncode is not None:
+                    self._tracked_procs.pop(pid, None)
                 return
 
             # Best-effort: PID may not be our child, so just poll briefly.
@@ -1977,7 +1986,17 @@ class PstressRun:
             self.echoit(f"Removing last successful trial workdir {workdir}/{prev}")
             path = f"{workdir}/{prev}/"
             if workdir and self.trial and os.path.isdir(path):
-                shutil.rmtree(path, ignore_errors=True)
+                if self.i("SAVE_SQL") == 1:
+                    for entry in Path(path).iterdir():
+                        if entry.is_dir() and not entry.is_symlink():
+                            shutil.rmtree(entry, ignore_errors=True)
+                        elif not (entry.is_file() and entry.suffix == ".sql"):
+                            try:
+                                entry.unlink()
+                            except OSError:
+                                pass
+                else:
+                    shutil.rmtree(path, ignore_errors=True)
             self.echoit(f"Removing the {workdir}/step_{prev}.dll file")
             try:
                 os.remove(f"{workdir}/step_{prev}.dll")
@@ -2064,6 +2083,10 @@ class PstressRun:
         self._stop_started_kmip_containers()
         rundir = self.s("RUNDIR")
         if rundir:
+            active_trial = Path(rundir) / str(self.trial)
+            if self.trial > 0 and active_trial.is_dir():
+                self.echoit(f"Preserving unfinished trial at {active_trial} for analysis")
+                return
             shutil.rmtree(rundir, ignore_errors=True)
 
     def ctrl_c(self):
@@ -2082,14 +2105,13 @@ class PstressRun:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
         self.echoit("CTRL+C Was pressed. Attempting to terminate running processes...")
+        for pid, proc in list(self._tracked_procs.items()):
+            self.kill_server(9, pid, proc=proc)
         kill_pids = pids_matching(self.randomd)
         if kill_pids:
             self.echoit(f"Terminating the following PID's: {' '.join(str(p) for p in kill_pids)}")
             for pid in kill_pids:
-                try:
-                    os.kill(pid, 9)
-                except OSError:
-                    pass
+                self.kill_server(9, pid)
         # Not found by the PID sweep above -- a KMIP container isn't a
         # child process of ours, just a docker-managed container -- so it
         # needs its own stop call here too.
@@ -2101,6 +2123,8 @@ class PstressRun:
             self.echoit(f"Done. Moving the trial {SCRIPT_NAME} was currently working on to workdir as {workdir}/{self.trial}/...")
             proc = subprocess.run(["mv", trial_dir, f"{workdir}/"], capture_output=True, text=True)
             append_text(f"{workdir}/pstress-run.log", (proc.stdout or "") + (proc.stderr or ""))
+            if proc.returncode == 0:
+                self.saved += 1
         self.echoit(f"Attempting to cleanup the pstress rundir {rundir}...")
         shutil.rmtree(rundir, ignore_errors=True)
         if self.saved == 0 and self.i("SAVE_SQL") == 0:
@@ -2284,8 +2308,8 @@ class PstressRun:
 
         if self.gdb_mode == 1:
             append_text(f"{trial_dir}/log/master.err", "Starting...\n")
-            gdb_script = f"gdb -ex 'set pagination off' -ex run --args {cmd}\nexec bash\n"
-            subprocess.Popen(["gnome-terminal", "--", "bash", "-c", gdb_script])
+            gdb_script = 'gdb -ex "set pagination off" -ex run --args "$@"; exec bash'
+            subprocess.Popen(["gnome-terminal", "--", "bash", "-c", gdb_script, "gdb", *cmd.split()])
             print(f"[INFO] Waiting until the {pid_file} is created")
             while not os.path.exists(pid_file):
                 time.sleep(1)
@@ -2659,7 +2683,7 @@ class PstressRun:
                 if issue_found:
                     self.echoit(f"Bug found (as per error log): {sh_out(f'{self.script_pwd}/search_string.sh {trial_dir}/log/master.err')}")
             else:
-                sig4 = any(
+                sig4 = all(
                     grep_count("mysqld got signal 4", f"{trial_dir}/node{n}/node{n}.err") >= 1 for n in (1, 2, 3)
                 )
                 if sig4:
@@ -2821,6 +2845,8 @@ class PstressRun:
         scalars, arrays = load_bash_config(self.script_pwd, config_path, self.randomd)
         self.cfg = scalars
         self.kmip_configs = arrays.get("KMIP_CONFIGS", {})
+        self.pxc = self.i("PXC")
+        self.grp_rpl = self.i("GRP_RPL")
 
         # These five are "internal variable" defaults in bash -- set before
         # the conf file is sourced, so an ordinary bash variable assignment
@@ -3170,6 +3196,7 @@ class PstressRun:
             self.echoit("Generating datadir template (using mysql_install_db or mysqld --init)...")
             sh(f"{init_tool} {init_opt} --basedir={shlex.quote(basedir)} --datadir={workdir}/data.template > {workdir}/log/mysql_install_db.txt 2>&1")
         elif self.pxc == 1 or self.grp_rpl == 1:
+            self.ps_extra = self.s("MYEXTRA")
             self._create_cluster_templates(basedir, workdir)
 
         if self.i("EXECUTE_SQL_FILES_MODE") == 0:
