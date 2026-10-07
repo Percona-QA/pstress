@@ -783,40 +783,51 @@ class PstressRun:
             self._started_kmip_containers.discard(name)
 
     def validate_port_available(self, port):
+        """Check whether `port` is free on this host.
+
+        Returns True (confirmed free), False (confirmed in use), or None
+        (genuinely UNKNOWN -- no working host-level probe exists, so there
+        is no basis to call it either free or in use). Callers must not
+        treat None as "available": what they do with an unknown result is
+        a per-caller policy choice (see call sites), but silently
+        proceeding as if it were a confirmed True is exactly the bug this
+        tri-state return exists to prevent.
+
+        Only netstat/lsof are real HOST-level probes -- they can see a
+        native (non-containerized) process bound to a port, which is what
+        actually occupies an mysqld/gcomm/IST/SST port. `docker ps` only
+        reports *published container port mappings*: it has zero
+        visibility into a native listener, and an installed-but-
+        unreachable docker daemon makes a failed `docker ps` indistinguishable
+        from "no containers" (sh_out() doesn't separate the two) --
+        so its absence of a match proves nothing. A *positive* docker match
+        is still trustworthy (a published container port is definitely
+        occupied), so it's kept as a supplementary "definitely busy" signal
+        even when no native probe exists; it just can never be the sole
+        basis for "definitely free".
+        """
         if not port:
             return False
-        # Only netstat/lsof are real HOST-level probes -- they can see a
-        # native (non-containerized) process bound to a port, which is
-        # what actually occupies an mysqld/gcomm/IST/SST port. `docker ps`
-        # only reports *published container port mappings*; it has zero
-        # visibility into a native listener, so a host with Docker but
-        # neither netstat nor lsof would have every native-port collision
-        # go completely undetected -- yet still look "verified" if docker
-        # were treated as an equally-good alternative here. An installed-
-        # but-unreachable docker daemon makes this worse silently too: a
-        # failed `docker ps` just returns empty output (sh_out() doesn't
-        # distinguish "daemon down" from "no containers"), which matches
-        # no "in use" pattern below regardless -- so docker contributes
-        # nothing in exactly the case it would have most mattered. Keep
-        # using the docker check below for what it's actually good for
-        # (catching a port claimed by a KMIP container), but never count
-        # its presence toward "we have SOME way to verify this host" for
-        # the warning below, and never let it carry a whole run's
-        # port-collision protection on its own.
-        #
+        has_native_probe = command_exists("netstat") or command_exists("lsof")
         # Warn once (not on every call/every port, to avoid spamming the
         # log) so an unverifiable host is explicit in pstress-run.log
         # instead of silently claiming every port is free.
         if not getattr(self, "_warned_no_port_check_tools", False):
             self._warned_no_port_check_tools = True
-            if not (command_exists("netstat") or command_exists("lsof")):
+            if not has_native_probe:
                 self.echoit(
                     "WARNING: neither netstat nor lsof is installed on this host -- port-availability "
-                    "checks cannot verify a native (non-Docker) process occupying a port, and will "
-                    "always report every such port as free, regardless of whether Docker is installed. "
-                    "Install at least one of these to get real protection against the port collisions "
-                    "this check exists to catch."
+                    "checks cannot verify a native (non-Docker) process occupying a port. Results will "
+                    "be reported as UNKNOWN from now on (never silently 'available') until one of these "
+                    "tools is installed."
                 )
+        if not has_native_probe:
+            # No retry loop here -- without a real probe, waiting doesn't
+            # make the answer any more knowable. A positive docker match
+            # still proves "busy"; anything else is UNKNOWN, not "free".
+            if f":{port}->" in sh_out("docker ps --format '{{.Ports}}'"):
+                return False
+            return None
         for i in range(1, 11):
             port_in_use = False
             if re.search(rf":{re.escape(str(port))} ", sh_out("netstat -tuln")):
@@ -924,12 +935,20 @@ class PstressRun:
             return False
 
         self.echoit("Checking port availability... ")
-        if self.validate_port_available(port):
+        port_status = self.validate_port_available(port)
+        if port_status is True:
             self.echoit("Available")
-        else:
+        elif port_status is False:
             self.echoit("Unavailable")
             self.echoit(f"Port {port} is in use by:")
             sh(f"lsof -i :{shlex.quote(str(port))}")
+            return False
+        else:
+            self.echoit(
+                "UNKNOWN -- no host-level probe (netstat/lsof) is installed to verify this port is "
+                "actually free, so refusing to start a KMIP container on it. Install netstat or lsof "
+                "and retry."
+            )
             return False
 
         self.echoit("Starting container... ")
@@ -979,12 +998,20 @@ class PstressRun:
             return False
 
         self.echoit("Checking port availability... ")
-        if self.validate_port_available(port):
+        port_status = self.validate_port_available(port)
+        if port_status is True:
             self.echoit("Available")
-        else:
+        elif port_status is False:
             self.echoit("Unavailable")
             self.echoit(f"Port {port} is in use by:")
             sh(f"lsof -i :{shlex.quote(str(port))}")
+            return False
+        else:
+            self.echoit(
+                "UNKNOWN -- no host-level probe (netstat/lsof) is installed to verify this port is "
+                "actually free, so refusing to start a KMIP container on it. Install netstat or lsof "
+                "and retry."
+            )
             return False
 
         self.echoit(f"Starting Docker KMIP server in (script method): {setup_script}")
@@ -1041,9 +1068,10 @@ class PstressRun:
             sys.exit(1)
 
         self.echoit(f"Checking local port availability for port {port}...")
-        if self.validate_port_available(port):
+        port_status = self.validate_port_available(port)
+        if port_status is True:
             self.echoit(f"Port {port} is available locally")
-        else:
+        elif port_status is False:
             self.echoit(f"Port {port} is unavailable locally")
             if addr in ("127.0.0.1", "localhost"):
                 self.echoit(f"Port {port} is in use by:")
@@ -1053,6 +1081,18 @@ class PstressRun:
                 self.echoit(f"Warning: Port {port} is in use locally, but continuing since {addr} is a remote server")
                 self.echoit(f"Port {port} is in use by:")
                 sh(f"lsof -i :{shlex.quote(str(port))} || true")
+        else:
+            if addr in ("127.0.0.1", "localhost"):
+                self.echoit(
+                    f"Port {port} availability is UNKNOWN -- no host-level probe (netstat/lsof) is "
+                    f"installed to verify it. Install netstat or lsof and retry."
+                )
+                return False
+            else:
+                self.echoit(
+                    f"Warning: Port {port} availability is UNKNOWN locally (no netstat/lsof installed), "
+                    f"but continuing since {addr} is a remote server"
+                )
 
         self.echoit(f"Starting Fortanix KMIP server in (script method): {setup_script}")
         url = f"https://raw.githubusercontent.com/Percona-QA/percona-qa/refs/heads/master/{setup_script}"
@@ -1229,7 +1269,21 @@ class PstressRun:
         for attempt in range(1, max_attempts + 1):
             base = (random.randint(0, 32767) % 21 + 10) * 1000
             candidate_ports = sorted(set(ports_for_base(base)))
-            if all(self.validate_port_available(p) for p in candidate_ports):
+            statuses = [self.validate_port_available(p) for p in candidate_ports]
+            # A confirmed-busy port (False) means try a different base --
+            # that's what this whole retry loop is for. An UNKNOWN result
+            # (None, no host-level probe installed) is NOT the same thing:
+            # redrawing a different base can't make an unverifiable host
+            # any more verifiable, so retrying would just burn through
+            # every attempt and sys.exit(1) on every single PXC/GR trial.
+            # Proceed with this base instead, but say so explicitly rather
+            # than silently treating it as a confirmed-free port.
+            if all(s is not False for s in statuses):
+                if any(s is None for s in statuses):
+                    self.echoit(
+                        f"{label} port base {base} ({candidate_ports}): availability UNKNOWN for one or "
+                        f"more ports (no netstat/lsof installed to verify) -- proceeding anyway"
+                    )
                 return base
             self.echoit(
                 f"{label} port base {base} ({candidate_ports}) still in use after waiting; "
@@ -1249,9 +1303,14 @@ class PstressRun:
         # different base draw can't help if this specific port is busy, so
         # just warn (loudly, in pstress-run.log) and continue rather than
         # failing the trial outright for a port we have no alternative for.
-        if not self.validate_port_available(4444):
+        sst_port_status = self.validate_port_available(4444)
+        if sst_port_status is False:
             self.echoit("WARNING: PXC's SST listener port 4444 still appears to be in use after waiting; "
                         "cluster startup may fail with an SST error")
+        elif sst_port_status is None:
+            self.echoit("WARNING: PXC's SST listener port 4444 availability is UNKNOWN (no netstat/lsof "
+                        "installed to verify it) -- cluster startup may fail with an SST error if it's "
+                        "actually in use")
         rport = self._pick_free_port_base(
             # 0 = mysqld's own port, 8 = gcomm (group communication), 9 = IST
             # (Incremental State Transfer) receiver, which Galera defaults
