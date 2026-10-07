@@ -1888,6 +1888,10 @@ class PstressRun:
                     pass
         rundir = self.s("RUNDIR")
         if rundir:
+            active_trial = Path(rundir) / str(self.trial)
+            if self.trial > 0 and active_trial.is_dir():
+                self.echoit(f"Preserving unfinished trial at {active_trial} for analysis")
+                return
             shutil.rmtree(rundir, ignore_errors=True)
 
     def ctrl_c(self):
