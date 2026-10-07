@@ -2109,8 +2109,8 @@ class PstressRun:
 
         if self.gdb_mode == 1:
             append_text(f"{trial_dir}/log/master.err", "Starting...\n")
-            gdb_script = f"gdb -ex 'set pagination off' -ex run --args {cmd}\nexec bash\n"
-            subprocess.Popen(["gnome-terminal", "--", "bash", "-c", gdb_script])
+            gdb_script = 'gdb -ex "set pagination off" -ex run --args "$@"; exec bash'
+            subprocess.Popen(["gnome-terminal", "--", "bash", "-c", gdb_script, "gdb", *cmd.split()])
             print(f"[INFO] Waiting until the {pid_file} is created")
             while not os.path.exists(pid_file):
                 time.sleep(1)
