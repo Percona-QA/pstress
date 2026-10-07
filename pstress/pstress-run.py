@@ -2479,7 +2479,7 @@ class PstressRun:
                 if issue_found:
                     self.echoit(f"Bug found (as per error log): {sh_out(f'{self.script_pwd}/search_string.sh {trial_dir}/log/master.err')}")
             else:
-                sig4 = any(
+                sig4 = all(
                     grep_count("mysqld got signal 4", f"{trial_dir}/node{n}/node{n}.err") >= 1 for n in (1, 2, 3)
                 )
                 if sig4:
