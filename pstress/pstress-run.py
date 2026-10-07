@@ -1795,7 +1795,17 @@ class PstressRun:
             self.echoit(f"Removing last successful trial workdir {workdir}/{prev}")
             path = f"{workdir}/{prev}/"
             if workdir and self.trial and os.path.isdir(path):
-                shutil.rmtree(path, ignore_errors=True)
+                if self.i("SAVE_SQL") == 1:
+                    for entry in Path(path).iterdir():
+                        if entry.is_dir() and not entry.is_symlink():
+                            shutil.rmtree(entry, ignore_errors=True)
+                        elif not (entry.is_file() and entry.suffix == ".sql"):
+                            try:
+                                entry.unlink()
+                            except OSError:
+                                pass
+                else:
+                    shutil.rmtree(path, ignore_errors=True)
             self.echoit(f"Removing the {workdir}/step_{prev}.dll file")
             try:
                 os.remove(f"{workdir}/step_{prev}.dll")
