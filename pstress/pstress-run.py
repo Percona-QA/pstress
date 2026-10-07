@@ -2998,6 +2998,7 @@ class PstressRun:
             self.echoit("Generating datadir template (using mysql_install_db or mysqld --init)...")
             sh(f"{init_tool} {init_opt} --basedir={shlex.quote(basedir)} --datadir={workdir}/data.template > {workdir}/log/mysql_install_db.txt 2>&1")
         elif self.pxc == 1 or self.grp_rpl == 1:
+            self.ps_extra = self.s("MYEXTRA")
             self._create_cluster_templates(basedir, workdir)
 
         if self.i("EXECUTE_SQL_FILES_MODE") == 0:
