@@ -21,6 +21,7 @@
 #include <vector>
 #include <writer.h>
 #include <unordered_map>
+#include <limits>
 #define INNODB_16K_PAGE_SIZE 16
 #define INNODB_8K_PAGE_SIZE 8
 #define INNODB_32K_PAGE_SIZE 32
@@ -151,10 +152,12 @@ struct Vector_Column : public Column {
 
 private:
   /* deterministic vector number n of the pool or of the cluster centres. It
-   * only depends on n and dim, so it is safe without a lock and after the
-   * dimension changes */
+   * only depends on n, dim and the table name, so it is safe without a lock,
+   * the same in every step and valid after the dimension changes */
   std::vector<float> seeded_vector(int n) const;
   std::vector<float> rand_vector() const;
+  /* seed of the pool and the cluster centres, from the table name */
+  size_t seed_base;
 };
 
 struct Generated_Column : public Column {
@@ -188,15 +191,23 @@ struct Ind_col {
 };
 
 struct Index {
+  /* REGULAR is a btree index, HNSW a vector index on one VECTOR column */
+  enum KIND { REGULAR, HNSW };
+
   Index(std::string n);
   void AddInternalColumn(Ind_col *column);
   template <typename Writer> void Serialize(Writer &writer) const;
   ~Index();
 
   std::string definition();
+  static const std::string kind_to_string(KIND kind);
+  static KIND string_to_kind(const std::string &str);
 
   std::string name_;
   std::vector<Ind_col *> *columns_;
+  KIND kind = REGULAR;
+  int m = 0;          // HNSW M option, 0 means not given (server default)
+  std::string metric; // HNSW metric option, empty means not given
 };
 
 struct Thd1 {
@@ -230,7 +241,7 @@ struct Thd1 {
 
 /* Table basic properties */
 struct Table {
-  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, FK } type;
+  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, FK, VECTOR } type;
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id);
@@ -244,7 +255,17 @@ struct Table {
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
   virtual void CreateDefaultColumn();
-  void CreateDefaultIndex();
+  /* add up to --columns random columns, the first one can be the primary key
+   * if pk_allowed. At most one column is auto_increment */
+  void CreateRandomColumns(bool pk_allowed, bool has_auto_increment);
+  virtual void CreateDefaultIndex();
+  /* " LOCK=x, ALGORITHM=y" for ALTER TABLE, see pick_algorithm_lock() */
+  virtual std::string algorithm_lock(std::string *const algo = nullptr,
+                                     std::string *const lock = nullptr);
+  /* what the table actions may do to this table */
+  virtual bool can_drop_column(const Column *) const { return true; }
+  virtual bool can_modify_column(const Column *) const { return true; }
+  virtual bool can_discard_tablespace() const { return true; }
   void CopyDefaultColumn(Table *table);
   void CopyDefaultIndex(Table *table);
   void DropCreate(Thd1 *thd);
@@ -282,7 +303,9 @@ struct Table {
   std::string encryption = "N";
   int key_block_size = 0;
   int number_of_initial_records;
-  size_t auto_inc_index;
+  /* index created with the table, it holds the auto_inc column. Others are
+   * added after the initial load */
+  size_t auto_inc_index = std::numeric_limits<size_t>::max();
   // std::string data_directory; todo add corressponding code
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
@@ -299,6 +322,8 @@ struct Table {
       return "TEMPORARY";
     case FK:
       return "FK";
+    case VECTOR:
+      return "VECTOR";
     }
     return "FAIL";
   };
@@ -316,6 +341,8 @@ struct Table {
       type = TEMPORARY;
     else if (s.compare("FK") == 0)
       type = FK;
+    else if (s.compare("VECTOR") == 0)
+      type = VECTOR;
   };
 };
 
@@ -475,6 +502,39 @@ struct Temporary_table : Table {
 /* true if the run uses VECTOR columns, HNSW indexes and ANN search. Set once
 by sum_of_all_options() before any table is created */
 bool vector_enabled();
+/* Vector table: BIGINT UNSIGNED primary key, one VECTOR NOT NULL column, the
+ * usual random columns and regular indexes, and an HNSW index on the vector
+ * column. The primary key and the vector column can be renamed, so they are
+ * found through the model, not by name */
+struct Vector_table : Table {
+  Vector_table(std::string n) : Table(n){};
+
+  void CreateDefaultColumn() override;
+  void CreateDefaultIndex() override;
+  /* never LOCK=NONE and never ALGORITHM=INSTANT, both are refused on a table
+   * with a vector index */
+  std::string algorithm_lock(std::string *const algo = nullptr,
+                             std::string *const lock = nullptr) override;
+  /* the primary key column and the vector column can't be dropped, the
+   * primary key column can't be modified */
+  bool can_drop_column(const Column *col) const override;
+  bool can_modify_column(const Column *col) const override;
+  bool can_discard_tablespace() const override { return false; }
+
+  /* the primary key column, nullptr if there is none. Caller holds
+   * table_mutex */
+  Column *pk_column() const;
+  /* the vector column, nullptr if there is none. Caller holds table_mutex */
+  Vector_Column *vector_column() const;
+  /* new HNSW index model on the vector column with random M and metric
+   * options, not added to the table. nullptr if there is no vector column.
+   * Caller holds table_mutex */
+  Index *new_hnsw_index(const std::string &name) const;
+};
+
+/* random vector table from all_tables, nullptr if none or support is off */
+Vector_table *pick_vector_table();
+
 int set_seed(Thd1 *thd);
 int sum_of_all_options(Thd1 *thd);
 int sum_of_all_server_options();

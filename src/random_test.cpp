@@ -21,7 +21,8 @@ const std::string TABLE_PREFIX = "tt_";
 const std::string PARTITION_SUFFIX = "_p";
 const std::string FK_SUFFIX = "_fk";
 const std::string TEMP_SUFFIX = "_t";
-const int version = 2;
+const std::string VECTOR_SUFFIX = "_v";
+const int version = 3;
 /* range for random number int, integers, floats and double.
  more the value, less randomness.
  for example if it is 1. then there is very high chance of executing
@@ -78,6 +79,8 @@ static Table *pick_table(Table::TABLE_TYPES type, int id) {
     name += FK_SUFFIX;
   } else if (type == Table::PARTITION) {
     name += PARTITION_SUFFIX;
+  } else if (type == Table::VECTOR) {
+    name += VECTOR_SUFFIX;
   }
   for (auto const &table : *all_tables) {
     if (table->name_ == name)
@@ -180,6 +183,10 @@ static int server_version() {
 }
 
 bool vector_enabled() { return g_vector_enabled; }
+
+static bool table_enabled(const Table *table) {
+  return table->type != Table::VECTOR || vector_enabled();
+}
 
 /* options that only make sense with vector support. They are zeroed when
  * vector support is off, and passing one of them on the command line asks for
@@ -793,12 +800,14 @@ Vector_Column::Vector_Column(std::string name, Table *table)
   int max_dim = options->at(Option::VECTOR_MAX_DIM)->getInt();
   dim = rand_int(max_dim < 1 ? 1 : max_dim, 1);
   null = true; // NOT NULL, required by the HNSW index
+  seed_base = std::hash<std::string>{}(table->name_);
 }
 
 /* constructor used by load_metadata */
 Vector_Column::Vector_Column(std::string name, Table *table, int dim_)
     : Column(table, Column::VECTOR), dim(dim_) {
   name_ = name;
+  seed_base = std::hash<std::string>{}(table->name_);
 }
 
 std::vector<float> Vector_Column::rand_vector() const {
@@ -810,7 +819,7 @@ std::vector<float> Vector_Column::rand_vector() const {
 }
 
 std::vector<float> Vector_Column::seeded_vector(int n) const {
-  std::mt19937 gen(n + 1);
+  std::mt19937 gen(static_cast<std::mt19937::result_type>(seed_base + n));
   std::uniform_real_distribution<float> dis(-g_vector_range, g_vector_range);
   std::vector<float> values(dim);
   for (auto &v : values)
@@ -1191,6 +1200,13 @@ template <typename Writer> void Index::Serialize(Writer &writer) const {
   writer.StartObject();
   writer.String("name");
   writer.String(name_.c_str(), static_cast<SizeType>(name_.length()));
+  writer.String("kind");
+  std::string k = kind_to_string(kind);
+  writer.String(k.c_str(), static_cast<SizeType>(k.length()));
+  writer.String("m");
+  writer.Int(m);
+  writer.String("metric");
+  writer.String(metric.c_str(), static_cast<SizeType>(metric.length()));
   writer.String(("index_columns"));
   writer.StartArray();
   for (auto ic : *columns_)
@@ -1326,9 +1342,49 @@ Index::Index(std::string n) : name_(n), columns_() {
 
 void Index::AddInternalColumn(Ind_col *column) { columns_->push_back(column); }
 
+const std::string Index::kind_to_string(KIND kind) {
+  switch (kind) {
+  case REGULAR:
+    return "REGULAR";
+  case HNSW:
+    return "HNSW";
+  }
+  return "FAIL";
+}
+
+Index::KIND Index::string_to_kind(const std::string &str) {
+  if (str.compare("REGULAR") == 0)
+    return REGULAR;
+  if (str.compare("HNSW") == 0)
+    return HNSW;
+  throw std::runtime_error("unhandled index kind " + str);
+}
+
 /* index definition */
 std::string Index::definition() {
   std::string def;
+  if (kind == HNSW) {
+    /* VECTOR KEY|INDEX name (col) TYPE|USING hnsw [(M = m, metric = x)] */
+    def += rand_int(1) == 0 ? "VECTOR KEY " : "VECTOR INDEX ";
+    def += name_ + " (" + columns_->at(0)->column->name_ + ")";
+    def += rand_int(1) == 0 ? " TYPE " : " USING ";
+    def += rand_int(3) == 0 ? "HNSW" : "hnsw";
+    std::vector<std::string> opts;
+    if (m > 0)
+      opts.push_back("M = " + std::to_string(m));
+    if (!metric.empty())
+      opts.push_back("metric = " + metric);
+    if (opts.size() == 2 && rand_int(1) == 0)
+      std::swap(opts[0], opts[1]);
+    if (!opts.empty()) {
+      def += " (";
+      for (size_t i = 0; i < opts.size(); i++)
+        def += (i > 0 ? ", " : "") + opts[i];
+      def += ")";
+    }
+    def += " ";
+    return def;
+  }
   def += "INDEX " + name_ + "(";
   for (auto idc : *columns_) {
     def += idc->column->name_;
@@ -1394,8 +1450,9 @@ bool Table::load_secondary_indexes(Thd1 *thd) {
   if (indexes_->size() == 0)
     return true;
 
-  for (auto id : *indexes_) {
-    if (id == indexes_->at(auto_inc_index))
+  for (size_t i = 0; i < indexes_->size(); i++) {
+    auto id = indexes_->at(i);
+    if (i == auto_inc_index)
       continue;
     std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition();
     if (!execute_sql(sql, thd)) {
@@ -1576,7 +1633,7 @@ void Table::Truncate(Thd1 *thd) {
           part_table->lists.at(rand_int(part_table->lists.size() - 1)).name;
     }
     table_mutex.unlock();
-    execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
+    execute_sql("ALTER TABLE " + name_ + algorithm_lock() +
                     ", TRUNCATE PARTITION " + part_name,
                 thd);
   } else {
@@ -1601,7 +1658,7 @@ void Partition::AddDrop(Thd1 *thd) {
         table_mutex.unlock();
       }
     } else {
-      if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
+      if (execute_sql("ALTER TABLE " + name_ + algorithm_lock() +
                           ", COALESCE PARTITION " +
                           std::to_string(new_partition),
                       thd)) {
@@ -1618,7 +1675,7 @@ void Partition::AddDrop(Thd1 *thd) {
         auto par = positions.at(rand_int(positions.size() - 1));
         auto part_name = par.name;
         table_mutex.unlock();
-        if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
+        if (execute_sql("ALTER TABLE " + name_ + algorithm_lock() +
                             ", DROP PARTITION " + part_name,
                         thd)) {
           table_mutex.lock();
@@ -1693,7 +1750,7 @@ void Partition::AddDrop(Thd1 *thd) {
       auto par = lists.at(rand_int(lists.size() - 1));
       auto part_name = par.name;
       table_mutex.unlock();
-      if (execute_sql("ALTER TABLE " + name_ + pick_algorithm_lock() +
+      if (execute_sql("ALTER TABLE " + name_ + algorithm_lock() +
                           ", DROP PARTITION " + part_name,
                       thd)) {
         table_mutex.lock();
@@ -1774,9 +1831,6 @@ Table::~Table() {
 
 /* create default column */
 void Table::CreateDefaultColumn() {
-  auto no_auto_inc = opt_bool(NO_AUTO_INC);
-  bool has_auto_increment = false;
-
   if (type == FK) {
     std::string name = "fk_col";
     Column::COLUMN_TYPES type = Column::INTEGER;
@@ -1795,6 +1849,13 @@ void Table::CreateDefaultColumn() {
     AddInternalColumn(col);
   }
 
+  CreateRandomColumns(true, false);
+}
+
+/* add random columns */
+void Table::CreateRandomColumns(bool pk_allowed, bool has_auto_increment) {
+  auto no_auto_inc = opt_bool(NO_AUTO_INC);
+
   /* create normal column */
   static auto max_col = opt_int(COLUMNS);
 
@@ -1807,7 +1868,8 @@ void Table::CreateDefaultColumn() {
     /*  if we need to create primary column */
 
     /* First column can be primary */
-    if (i == 0 && rand_int(100) <= options->at(Option::PRIMARY_KEY)->getInt()) {
+    if (pk_allowed && i == 0 &&
+        rand_int(100) <= options->at(Option::PRIMARY_KEY)->getInt()) {
       type = Column::INT;
       name = "pkey";
       col = new Column{name, this, type};
@@ -1957,6 +2019,124 @@ void Table::CreateDefaultIndex() {
   }
 }
 
+/* primary key, vector column, then the usual random columns */
+void Vector_table::CreateDefaultColumn() {
+  auto no_auto_inc = opt_bool(NO_AUTO_INC);
+
+  auto pk = new Column{"pkey", this, Column::INT};
+  pk->primary_key = true;
+  pk->unsigned_big = true;
+  pk->length = 0;
+  if (!no_auto_inc && rand_int(3) < 3)
+    pk->auto_increment = true;
+  AddInternalColumn(pk);
+
+  AddInternalColumn(new Vector_Column("vec", this));
+
+  CreateRandomColumns(false, pk->auto_increment);
+}
+
+/* the usual regular indexes plus the HNSW index */
+void Vector_table::CreateDefaultIndex() {
+  Table::CreateDefaultIndex();
+
+  /* the regular index creation can stop early, the auto_inc index must then
+   * not point to the HNSW index */
+  if (auto_inc_index >= indexes_->size())
+    auto_inc_index = std::numeric_limits<size_t>::max();
+
+  auto index = new_hnsw_index(name_ + "hnsw");
+  if (index != nullptr)
+    AddInternalIndex(index);
+}
+
+Column *Vector_table::pk_column() const {
+  for (auto col : *columns_) {
+    if (col->primary_key)
+      return col;
+  }
+  return nullptr;
+}
+
+Vector_Column *Vector_table::vector_column() const {
+  for (auto col : *columns_) {
+    if (col->type_ == Column::VECTOR)
+      return static_cast<Vector_Column *>(col);
+  }
+  return nullptr;
+}
+
+Index *Vector_table::new_hnsw_index(const std::string &name) const {
+  auto col = vector_column();
+  if (col == nullptr)
+    return nullptr;
+  auto index = new Index(name);
+  index->kind = Index::HNSW;
+  index->AddInternalColumn(new Ind_col(col, false));
+  /* 30% use the server default M */
+  auto prob = rand_int(99);
+  if (prob < 30)
+    index->m = 0;
+  else if (prob < 35)
+    index->m = rand_int(200, 2);
+  else
+    index->m = rand_int(32, 2);
+  if (rand_int(2) == 0)
+    index->metric = "euclidean";
+  return index;
+}
+
+bool Vector_table::can_drop_column(const Column *col) const {
+  return !col->primary_key && col->type_ != Column::VECTOR;
+}
+
+bool Vector_table::can_modify_column(const Column *col) const {
+  return !col->primary_key;
+}
+
+std::string Table::algorithm_lock(std::string *const algo,
+                                  std::string *const lock) {
+  return pick_algorithm_lock(algo, lock);
+}
+
+std::string Vector_table::algorithm_lock(std::string *const algo,
+                                         std::string *const lock) {
+  std::string current_algo;
+  std::string current_lock;
+  pick_algorithm_lock(&current_algo, &current_lock);
+
+  if (current_algo == "INSTANT")
+    current_algo = rand_int(1) == 0 ? "INPLACE" : "DEFAULT";
+  if (current_lock == "NONE")
+    current_lock = rand_int(1) == 0 ? "SHARED" : "DEFAULT";
+
+  if (algo != nullptr)
+    *algo = current_algo;
+  if (lock != nullptr)
+    *lock = current_lock;
+
+  return " LOCK=" + current_lock + ", ALGORITHM=" + current_algo;
+}
+
+Vector_table *pick_vector_table() {
+  if (!vector_enabled())
+    return nullptr;
+
+  int count = 0;
+  for (auto table : *all_tables)
+    if (table->type == Table::VECTOR)
+      ++count;
+  if (count == 0)
+    return nullptr;
+
+  /* One random draw preserves uniform selection and the run's RNG sequence. */
+  int selected = rand_int(count - 1);
+  for (auto table : *all_tables)
+    if (table->type == Table::VECTOR && selected-- == 0)
+      return static_cast<Vector_table *>(table);
+  return nullptr;
+}
+
 /* Create new table and pick some attributes */
 Table *Table::table_id(TABLE_TYPES type, int id) {
   Table *table;
@@ -1975,6 +2155,9 @@ Table *Table::table_id(TABLE_TYPES type, int id) {
     throw std::runtime_error("Unhandle Table type");
   case FK:
     table = new FK_table(name + FK_SUFFIX);
+    break;
+  case VECTOR:
+    table = new Vector_table(name + VECTOR_SUFFIX);
     break;
   }
 
@@ -2044,6 +2227,16 @@ Table *Table::table_id(TABLE_TYPES type, int id) {
     table->key_block_size = 0;
   }
 
+  /* with a vector index every later ALTER that keeps an explicit
+   * KEY_BLOCK_SIZE is refused, so vector tables have none. That also rules
+   * out the compressed general tablespaces. key_block_size > 0 is what set
+   * ROW_FORMAT=COMPRESSED above, so clear that too */
+  if (type == VECTOR && table->key_block_size > 0) {
+    table->key_block_size = 0;
+    table->tablespace.clear();
+    table->row_format.clear();
+  }
+
   static auto engine = options->at(Option::ENGINE)->getString();
   table->engine = engine;
 
@@ -2069,8 +2262,13 @@ bool Table::has_pk() const {
   return false;
 }
 
-/* no HNSW index model yet */
-Index *Table::hnsw_index() const { return nullptr; }
+Index *Table::hnsw_index() const {
+  for (auto index : *indexes_) {
+    if (index->kind == Index::HNSW)
+      return index;
+  }
+  return nullptr;
+}
 
 /* prepare table definition */
 std::string Table::definition(bool with_index) {
@@ -2119,7 +2317,7 @@ std::string Table::definition(bool with_index) {
 
   } else {
     /* only load autoinc */
-    if (indexes_->size() > 0) {
+    if (auto_inc_index < indexes_->size()) {
       def += indexes_->at(auto_inc_index)->definition() + ", ";
     }
   }
@@ -2239,6 +2437,12 @@ void generate_metadata_for_tables() {
       if (!options->at(Option::NO_PARTITION)->getBool() &&
           options->at(Option::PARTITION_PROB)->getInt() > rand_int(100))
         all_tables->push_back(Table::table_id(Table::PARTITION, i));
+
+      /* vector_enabled() first, so the random sequence of a run without
+       * vector support does not change */
+      if (vector_enabled() &&
+          options->at(Option::VECTOR_PROB)->getInt() > rand_int(100))
+        all_tables->push_back(Table::table_id(Table::VECTOR, i));
       /*
       if (!options->at(Option::NO_FK)->getBool() &&
           options->at(Option::FK_PROB)->getInt() > rand_int(100))
@@ -2355,7 +2559,7 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
 void Table::SetEncryption(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " ENCRYPTION = '";
   std::string enc = g_encryption[rand_int(g_encryption.size() - 1)];
-  sql += enc + "'" + "," + pick_algorithm_lock();
+  sql += enc + "'" + "," + algorithm_lock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
     encryption = enc;
@@ -2367,7 +2571,7 @@ void Table::SetEncryption(Thd1 *thd) {
 void Table::SetTableCompression(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " COMPRESSION= '";
   std::string comp = g_compression[rand_int(g_compression.size() - 1)];
-  sql += comp + "'" + "," + pick_algorithm_lock();
+  sql += comp + "'" + "," + algorithm_lock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
     compression = comp;
@@ -2376,7 +2580,7 @@ void Table::SetTableCompression(Thd1 *thd) {
 }
 
 void Table::SetAlterEngine(Thd1 *thd) {
-  std::string sql = "ALTER TABLE " + name_ + " ENGINE=InnoDB," + pick_algorithm_lock();
+  std::string sql = "ALTER TABLE " + name_ + " ENGINE=InnoDB," + algorithm_lock();
   execute_sql(sql, thd);
 }
 
@@ -2394,6 +2598,10 @@ void Table::ModifyColumn(Thd1 *thd) {
   int i = 0;
   while (i < 50 && col == nullptr) {
     auto col1 = columns_->at(rand_int(columns_->size() - 1));
+    if (!can_modify_column(col1)) {
+      i++;
+      continue;
+    }
     switch (col1->type_) {
     case Column::BLOB:
     case Column::GENERATED:
@@ -2435,7 +2643,7 @@ void Table::ModifyColumn(Thd1 *thd) {
             col->type_ == Column::VARCHAR))
     col->compressed = true;
 
-  sql += " " + col->definition() + "," + pick_algorithm_lock();
+  sql += " " + col->definition() + "," + algorithm_lock();
 
   /* if not successful rollback */
   if (!execute_sql(sql, thd)) {
@@ -2466,9 +2674,14 @@ void Table::DropColumn(Thd1 *thd) {
     return;
   }
 
+  if (!can_drop_column(columns_->at(ps))) {
+    table_mutex.unlock();
+    return;
+  }
+
   std::string sql = "ALTER TABLE " + name_ + " DROP COLUMN " + name + ",";
 
-  sql += pick_algorithm_lock();
+  sql += algorithm_lock();
   table_mutex.unlock();
 
   if (execute_sql(sql, thd)) {
@@ -2569,7 +2782,7 @@ void Table::AddColumn(Thd1 *thd) {
   sql += tc->definition();
 
   std::string algo;
-  std::string algorithm_lock = pick_algorithm_lock(&algo);
+  std::string algo_lock = algorithm_lock(&algo);
 
   bool has_virtual_column = false;
   /* if a table has virtual column, We can not add AFTER */
@@ -2591,7 +2804,7 @@ void Table::AddColumn(Thd1 *thd) {
 
   sql += ",";
 
-  sql += algorithm_lock;
+  sql += algo_lock;
 
   table_mutex.unlock();
 
@@ -2621,7 +2834,7 @@ void Table::DropIndex(Thd1 *thd) {
     auto index = indexes_->at(rand_int(indexes_->size() - 1));
     auto name = index->name_;
     std::string sql = "ALTER TABLE " + name_ + " DROP INDEX " + name + ",";
-    sql += pick_algorithm_lock();
+    sql += algorithm_lock();
     table_mutex.unlock();
     if (execute_sql(sql, thd)) {
       table_mutex.lock();
@@ -2693,7 +2906,7 @@ void Table::AddIndex(Thd1 *thd) {
   }
 
   std::string sql = "ALTER TABLE " + name_ + " ADD " + id->definition() + ",";
-  sql += pick_algorithm_lock();
+  sql += algorithm_lock();
   metadata_lock.unlock();
 
   if (execute_sql(sql, thd)) {
@@ -2795,7 +3008,7 @@ void Table::IndexRename(Thd1 *thd) {
       new_name = name + new_name;
     std::string sql = "ALTER TABLE " + name_ + " RENAME INDEX " + name +
                       " To " + new_name + ",";
-    sql += pick_algorithm_lock();
+    sql += algorithm_lock();
     table_mutex.unlock();
     if (execute_sql(sql, thd)) {
       table_mutex.lock();
@@ -2821,7 +3034,7 @@ void Table::ColumnRename(Thd1 *thd) {
     new_name = name + new_name;
   std::string sql = "ALTER TABLE " + name_ + " RENAME COLUMN " + name + " To " +
                     new_name + ",";
-  sql += pick_algorithm_lock();
+  sql += algorithm_lock();
   table_mutex.unlock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
@@ -3246,6 +3459,8 @@ void alter_tablespace_encryption(Thd1 *thd) {
 
 /* alter table discard tablespace */
 void Table::alter_discard_tablespace(Thd1 *thd) {
+  if (!can_discard_tablespace())
+    return;
   std::string sql = "ALTER TABLE " + name_ + " DISCARD TABLESPACE";
   execute_sql(sql, thd);
   /* Discarding the tablespace makes the table unusable, hence recreate the
@@ -3615,6 +3830,8 @@ static std::string load_metadata_from_file() {
       }
     } else if (table_type.compare("NORMAL") == 0) {
       table = new Table(name);
+    } else if (table_type.compare("VECTOR") == 0) {
+      table = new Vector_table(name);
     } else if (table_type == "FK") {
       std::string on_update = tab["on_update"].GetString();
       std::string on_delete = tab["on_delete"].GetString();
@@ -3687,6 +3904,9 @@ static std::string load_metadata_from_file() {
 
     for (auto &ind : tab["indexes"].GetArray()) {
       Index *index = new Index(ind["name"].GetString());
+      index->kind = Index::string_to_kind(ind["kind"].GetString());
+      index->m = ind["m"].GetInt();
+      index->metric = ind["metric"].GetString();
 
       for (auto &ind_col : ind["index_columns"].GetArray()) {
         std::string index_base_column = ind_col["name"].GetString();
@@ -3836,13 +4056,26 @@ bool Thd1::load_metadata() {
   if (options->at(Option::TABLES)->getInt() <= 0)
     throw std::runtime_error("no table to work on \n");
 
+  for (auto table : *all_tables) {
+    if (table->type != Table::VECTOR)
+      continue;
+    if (g_vector_probe_failed)
+      throw std::runtime_error("the metadata has vector tables, but the server "
+                               "has no HNSW vector index support");
+    break;
+  }
+
+
   return 1;
 }
 
 /* return true if successful or error out in case of fail */
 bool Thd1::run_some_query() {
+  /* VECTOR after FK: the FK table takes the keys of its parent from
+   * thd->unique_keys, which every bulk load overwrites */
   std::vector<Table::TABLE_TYPES> tableTypes = {Table::NORMAL, Table::FK,
-                                                Table::PARTITION};
+                                                Table::PARTITION,
+                                                Table::VECTOR};
   execute_sql("USE " + options->at(Option::DATABASE)->getString(), this);
 
   /* first create temporary tables metadata if requried */
@@ -3908,7 +4141,8 @@ bool Thd1::run_some_query() {
 
     while (current < number_of_tables) {
       auto table = all_tables->at(current);
-      check_tables_partitions_preload(table, this);
+      if (table_enabled(table))
+        check_tables_partitions_preload(table, this);
       table_completed++;
       current = table_started++;
     }
@@ -3949,9 +4183,16 @@ bool Thd1::run_some_query() {
   rng = std::mt19937(set_seed(this));
   thread_log << " value of rand_int(100) " << rand_int(100) << std::endl;
 
-  /* combine session tables with all tables */
-  all_session_tables->insert(all_session_tables->end(), all_tables->begin(),
-                             all_tables->end());
+  /* keep disabled vector tables in saved metadata, but never select them
+   * for generic DML/DDL or grammar SQL */
+  for (auto table : *all_tables) {
+    if (table_enabled(table))
+      all_session_tables->push_back(table);
+  }
+  if (all_session_tables->empty()) {
+    delete all_session_tables;
+    throw std::runtime_error("no eligible tables to work on");
+  }
 
   /* freqency of all options per thread */
   int opt_feq[Option::MAX][2] = {{0, 0}};
