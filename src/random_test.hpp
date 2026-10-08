@@ -553,6 +553,10 @@ void clean_up_at_end();
 void alter_tablespace_encryption(Thd1 *thd);
 void alter_tablespace_rename(Thd1 *thd);
 void set_mysqld_variable(Thd1 *thd);
+/* ORDER BY DISTANCE() LIMIT k on a random vector table */
+void select_vector_ann(Thd1 *thd);
+/* SET SESSION innodb_hnsw_ef_search */
+void set_hnsw_ef_search(Thd1 *thd);
 void add_server_options(std::string str);
 void alter_database_encryption(Thd1 *thd);
 void create_in_memory_data();

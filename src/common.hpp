@@ -153,6 +153,8 @@ struct Option {
     NO_VECTOR,
     VECTOR_PROB,
     VECTOR_MAX_DIM,
+    SELECT_VECTOR_ANN,
+    SET_HNSW_EF_SEARCH,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

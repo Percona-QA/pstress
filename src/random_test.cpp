@@ -192,8 +192,9 @@ static bool table_enabled(const Table *table) {
  * vector support is off, and passing one of them on the command line asks for
  * vector support explicitly */
 static const std::vector<Option::Opt> &vector_options() {
-  static const std::vector<Option::Opt> opts = {Option::VECTOR_PROB,
-                                                Option::VECTOR_MAX_DIM};
+  static const std::vector<Option::Opt> opts = {
+      Option::VECTOR_PROB, Option::VECTOR_MAX_DIM, Option::SELECT_VECTOR_ANN,
+      Option::SET_HNSW_EF_SEARCH};
   return opts;
 }
 
@@ -259,6 +260,18 @@ static void setup_vector(Thd1 *thd) {
           " was given, but the server has no HNSW vector index support");
   }
   disable_vector(thd, "the server has no HNSW vector index support");
+}
+
+/* sum the final workload weights without repeating startup setup */
+static int sum_sql_option_weights() {
+  int total = 0;
+  for (auto opt : *options) {
+    if (opt != nullptr && opt->sql)
+      total += opt->getInt();
+  }
+  if (total == 0)
+    throw std::runtime_error("no option selected");
+  return total;
 }
 
 /* return probabality of all options and disable some feature based on user
@@ -407,6 +420,7 @@ int sum_of_all_options(Thd1 *thd) {
   if (options->at(Option::NO_SELECT)->getBool()) {
     options->at(Option::SELECT_ALL_ROW)->setInt(0);
     options->at(Option::SELECT_ROW_USING_PKEY)->setInt(0);
+    options->at(Option::SELECT_VECTOR_ANN)->setInt(0);
   }
   /* if delete is set as zero, disable all type of deletes */
   if (options->at(Option::NO_DELETE)->getBool()) {
@@ -510,7 +524,6 @@ int sum_of_all_options(Thd1 *thd) {
     }
   }
 
-  int total = 0;
   for (auto &opt : *options) {
     if (opt == nullptr)
       continue;
@@ -518,14 +531,9 @@ int sum_of_all_options(Thd1 *thd) {
       thd->thread_log << opt->getName() << "=>" << opt->getInt() << std::endl;
     else if (opt->getType() == Option::BOOL)
       thd->thread_log << opt->getName() << "=>" << opt->getBool() << std::endl;
-    if (!opt->sql)
-      continue;
-    total += opt->getInt();
   }
 
-  if (total == 0)
-    throw std::runtime_error("no option selected");
-  return total;
+  return sum_sql_option_weights();
 }
 
 /* return some options */
@@ -4056,17 +4064,419 @@ bool Thd1::load_metadata() {
   if (options->at(Option::TABLES)->getInt() <= 0)
     throw std::runtime_error("no table to work on \n");
 
+  bool has_vector_tables = false;
   for (auto table : *all_tables) {
     if (table->type != Table::VECTOR)
       continue;
     if (g_vector_probe_failed)
       throw std::runtime_error("the metadata has vector tables, but the server "
                                "has no HNSW vector index support");
+    has_vector_tables = true;
     break;
   }
 
+  /* with vector support off, disable_vector() already zeroed both options */
+  if (vector_enabled() && !has_vector_tables) {
+    opt_int_set(SELECT_VECTOR_ANN, 0);
+    thread_log << "No vector tables: select-vector-ann disabled" << std::endl;
+  }
+  sum_of_all_opts = sum_sql_option_weights();
 
   return 1;
+}
+
+/* names of a vector table taken under table_mutex, so that ANN statements are
+ * built and executed without holding the lock */
+struct Ann_names {
+  std::string table;
+  std::string pk;
+  std::string vec;
+  /* name of the HNSW index, empty if the table has none */
+  std::string hnsw;
+};
+
+static bool ann_names(Vector_table *table, Ann_names &names) {
+  std::lock_guard<std::mutex> guard(table->table_mutex);
+  auto pk = table->pk_column();
+  auto vec = table->vector_column();
+  if (pk == nullptr || vec == nullptr)
+    return false;
+  names.table = table->name_;
+  names.pk = pk->name_;
+  names.vec = vec->name_;
+  auto index = table->hnsw_index();
+  names.hnsw = index == nullptr ? "" : index->name_;
+  return true;
+}
+
+/* --records, the upper bound of initial rows and of primary key values of
+ * auto increment tables */
+static int ann_records() {
+  return options->at(Option::INITIAL_RECORDS_IN_TABLE)->getInt();
+}
+
+/* metric of DISTANCE(). The HNSW index only serves EUCLIDEAN and
+ * EUCLIDEAN_SQUARED, the others are always answered by a scan */
+static std::string ann_metric() {
+  auto prob = rand_int(99);
+  std::string metric;
+  if (prob < 50)
+    metric = "EUCLIDEAN";
+  else if (prob < 90)
+    metric = "EUCLIDEAN_SQUARED";
+  else if (prob < 94)
+    metric = "COSINE";
+  else if (prob < 97)
+    metric = "DOT";
+  else
+    metric = "MANHATTAN";
+  /* metric names are case insensitive */
+  if (rand_int(4) == 0)
+    std::transform(metric.begin(), metric.end(), metric.begin(), ::tolower);
+  return "'" + metric + "'";
+}
+
+/* query vector of an ANN statement. Caller holds table_mutex.
+param[in] col   vector column
+param[in] row   text form of an existing row's vector, empty if none was read
+*/
+static std::string ann_query_vector(Vector_Column *col,
+                                    const std::string &row) {
+  if (!row.empty()) {
+    std::vector<float> values;
+    /* the row can have fewer dimensions if it was stored while the table had
+     * no HNSW index */
+    if (!Vector_Column::parse(row, values) ||
+        values.size() != static_cast<size_t>(col->dim))
+      return col->uniform_vector_literal();
+    static const float noise[] = {0, 0.001f, 0.1f, 1, 10};
+    return col->literal_with_noise(std::move(values), noise[rand_int(4)]);
+  }
+  auto prob = rand_int(99);
+  if (prob < 2)
+    return "NULL";
+  if (prob < 4) {
+    /* wrong dimension, DISTANCE() fails */
+    std::vector<float> values(col->dim > 1 && rand_int(1) == 0 ? col->dim - 1
+                                                                : col->dim + 1,
+                              1);
+    return Vector_Column::to_literal(values);
+  }
+  if (prob < 10)
+    return col->zero_vector_literal();
+  if (prob < 40)
+    return col->uniform_vector_literal();
+  return col->rand_vector_literal();
+}
+
+/* condition for the WHERE clause of an ANN statement: a primary key range or
+ * equality, another column, or the distance itself. Caller holds table_mutex.
+param[in] table     vector table
+param[in] alias     table alias or name used to qualify columns
+param[in] distance  DISTANCE() call of the statement
+*/
+static std::string ann_condition(Vector_table *table, const std::string &alias,
+                                 const std::string &distance) {
+  auto pk = table->pk_column();
+  auto prob = rand_int(99);
+  if (prob < 35 && pk != nullptr) {
+    auto name = alias + "." + pk->name_;
+    auto value = pk->rand_value();
+    switch (rand_int(3)) {
+    case 0:
+      return name + " > " + value;
+    case 1:
+      return name + " < " + value;
+    case 2: {
+      /* mostly a range that is not empty */
+      auto low = rand_int(ann_records());
+      auto high = low + rand_int(ann_records());
+      if (rand_int(9) == 0)
+        std::swap(low, high);
+      return name + " BETWEEN " + std::to_string(low) + " AND " +
+             std::to_string(high);
+    }
+    default:
+      return name + " >= " + std::to_string(rand_int(ann_records()));
+    }
+  }
+  if (prob < 40 && pk != nullptr)
+    return alias + "." + pk->name_ + " = " + pk->rand_value();
+  if (prob < 55)
+    return distance + (rand_int(1) == 0 ? " < " : " <= ") +
+           std::to_string(rand_int(300, 1));
+
+  /* another column, never the vector column */
+  std::vector<Column *> others;
+  for (auto col : *table->columns_) {
+    if (col->type_ != Column::VECTOR && !col->primary_key)
+      others.push_back(col);
+  }
+  if (others.empty())
+    return alias + "." + table->vector_column()->name_ + " IS NOT NULL";
+  auto col = others.at(rand_int(others.size() - 1));
+  auto name = alias + "." + col->name_;
+  switch (rand_int(4)) {
+  case 0:
+  case 1:
+    return name + " = " + col->rand_value();
+  case 2:
+    return name + " >= " + col->rand_value();
+  case 3:
+    return name + " IS NOT NULL";
+  default:
+    return name + " <> " + col->rand_value();
+  }
+}
+
+/* LIMIT of an ANN statement: mostly small, sometimes above the default
+ * innodb_hnsw_ef_search (40) or above --records. Tables often have fewer rows
+ * than --records, so a LIMIT above ef_search is kept small too */
+static std::string ann_limit() {
+  auto prob = rand_int(99);
+  int limit;
+  if (prob < 75)
+    limit = rand_int(10, 1);
+  else if (prob < 88)
+    limit = rand_int(200, 41);
+  else
+    limit = ann_records() + rand_int(1000, 1);
+  if (rand_int(19) == 0)
+    return " LIMIT " + std::to_string(rand_int(20)) + ", " +
+           std::to_string(limit);
+  return " LIMIT " + std::to_string(limit);
+}
+
+/* table to join with an ANN statement on its primary key: another vector
+ * table, or the same one. Returns false if none can be used */
+static bool ann_join_table(Ann_names &names) {
+  auto table = pick_vector_table();
+  return table != nullptr && ann_names(table, names);
+}
+
+/* ORDER BY DISTANCE(...) LIMIT k on a random vector table. Most statements
+ * have the shape the HNSW index serves. Some have a shape it must not serve:
+ * another metric, DESC, no LIMIT, a grouped or windowed query, or a hint that
+ * turns the index off. The query vector is random, an existing row's vector,
+ * with or without noise, the zero vector, NULL or of the wrong dimension, and
+ * it is given as a literal, a user variable or a statement parameter */
+void select_vector_ann(Thd1 *thd) {
+  auto table = pick_vector_table();
+  if (table == nullptr)
+    return;
+  Ann_names names;
+  if (!ann_names(table, names))
+    return;
+
+  /* an existing row's vector, read before the statement */
+  std::string row;
+  if (rand_int(99) < 30) {
+    std::string pk_value;
+    {
+      std::lock_guard<std::mutex> guard(table->table_mutex);
+      auto pk = table->pk_column();
+      pk_value = pk == nullptr ? "0" : pk->rand_value();
+    }
+    if (rand_int(1) == 0)
+      pk_value = std::to_string(rand_int(ann_records()));
+    row = mysql_read_single_value("SELECT FROM_VECTOR(" + names.vec +
+                                      ") FROM " + names.table + " WHERE " +
+                                      names.pk + " >= " + pk_value +
+                                      " LIMIT 1",
+                                  thd);
+  }
+
+  /* table to join with, picked before table_mutex is taken: two table
+   * mutexes are never held at once */
+  bool join = rand_int(99) < 8;
+  Ann_names other;
+  if (join && !ann_join_table(other))
+    join = false;
+
+  enum { PLAIN, SUBQUERY, PREPARED } form = PLAIN;
+  auto form_prob = rand_int(99);
+  if (form_prob < 10)
+    form = SUBQUERY;
+  else if (form_prob < 20)
+    form = PREPARED;
+
+  std::string alias = join || rand_int(3) == 0 ? "a" : names.table;
+  std::string distance;
+  std::string where;
+  std::string set_variable;
+  bool parameter = false;
+  {
+    std::lock_guard<std::mutex> guard(table->table_mutex);
+    auto col = table->vector_column();
+    if (col == nullptr)
+      return;
+    names.vec = col->name_;
+    auto pk = table->pk_column();
+    if (pk != nullptr)
+      names.pk = pk->name_;
+    auto index = table->hnsw_index();
+    names.hnsw = index == nullptr ? "" : index->name_;
+    auto query_vector = ann_query_vector(col, row);
+
+    /* a statement parameter or a user variable holds the query vector */
+    if (form == PREPARED && rand_int(1) == 0) {
+      set_variable = "SET @ann_q = " + query_vector;
+      query_vector = "?";
+      parameter = true;
+    } else if (rand_int(9) == 0) {
+      set_variable = "SET @ann_q = " + query_vector;
+      query_vector = "@ann_q";
+    }
+
+    auto column = alias + "." + names.vec;
+    auto metric = ann_metric();
+    distance = rand_int(1) == 0 ? "DISTANCE(" + column + ", " + query_vector +
+                                      ", " + metric + ")"
+                                : "DISTANCE(" + query_vector + ", " + column +
+                                      ", " + metric + ")";
+    if (rand_int(99) < 35) {
+      where = " WHERE " + ann_condition(table, alias, distance);
+      if (rand_int(9) == 0)
+        where += " AND " + ann_condition(table, alias, distance);
+    }
+  }
+
+  /* select list and ORDER BY */
+  auto pk = alias + "." + names.pk;
+  std::string select_list;
+  std::string order_by;
+  auto list_prob = rand_int(99);
+  if (list_prob < 30) {
+    select_list = pk;
+    order_by = distance;
+  } else if (list_prob < 45) {
+    select_list = alias + ".*";
+    order_by = distance;
+  } else if (list_prob < 55) {
+    select_list = pk + ", FROM_VECTOR(" + alias + "." + names.vec + ")";
+    order_by = distance;
+  } else {
+    select_list = pk + ", " + distance + " AS dist";
+    auto order_prob = rand_int(9);
+    order_by = order_prob < 6 ? "dist" : order_prob < 8 ? "2" : distance;
+  }
+
+  /* shapes the index must not serve: about 10% DESC or no LIMIT, a few
+   * grouped, windowed or DISTINCT queries */
+  std::string limit = ann_limit();
+  std::string group_by;
+  auto shape_prob = rand_int(99);
+  if (shape_prob < 5) {
+    order_by += " DESC";
+  } else if (shape_prob < 10) {
+    limit = "";
+  } else if (shape_prob < 11 && list_prob >= 55) {
+    /* with DISTINCT the ORDER BY must be in the select list */
+    select_list = "DISTINCT " + select_list;
+  } else if (shape_prob < 12) {
+    /* MIN() keeps this valid under ONLY_FULL_GROUP_BY. A grouped query is
+     * not the ANN shape the HNSW index serves */
+    select_list = pk + ", COUNT(*), MIN(" + distance + ") AS dist";
+    group_by = " GROUP BY " + pk;
+    order_by = "dist";
+  } else if (shape_prob < 13) {
+    select_list = pk + ", ROW_NUMBER() OVER () AS rn";
+    order_by = distance;
+  } else if (shape_prob < 15) {
+    order_by += " ASC";
+  }
+
+  /* index hints */
+  std::string hint;
+  std::string index_hint;
+  auto hint_prob = rand_int(99);
+  if (hint_prob < 5) {
+    hint = "/*+ NO_INDEX(" + alias +
+           (names.hnsw.empty() || rand_int(1) == 0 ? "" : " " + names.hnsw) +
+           ") */ ";
+  } else if (!names.hnsw.empty() && hint_prob < 10) {
+    index_hint = " IGNORE INDEX (" + names.hnsw + ")";
+  } else if (!names.hnsw.empty() && hint_prob < 16) {
+    index_hint = (rand_int(1) == 0 ? " FORCE INDEX (" : " USE INDEX (") +
+                 names.hnsw + ")";
+  }
+
+  std::string from = names.table;
+  if (alias != names.table)
+    from += " AS " + alias;
+  from += index_hint;
+  if (join) {
+    auto join_prob = rand_int(2);
+    from += join_prob == 0   ? " JOIN "
+            : join_prob == 1 ? " STRAIGHT_JOIN "
+                             : " LEFT JOIN ";
+    from += other.table + " AS b ON " + pk + " = b." + other.pk;
+  }
+
+  std::string sql = "SELECT " + hint + select_list + " FROM " + from + where +
+                    group_by + " ORDER BY " + order_by + limit;
+
+  if (form == SUBQUERY) {
+    auto sub_prob = rand_int(3);
+    if (sub_prob == 0)
+      sql = "SELECT * FROM (" + sql + ") AS sq";
+    else if (sub_prob == 1)
+      sql = "SELECT COUNT(*) FROM (" + sql + ") AS sq";
+    else if (sub_prob == 2)
+      /* LIMIT is not allowed in an IN subquery, only in a derived table */
+      sql = "SELECT " + names.pk + " FROM " + names.table + " WHERE " +
+            names.pk + " IN (SELECT * FROM (SELECT " + pk + " FROM " + from +
+            where + " ORDER BY " + distance + ann_limit() + ") AS sq)";
+    else
+      sql = "SELECT (SELECT " + pk + " FROM " + from + where + " ORDER BY " +
+            distance + " LIMIT 1)";
+  }
+
+  if (!set_variable.empty())
+    execute_sql(set_variable, thd);
+
+  if (form != PREPARED) {
+    /* helper statements do not count */
+    thd->success = false;
+    execute_sql(sql, thd);
+    return;
+  }
+
+  std::string quoted;
+  for (auto c : sql) {
+    quoted += c;
+    if (c == '\'')
+      quoted += c;
+  }
+  if (!execute_sql("PREPARE ann_stmt FROM '" + quoted + "'", thd)) {
+    thd->success = false;
+    return;
+  }
+  /* executed more than once, a re-executed statement reopens the scan */
+  thd->success = false;
+  std::string execute = "EXECUTE ann_stmt";
+  if (parameter) {
+    /* one parameter per DISTANCE() call */
+    std::string using_list;
+    for (auto pos = sql.find(distance); pos != std::string::npos;
+         pos = sql.find(distance, pos + distance.size()))
+      using_list += using_list.empty() ? " USING @ann_q" : ", @ann_q";
+    execute += using_list;
+  }
+  auto executions = rand_int(2, 1);
+  for (int i = 0; i < executions; i++)
+    execute_sql(execute, thd);
+  auto success = thd->success;
+  execute_sql("DEALLOCATE PREPARE ann_stmt", thd);
+  thd->success = success;
+}
+
+/* set the session innodb_hnsw_ef_search, the minimum candidate list width of
+ * HNSW searches */
+void set_hnsw_ef_search(Thd1 *thd) {
+  std::string value = rand_int(9) == 0 ? "DEFAULT"
+                                        : std::to_string(rand_int(1000, 1));
+  execute_sql("SET SESSION innodb_hnsw_ef_search = " + value, thd);
 }
 
 /* return true if successful or error out in case of fail */
@@ -4240,6 +4650,8 @@ bool Thd1::run_some_query() {
         all_session_tables->at(rand_int(all_session_tables->size() - 1));
     auto option = pick_some_option();
     ddl_query = options->at(option)->ddl == true ? true : false;
+    /* helper statements and skipped actions must not count as successes */
+    success = false;
 
     switch (option) {
     case Option::DROP_INDEX:
@@ -4350,6 +4762,12 @@ bool Thd1::run_some_query() {
       break;
     case Option::GRAMMAR_SQL:
       grammar_sql(all_session_tables, this);
+      break;
+    case Option::SELECT_VECTOR_ANN:
+      select_vector_ann(this);
+      break;
+    case Option::SET_HNSW_EF_SEARCH:
+      set_hnsw_ef_search(this);
       break;
 
     default:
