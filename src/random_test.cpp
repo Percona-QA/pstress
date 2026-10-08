@@ -2638,7 +2638,7 @@ void generate_metadata_for_tables() {
       /* vector_enabled() first, so the random sequence of a run without
        * vector support does not change */
       if (vector_enabled() &&
-          options->at(Option::VECTOR_PROB)->getInt() > rand_int(100))
+          options->at(Option::VECTOR_PROB)->getInt() > rand_int(99))
         all_tables->push_back(Table::table_id(Table::VECTOR, i));
       /*
       if (!options->at(Option::NO_FK)->getBool() &&
