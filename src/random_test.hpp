@@ -21,6 +21,8 @@
 #include <vector>
 #include <writer.h>
 #include <unordered_map>
+#include <limits>
+#include <shared_mutex>
 #define INNODB_16K_PAGE_SIZE 16
 #define INNODB_8K_PAGE_SIZE 8
 #define INNODB_32K_PAGE_SIZE 32
@@ -57,6 +59,7 @@ public:
     BOOL,
     BLOB,
     GENERATED,
+    VECTOR,
     COLUMN_MAX // should be last
   } type_;
   /* used to create new table/alter table add column*/
@@ -79,6 +82,8 @@ public:
   /* return the clause of column */
 private:
   virtual std::string clause() {
+    if (unsigned_big)
+      return "BIGINT UNSIGNED";
     std::string str = col_type_to_string(type_);
     if (length > 0)
       str += "(" + std::to_string(length) + ")";
@@ -95,6 +100,9 @@ public:
   bool primary_key = false;
   bool auto_increment = false;
   bool compressed = false; // percona type compressed
+  /* INT column created as BIGINT UNSIGNED, used for the primary key of vector
+   * tables. Values stay in the INT range */
+  bool unsigned_big = false;
   std::vector<int> unique_values;
   Table *table_;
 };
@@ -108,6 +116,51 @@ struct Blob_Column : public Column {
   template <typename Writer> void Serialize(Writer &writer) const;
 };
 
+/* VECTOR(dim) column. It is never part of a regular index and never used in a
+ * WHERE clause */
+struct Vector_Column : public Column {
+  /* new column with random dimension, name is prefixed with 'e' */
+  Vector_Column(std::string name, Table *table);
+  /* constructor used by load_metadata */
+  Vector_Column(std::string name, Table *table, int dim);
+  template <typename Writer> void Serialize(Writer &writer) const;
+
+  std::string clause() { return "VECTOR(" + std::to_string(dim) + ")"; };
+  /* value for INSERT/UPDATE, always with dim dimensions. Invalid-dimension
+   * testing belongs to ANN queries so concurrent index drops cannot leave
+   * short vectors behind. Caller holds table_mutex or is the only user of
+   * the table (initial load) */
+  std::string rand_value();
+  /* vector literal with dim dimensions: uniform, normal, a duplicate from a
+   * small per-column pool, zero, or a point near one of a few cluster centres */
+  std::string rand_vector_literal();
+  /* uniform random vector literal with dim dimensions */
+  std::string uniform_vector_literal();
+  /* normal random vector literal with dim dimensions, mean 0, stddev 100/3 */
+  std::string normal_vector_literal();
+  /* zero vector literal with dim dimensions */
+  std::string zero_vector_literal();
+
+  /* STRING_TO_VECTOR('[a,b,...]') or TO_VECTOR('[a,b,...]') */
+  static std::string to_literal(const std::vector<float> &values);
+  /* parse the text form "[1.00000e+00,2.00000e+00]" returned by FROM_VECTOR()
+   * or VECTOR_TO_STRING(), false if it is not a vector */
+  static bool parse(const std::string &text, std::vector<float> &values);
+  /* literal of the parsed vector plus noise in [-noise, noise] per dimension */
+  std::string literal_with_noise(std::vector<float> values, float noise = 1);
+
+  int dim;
+
+private:
+  /* deterministic vector number n of the pool or of the cluster centres. It
+   * only depends on n, dim and the table name, so it is safe without a lock,
+   * the same in every step and valid after the dimension changes */
+  std::vector<float> seeded_vector(int n) const;
+  std::vector<float> rand_vector() const;
+  /* seed of the pool and the cluster centres, from the table name */
+  size_t seed_base;
+};
+
 struct Generated_Column : public Column {
 
   /* constructor for new random generated column */
@@ -118,6 +171,9 @@ struct Generated_Column : public Column {
                    std::string sub_type);
 
   template <typename Writer> void Serialize(Writer &writer) const;
+
+  /* true if table has a column a new generated column can be based on */
+  static bool has_base_column(const Table *table);
 
   std::string str;
   std::string clause() { return str; };
@@ -136,15 +192,26 @@ struct Ind_col {
 };
 
 struct Index {
+  /* REGULAR is a btree index, HNSW a vector index on one VECTOR column */
+  enum KIND { REGULAR, HNSW };
+
   Index(std::string n);
   void AddInternalColumn(Ind_col *column);
   template <typename Writer> void Serialize(Writer &writer) const;
   ~Index();
 
   std::string definition();
+  /* " TYPE|USING hnsw [(M = m, metric = x)]" part of an HNSW index
+   * definition, shared by the inline and the CREATE VECTOR INDEX forms */
+  std::string hnsw_type_clause();
+  static const std::string kind_to_string(KIND kind);
+  static KIND string_to_kind(const std::string &str);
 
   std::string name_;
   std::vector<Ind_col *> *columns_;
+  KIND kind = REGULAR;
+  int m = 0;          // HNSW M option, 0 means not given (server default)
+  std::string metric; // HNSW metric option, empty means not given
 };
 
 struct Thd1 {
@@ -168,6 +235,7 @@ struct Thd1 {
   std::shared_ptr<MYSQL_RES> result; // result set of sql
   bool ddl_query = false;     // is the query ddl
   bool success = false;       // if the sql is successfully executed
+  bool action_executed_sql = false; // SQL sent by the current workload action
   int max_con_fail_count = 0; // consecutive failed queries
 
   /* for loading Bulkdata, Primary key of current table is stored in this vector
@@ -178,7 +246,7 @@ struct Thd1 {
 
 /* Table basic properties */
 struct Table {
-  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, FK } type;
+  enum TABLE_TYPES { PARTITION, NORMAL, TEMPORARY, FK, VECTOR } type;
 
   Table(std::string n);
   static Table *table_id(TABLE_TYPES choice, int id);
@@ -192,7 +260,17 @@ struct Table {
   void AddInternalColumn(Column *column) { columns_->push_back(column); }
   void AddInternalIndex(Index *index) { indexes_->push_back(index); }
   virtual void CreateDefaultColumn();
-  void CreateDefaultIndex();
+  /* add up to --columns random columns, the first one can be the primary key
+   * if pk_allowed. At most one column is auto_increment */
+  void CreateRandomColumns(bool pk_allowed, bool has_auto_increment);
+  virtual void CreateDefaultIndex();
+  /* " LOCK=x, ALGORITHM=y" for ALTER TABLE, see pick_algorithm_lock() */
+  virtual std::string algorithm_lock(std::string *const algo = nullptr,
+                                     std::string *const lock = nullptr);
+  /* what the table actions may do to this table */
+  virtual bool can_drop_column(const Column *) const { return true; }
+  virtual bool can_modify_column(const Column *) const { return true; }
+  virtual bool can_discard_tablespace() const { return true; }
   void CopyDefaultColumn(Table *table);
   void CopyDefaultIndex(Table *table);
   void DropCreate(Thd1 *thd);
@@ -230,11 +308,19 @@ struct Table {
   std::string encryption = "N";
   int key_block_size = 0;
   int number_of_initial_records;
-  size_t auto_inc_index;
+  /* index created with the table, it holds the auto_inc column. Others are
+   * added after the initial load */
+  size_t auto_inc_index = std::numeric_limits<size_t>::max();
   // std::string data_directory; todo add corressponding code
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
   std::mutex table_mutex;
+  /* serialize vector dimension/index/name changes and table recreation
+   * against each other and in-flight vector DML. DML takes shared ownership.
+   * Skip a busy action: waiting here could stop a worker with an open
+   * transaction from releasing the MDL a DDL needs. Targeted index/column
+   * actions may try while holding table_mutex, since try_lock never waits. */
+  std::shared_mutex vector_schema_mutex;
 
   const std::string get_type() const {
     switch (type) {
@@ -247,10 +333,15 @@ struct Table {
       return "TEMPORARY";
     case FK:
       return "FK";
+    case VECTOR:
+      return "VECTOR";
     }
     return "FAIL";
   };
   bool has_pk () const ;
+  /* the HNSW index of the table, nullptr if there is none. Caller holds
+   * table_mutex */
+  Index *hnsw_index() const;
 
   void set_type(std::string s) {
     if (s.compare("PARTITION") == 0)
@@ -261,6 +352,8 @@ struct Table {
       type = TEMPORARY;
     else if (s.compare("FK") == 0)
       type = FK;
+    else if (s.compare("VECTOR") == 0)
+      type = VECTOR;
   };
 };
 
@@ -417,6 +510,50 @@ struct Temporary_table : Table {
   Temporary_table(const Temporary_table &table) : Table(table.name_){};
 };
 
+/* true if the run uses VECTOR columns, HNSW indexes and ANN search. Set once
+by sum_of_all_options() before any table is created */
+bool vector_enabled();
+/* Vector table: BIGINT UNSIGNED primary key, one VECTOR NOT NULL column, the
+ * usual random columns and regular indexes, and an HNSW index on the vector
+ * column. The primary key and the vector column can be renamed, so they are
+ * found through the model, not by name */
+struct Vector_table : Table {
+  Vector_table(std::string n) : Table(n){};
+
+  void CreateDefaultColumn() override;
+  void CreateDefaultIndex() override;
+  /* while the table has an HNSW index, never LOCK=NONE and never
+   * ALGORITHM=INSTANT: the server refuses both. Caller holds table_mutex */
+  std::string algorithm_lock(std::string *const algo = nullptr,
+                             std::string *const lock = nullptr) override;
+  /* the primary key column and the vector column can't be dropped, the
+   * primary key column can't be modified */
+  bool can_drop_column(const Column *col) const override;
+  bool can_modify_column(const Column *col) const override;
+  bool can_discard_tablespace() const override { return false; }
+
+  /* the primary key column, nullptr if there is none. Caller holds
+   * table_mutex */
+  Column *pk_column() const;
+  /* the vector column, nullptr if there is none. Caller holds table_mutex */
+  Vector_Column *vector_column() const;
+  /* new HNSW index model on the vector column with random M and metric
+   * options, not added to the table. nullptr if there is no vector column.
+   * Caller holds table_mutex */
+  Index *new_hnsw_index(const std::string &name) const;
+
+  /* drop the HNSW index if the table has one, else add one. A nullable vector
+   * column is made NOT NULL in the same ALTER TABLE */
+  void AddDropHnswIndex(Thd1 *thd);
+  /* MODIFY COLUMN of the vector column, called by ModifyColumn(). Changes
+   * the dimension at a low rate and toggles NULL / NOT NULL while the table
+   * has no HNSW index */
+  void ModifyVectorColumn(Thd1 *thd);
+};
+
+/* random vector table from all_tables, nullptr if none or support is off */
+Vector_table *pick_vector_table();
+
 int set_seed(Thd1 *thd);
 int sum_of_all_options(Thd1 *thd);
 int sum_of_all_server_options();
@@ -435,6 +572,10 @@ void clean_up_at_end();
 void alter_tablespace_encryption(Thd1 *thd);
 void alter_tablespace_rename(Thd1 *thd);
 void set_mysqld_variable(Thd1 *thd);
+/* ORDER BY DISTANCE() LIMIT k on a random vector table */
+void select_vector_ann(Thd1 *thd);
+/* SET SESSION innodb_hnsw_ef_search */
+void set_hnsw_ef_search(Thd1 *thd);
 void add_server_options(std::string str);
 void alter_database_encryption(Thd1 *thd);
 void create_in_memory_data();

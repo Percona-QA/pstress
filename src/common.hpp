@@ -32,6 +32,9 @@
 #include <algorithm>
 #include <vector>
 
+/* Server limit for VECTOR columns: 16383 single-precision components. */
+constexpr int MAX_VECTOR_DIMENSIONS = 16383;
+
 struct Option {
   enum Type { BOOL, INT, STRING } type;
   enum Opt {
@@ -147,11 +150,17 @@ struct Option {
     FK_PROB,
     PARTITION_PROB,
     TEMPORARY_PROB,
+    NO_VECTOR,
+    VECTOR_PROB,
+    VECTOR_MAX_DIM,
+    SELECT_VECTOR_ANN,
+    SET_HNSW_EF_SEARCH,
+    ADD_DROP_VECTOR_INDEX,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
       : type(t), option(o), name(n), sql(false), ddl(false), total_queries(0),
-        success_queries(0){};
+        success_queries(0), skipped_queries(0){};
   ~Option();
 
   void print_pretty();
@@ -200,8 +209,9 @@ struct Option {
   bool ddl; // If SQL is DDL, or false if it is not
   bool cl = false;                // set if it was pass trough command line
   short args = required_argument; // default is required argument
-  std::atomic<unsigned long int> total_queries;   // totatl times executed
+  std::atomic<unsigned long int> total_queries;   // selected actions, including skips
   std::atomic<unsigned long int> success_queries; // successful count
+  std::atomic<unsigned long int> skipped_queries; // actions that sent no SQL
 };
 
 struct Server_Option { // Server_options
