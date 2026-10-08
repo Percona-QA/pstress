@@ -417,6 +417,9 @@ struct Temporary_table : Table {
   Temporary_table(const Temporary_table &table) : Table(table.name_){};
 };
 
+/* true if the run uses VECTOR columns, HNSW indexes and ANN search. Set once
+by sum_of_all_options() before any table is created */
+bool vector_enabled();
 int set_seed(Thd1 *thd);
 int sum_of_all_options(Thd1 *thd);
 int sum_of_all_server_options();

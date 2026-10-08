@@ -32,6 +32,9 @@
 #include <algorithm>
 #include <vector>
 
+/* Server limit for VECTOR columns: 16383 single-precision components. */
+constexpr int MAX_VECTOR_DIMENSIONS = 16383;
+
 struct Option {
   enum Type { BOOL, INT, STRING } type;
   enum Opt {
@@ -147,6 +150,9 @@ struct Option {
     FK_PROB,
     PARTITION_PROB,
     TEMPORARY_PROB,
+    NO_VECTOR,
+    VECTOR_PROB,
+    VECTOR_MAX_DIM,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)

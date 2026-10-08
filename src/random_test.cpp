@@ -44,6 +44,10 @@ static std::vector<int> g_key_block_size;
 static int g_max_columns_length = 30;
 static int g_innodb_page_size;
 static int sum_of_all_opts = 0; // sum of all probablility
+/* vector support: set by setup_vector() in sum_of_all_options() */
+static bool g_vector_enabled = false;
+/* the server failed the HNSW probe */
+static bool g_vector_probe_failed = false;
 std::mutex ddl_logs_write;
 static std::chrono::system_clock::time_point start_time =
     std::chrono::system_clock::now();
@@ -131,9 +135,12 @@ static bool get_check_result(const std::string &sql, Thd1 *thd) {
 static std::string mysql_read_single_value(const std::string &sql, Thd1 *thd) {
   std::string query_result = "";
 
-  execute_sql(sql, thd);
+  /* on error thd->result still holds the result of an earlier query */
+  if (!execute_sql(sql, thd))
+    return query_result;
   auto row = mysql_fetch_row_safe(thd);
-  if (row && mysql_num_fields_safe(thd, 1))
+  /* A row containing SQL NULL has a nullptr field, even when the row exists. */
+  if (row && mysql_num_fields_safe(thd, 1) && row[0] != nullptr)
     query_result = row[0];
 
   return query_result;
@@ -172,9 +179,87 @@ static int server_version() {
   return sv;
 }
 
+bool vector_enabled() { return g_vector_enabled; }
+
+/* options that only make sense with vector support. They are zeroed when
+ * vector support is off, and passing one of them on the command line asks for
+ * vector support explicitly */
+static const std::vector<Option::Opt> &vector_options() {
+  static const std::vector<Option::Opt> opts = {Option::VECTOR_PROB,
+                                                Option::VECTOR_MAX_DIM};
+  return opts;
+}
+
+/* turn vector support off, log the reason once to stdout and the general log */
+static void disable_vector(Thd1 *thd, const std::string &reason) {
+  g_vector_enabled = false;
+  for (auto o : vector_options()) {
+    if (options->at(o)->getType() == Option::INT)
+      options->at(o)->setInt(0);
+  }
+  std::string msg = "Vector support disabled: " + reason;
+  std::cout << msg << std::endl;
+  thd->ddl_logs << msg << std::endl;
+}
+
+/* decide if the run uses vector tables. Probe the server for HNSW support
+ * unless vector is already turned off by the options */
+static void setup_vector(Thd1 *thd) {
+  /* checked before disable_vector() zeroes it. Above the server maximum the
+   * CREATE TABLE of a vector table fails and the initial load aborts */
+  if (options->at(Option::VECTOR_MAX_DIM)->getInt() < 1 ||
+      options->at(Option::VECTOR_MAX_DIM)->getInt() > MAX_VECTOR_DIMENSIONS)
+    throw std::runtime_error(
+        "invalid range for --vector-max-dim. Choose between 1 and " +
+        std::to_string(MAX_VECTOR_DIMENSIONS));
+
+  std::string engine = opt_string(ENGINE);
+  std::transform(engine.begin(), engine.end(), engine.begin(), ::toupper);
+
+  if (options->at(Option::NO_VECTOR)->getBool()) {
+    disable_vector(thd, "--no-vector");
+    return;
+  }
+  if (engine.compare("INNODB") != 0) {
+    disable_vector(thd, "engine " + engine + " is not InnoDB");
+    return;
+  }
+  if (options->at(Option::ONLY_TEMPORARY)->getBool()) {
+    disable_vector(thd, "--only-temp-tables");
+    return;
+  }
+  if (options->at(Option::ONLY_PARTITION)->getBool()) {
+    disable_vector(thd, "--only-partition-tables");
+    return;
+  }
+
+  /* mysql_read_single_value() returns an empty string on error */
+  auto ef_search =
+      mysql_read_single_value("SELECT @@innodb_hnsw_ef_search", thd);
+  auto distance = mysql_read_single_value(
+      "SELECT DISTANCE(TO_VECTOR('[1]'),TO_VECTOR('[1]'),'EUCLIDEAN')", thd);
+  if (!ef_search.empty() && !distance.empty()) {
+    g_vector_enabled = true;
+    thd->ddl_logs << "Vector support enabled" << std::endl;
+    return;
+  }
+
+  g_vector_probe_failed = true;
+  for (auto o : vector_options()) {
+    if (options->at(o)->cl)
+      throw std::runtime_error(
+          "--" + std::string(options->at(o)->getName()) +
+          " was given, but the server has no HNSW vector index support");
+  }
+  disable_vector(thd, "the server has no HNSW vector index support");
+}
+
 /* return probabality of all options and disable some feature based on user
  * request/ branch/ fork */
 int sum_of_all_options(Thd1 *thd) {
+
+  /* must run before any option is disabled or summed below */
+  setup_vector(thd);
 
   /* find out innodb page_size */
   if (options->at(Option::ENGINE)->getString().compare("INNODB") == 0) {
