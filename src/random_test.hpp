@@ -57,6 +57,7 @@ public:
     BOOL,
     BLOB,
     GENERATED,
+    VECTOR,
     COLUMN_MAX // should be last
   } type_;
   /* used to create new table/alter table add column*/
@@ -79,6 +80,8 @@ public:
   /* return the clause of column */
 private:
   virtual std::string clause() {
+    if (unsigned_big)
+      return "BIGINT UNSIGNED";
     std::string str = col_type_to_string(type_);
     if (length > 0)
       str += "(" + std::to_string(length) + ")";
@@ -95,6 +98,9 @@ public:
   bool primary_key = false;
   bool auto_increment = false;
   bool compressed = false; // percona type compressed
+  /* INT column created as BIGINT UNSIGNED, used for the primary key of vector
+   * tables. Values stay in the INT range */
+  bool unsigned_big = false;
   std::vector<int> unique_values;
   Table *table_;
 };
@@ -108,6 +114,49 @@ struct Blob_Column : public Column {
   template <typename Writer> void Serialize(Writer &writer) const;
 };
 
+/* VECTOR(dim) column. It is never part of a regular index and never used in a
+ * WHERE clause */
+struct Vector_Column : public Column {
+  /* new column with random dimension, name is prefixed with 'e' */
+  Vector_Column(std::string name, Table *table);
+  /* constructor used by load_metadata */
+  Vector_Column(std::string name, Table *table, int dim);
+  template <typename Writer> void Serialize(Writer &writer) const;
+
+  std::string clause() { return "VECTOR(" + std::to_string(dim) + ")"; };
+  /* value for INSERT/UPDATE, always with dim dimensions. Invalid-dimension
+   * testing belongs to ANN queries so concurrent index drops cannot leave
+   * short vectors behind. Caller holds table_mutex or is the only user of
+   * the table (initial load) */
+  std::string rand_value();
+  /* vector literal with dim dimensions: uniform, normal, a duplicate from a
+   * small per-column pool, zero, or a point near one of a few cluster centres */
+  std::string rand_vector_literal();
+  /* uniform random vector literal with dim dimensions */
+  std::string uniform_vector_literal();
+  /* normal random vector literal with dim dimensions, mean 0, stddev 100/3 */
+  std::string normal_vector_literal();
+  /* zero vector literal with dim dimensions */
+  std::string zero_vector_literal();
+
+  /* STRING_TO_VECTOR('[a,b,...]') or TO_VECTOR('[a,b,...]') */
+  static std::string to_literal(const std::vector<float> &values);
+  /* parse the text form "[1.00000e+00,2.00000e+00]" returned by FROM_VECTOR()
+   * or VECTOR_TO_STRING(), false if it is not a vector */
+  static bool parse(const std::string &text, std::vector<float> &values);
+  /* literal of the parsed vector plus noise in [-noise, noise] per dimension */
+  std::string literal_with_noise(std::vector<float> values, float noise = 1);
+
+  int dim;
+
+private:
+  /* deterministic vector number n of the pool or of the cluster centres. It
+   * only depends on n and dim, so it is safe without a lock and after the
+   * dimension changes */
+  std::vector<float> seeded_vector(int n) const;
+  std::vector<float> rand_vector() const;
+};
+
 struct Generated_Column : public Column {
 
   /* constructor for new random generated column */
@@ -118,6 +167,9 @@ struct Generated_Column : public Column {
                    std::string sub_type);
 
   template <typename Writer> void Serialize(Writer &writer) const;
+
+  /* true if table has a column a new generated column can be based on */
+  static bool has_base_column(const Table *table);
 
   std::string str;
   std::string clause() { return str; };
@@ -251,6 +303,9 @@ struct Table {
     return "FAIL";
   };
   bool has_pk () const ;
+  /* the HNSW index of the table, nullptr if there is none. Caller holds
+   * table_mutex */
+  Index *hnsw_index() const;
 
   void set_type(std::string s) {
     if (s.compare("PARTITION") == 0)
