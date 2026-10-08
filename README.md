@@ -173,6 +173,38 @@ nohup ./pstress-run.sh pstress-run.conf 2>&1 &
 Check run logs through tail -f nohup.out
 
 
+# Vector index (HNSW) testing
+
+pstress can test the InnoDB HNSW vector index and approximate nearest neighbour (ANN) search of Percona Server 9.7.
+
+At startup pstress checks whether the server supports vector indexes (`innodb_hnsw_ef_search` and the `DISTANCE()` function). If it does not, vector testing is turned off with one log line, unless a vector option was given explicitly, in which case pstress exits with an error. Vector testing is also off with a non-InnoDB `--engine`, `--only-temp-tables`, `--only-partition-tables` or `--no-vector`.
+
+A vector table (`tt_N_v`) has a `BIGINT UNSIGNED` primary key (usually auto-increment), one `VECTOR(N) NOT NULL` column and an HNSW index (`VECTOR KEY ... TYPE hnsw`), plus the usual random columns and secondary indexes.
+
+The usual table actions also run on vector tables, except dropping or modifying the primary key column, dropping the vector column and DISCARD TABLESPACE. `--modify-column` sometimes changes the dimension of the vector column, and toggles its NULL / NOT NULL attribute while the table has no HNSW index. `--no-select` also turns off `--select-vector-ann`.
+
+Option | Description | Example | Default
+--- | --- | --- | ---
+--no-vector | Do not create vector tables and do not run vector actions | --no-vector | default: 0
+--vector-prob | Probability (in percent) that a table id also gets a vector table, next to the usual tables | --vector-prob 100 | default#: 20
+--vector-max-dim | Maximum dimension of the VECTOR column, 1 to 16383 | --vector-max-dim 16 | default#: 16
+--select-vector-ann | ANN search: SELECT ... ORDER BY DISTANCE(vector column, constant, metric) LIMIT n, with varying metrics, LIMIT values, WHERE clauses, joins, subqueries, prepared statements and index hints | --select-vector-ann 800 | default#: 200
+--add-drop-vector-index | Drop the HNSW index of a vector table, or add one if the table has none | --add-drop-vector-index 10 | default#: 2
+--set-hnsw-ef-search | SET SESSION innodb_hnsw_ef_search to a random value | --set-hnsw-ef-search 20 | default#: 5
+
+Vector dimension changes, HNSW index changes/renames, vector column renames, and table recreation use a per-table guard through SQL execution and metadata updates. Vector INSERT/UPDATE actions share the guard, allowing concurrent DML while preventing schema changes between value generation and execution. Workers skip an action when the required guard is busy. Regular index operations and non-vector column renames do not take the guard, allowing concurrent vector DML to exercise server metadata locking. Per-option statistics report total selected actions, successful actions, and skipped actions that sent no SQL; skips do not represent SQL failures. Loaded vector tables are excluded from workload selection and preload checks when vector testing is disabled, and are retained in saved metadata.
+
+Vector values include uniform samples, normal samples (mean 0, standard deviation 100/3), duplicate vectors, zero vectors, and clustered points. Vector INSERT/UPDATE values always use the modeled column dimension; invalid dimensions are tested through ANN queries. When generated or loaded metadata contains no vector tables, `--select-vector-ann` and `--add-drop-vector-index` are disabled. `--set-hnsw-ef-search` remains available.
+
+The server variables `innodb_hnsw_max_memory` and `innodb_hnsw_ef_search` can be changed during the load with `--mso`, for example `--mso=10:innodb_hnsw_max_memory=0=1048576=67108864 --mso=20:innodb_hnsw_ef_search=1=40=1000`.
+
+The configuration file `pstress/pstress-run-vector.conf` runs a vector-focused load: every table id gets a vector table, ANN searches dominate the mix, the HNSW variables above are changed during the load, and the server is killed with SIGKILL between trials so that each trial starts with crash recovery of the vector indexes. Set `BASEDIR` to a Percona Server 9.7 build with vector index support and run:
+
+```bash
+cd pstress/pstress
+nohup ./pstress-run.sh pstress-run-vector.conf 2>&1 &
+```
+
 # Contributors
 * Alexey Bychko - C++ code, cmake extensions
 * Roel Van de Paar - invention, scripted framework
