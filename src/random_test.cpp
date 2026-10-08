@@ -2650,6 +2650,7 @@ void generate_metadata_for_tables() {
 }
 
 bool execute_sql(const std::string &sql, Thd1 *thd) {
+  thd->action_executed_sql = true;
   auto query = sql.c_str();
   static auto log_all = opt_bool(LOG_ALL_QUERIES);
   static auto log_failed = opt_bool(LOG_FAILED_QUERIES);
@@ -4840,8 +4841,13 @@ bool Thd1::run_some_query() {
     throw std::runtime_error("no eligible tables to work on");
   }
 
-  /* freqency of all options per thread */
-  int opt_feq[Option::MAX][2] = {{0, 0}};
+  /* action counts per option for this thread */
+  struct Action_counts {
+    unsigned long total = 0;
+    unsigned long successful = 0;
+    unsigned long skipped = 0;
+  };
+  Action_counts opt_feq[Option::MAX];
 
   static auto savepoint_prob = options->at(Option::SAVEPOINT_PRB_K)->getInt();
 
@@ -4888,6 +4894,7 @@ bool Thd1::run_some_query() {
     ddl_query = options->at(option)->ddl == true ? true : false;
     /* helper statements and skipped actions must not count as successes */
     success = false;
+    action_executed_sql = false;
 
     switch (option) {
     case Option::DROP_INDEX:
@@ -5019,11 +5026,13 @@ bool Thd1::run_some_query() {
 
     options->at(option)->total_queries++;
 
-    /* sql executed is at 0 index, and if successful at 1 */
-    opt_feq[option][0]++;
-    if (success) {
+    opt_feq[option].total++;
+    if (!action_executed_sql) {
+      options->at(option)->skipped_queries++;
+      opt_feq[option].skipped++;
+    } else if (success) {
       options->at(option)->success_queries++;
-      opt_feq[option][1]++;
+      opt_feq[option].successful++;
       success = false;
     }
 
@@ -5034,9 +5043,10 @@ bool Thd1::run_some_query() {
 
   /* print options frequency in logs */
   for (int i = 0; i < Option::MAX; i++) {
-    if (opt_feq[i][0] > 0)
-      thread_log << options->at(i)->help << ", total=>" << opt_feq[i][0]
-                 << ", success=> " << opt_feq[i][1] << std::endl;
+    if (opt_feq[i].total > 0)
+      thread_log << options->at(i)->help << ", total=>" << opt_feq[i].total
+                 << ", success=> " << opt_feq[i].successful
+                 << ", skipped=> " << opt_feq[i].skipped << std::endl;
   }
 
   /* cleanup session temporary tables tables */

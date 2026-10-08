@@ -235,6 +235,7 @@ struct Thd1 {
   std::shared_ptr<MYSQL_RES> result; // result set of sql
   bool ddl_query = false;     // is the query ddl
   bool success = false;       // if the sql is successfully executed
+  bool action_executed_sql = false; // SQL sent by the current workload action
   int max_con_fail_count = 0; // consecutive failed queries
 
   /* for loading Bulkdata, Primary key of current table is stored in this vector
