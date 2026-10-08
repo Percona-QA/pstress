@@ -22,6 +22,7 @@
 #include <writer.h>
 #include <unordered_map>
 #include <limits>
+#include <shared_mutex>
 #define INNODB_16K_PAGE_SIZE 16
 #define INNODB_8K_PAGE_SIZE 8
 #define INNODB_32K_PAGE_SIZE 32
@@ -200,6 +201,9 @@ struct Index {
   ~Index();
 
   std::string definition();
+  /* " TYPE|USING hnsw [(M = m, metric = x)]" part of an HNSW index
+   * definition, shared by the inline and the CREATE VECTOR INDEX forms */
+  std::string hnsw_type_clause();
   static const std::string kind_to_string(KIND kind);
   static KIND string_to_kind(const std::string &str);
 
@@ -310,6 +314,12 @@ struct Table {
   std::vector<Column *> *columns_;
   std::vector<Index *> *indexes_;
   std::mutex table_mutex;
+  /* serialize vector dimension/index/name changes and table recreation
+   * against each other and in-flight vector DML. DML takes shared ownership.
+   * Skip a busy action: waiting here could stop a worker with an open
+   * transaction from releasing the MDL a DDL needs. Targeted index/column
+   * actions may try while holding table_mutex, since try_lock never waits. */
+  std::shared_mutex vector_schema_mutex;
 
   const std::string get_type() const {
     switch (type) {
@@ -511,8 +521,8 @@ struct Vector_table : Table {
 
   void CreateDefaultColumn() override;
   void CreateDefaultIndex() override;
-  /* never LOCK=NONE and never ALGORITHM=INSTANT, both are refused on a table
-   * with a vector index */
+  /* while the table has an HNSW index, never LOCK=NONE and never
+   * ALGORITHM=INSTANT: the server refuses both. Caller holds table_mutex */
   std::string algorithm_lock(std::string *const algo = nullptr,
                              std::string *const lock = nullptr) override;
   /* the primary key column and the vector column can't be dropped, the
@@ -530,6 +540,14 @@ struct Vector_table : Table {
    * options, not added to the table. nullptr if there is no vector column.
    * Caller holds table_mutex */
   Index *new_hnsw_index(const std::string &name) const;
+
+  /* drop the HNSW index if the table has one, else add one. A nullable vector
+   * column is made NOT NULL in the same ALTER TABLE */
+  void AddDropHnswIndex(Thd1 *thd);
+  /* MODIFY COLUMN of the vector column, called by ModifyColumn(). Changes
+   * the dimension at a low rate and toggles NULL / NOT NULL while the table
+   * has no HNSW index */
+  void ModifyVectorColumn(Thd1 *thd);
 };
 
 /* random vector table from all_tables, nullptr if none or support is off */

@@ -194,7 +194,7 @@ static bool table_enabled(const Table *table) {
 static const std::vector<Option::Opt> &vector_options() {
   static const std::vector<Option::Opt> opts = {
       Option::VECTOR_PROB, Option::VECTOR_MAX_DIM, Option::SELECT_VECTOR_ANN,
-      Option::SET_HNSW_EF_SEARCH};
+      Option::SET_HNSW_EF_SEARCH, Option::ADD_DROP_VECTOR_INDEX};
   return opts;
 }
 
@@ -1368,6 +1368,25 @@ Index::KIND Index::string_to_kind(const std::string &str) {
   throw std::runtime_error("unhandled index kind " + str);
 }
 
+std::string Index::hnsw_type_clause() {
+  std::string def = rand_int(1) == 0 ? " TYPE " : " USING ";
+  def += rand_int(3) == 0 ? "HNSW" : "hnsw";
+  std::vector<std::string> opts;
+  if (m > 0)
+    opts.push_back("M = " + std::to_string(m));
+  if (!metric.empty())
+    opts.push_back("metric = " + metric);
+  if (opts.size() == 2 && rand_int(1) == 0)
+    std::swap(opts[0], opts[1]);
+  if (!opts.empty()) {
+    def += " (";
+    for (size_t i = 0; i < opts.size(); i++)
+      def += (i > 0 ? ", " : "") + opts[i];
+    def += ")";
+  }
+  return def;
+}
+
 /* index definition */
 std::string Index::definition() {
   std::string def;
@@ -1375,22 +1394,7 @@ std::string Index::definition() {
     /* VECTOR KEY|INDEX name (col) TYPE|USING hnsw [(M = m, metric = x)] */
     def += rand_int(1) == 0 ? "VECTOR KEY " : "VECTOR INDEX ";
     def += name_ + " (" + columns_->at(0)->column->name_ + ")";
-    def += rand_int(1) == 0 ? " TYPE " : " USING ";
-    def += rand_int(3) == 0 ? "HNSW" : "hnsw";
-    std::vector<std::string> opts;
-    if (m > 0)
-      opts.push_back("M = " + std::to_string(m));
-    if (!metric.empty())
-      opts.push_back("metric = " + metric);
-    if (opts.size() == 2 && rand_int(1) == 0)
-      std::swap(opts[0], opts[1]);
-    if (!opts.empty()) {
-      def += " (";
-      for (size_t i = 0; i < opts.size(); i++)
-        def += (i > 0 ? ", " : "") + opts[i];
-      def += ")";
-    }
-    def += " ";
+    def += hnsw_type_clause() + " ";
     return def;
   }
   def += "INDEX " + name_ + "(";
@@ -1560,6 +1564,11 @@ Partition::Partition(std::string n) : Table(n) {
 }
 
 void Table::DropCreate(Thd1 *thd) {
+  std::unique_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  if (type == VECTOR && !schema_lock.try_lock())
+    return;
+
   execute_sql("DROP TABLE " + name_, thd);
   std::string def = definition();
   if (!execute_sql(def, thd) && tablespace.size() > 0) {
@@ -2102,6 +2111,183 @@ bool Vector_table::can_modify_column(const Column *col) const {
   return !col->primary_key;
 }
 
+/* " LOCK=x ALGORITHM=y" of CREATE INDEX and DROP INDEX: no comma, each part
+ * can be left out and the order is random */
+static std::string index_algorithm_lock(Table *table) {
+  std::string algo;
+  std::string lock;
+  table->algorithm_lock(&algo, &lock);
+  std::vector<std::string> parts;
+  if (rand_int(3) > 0)
+    parts.push_back(" LOCK=" + lock);
+  if (rand_int(3) > 0)
+    parts.push_back(" ALGORITHM=" + algo);
+  if (parts.size() == 2 && rand_int(1) == 0)
+    std::swap(parts[0], parts[1]);
+  std::string str;
+  for (auto &part : parts)
+    str += part;
+  return str;
+}
+
+void Vector_table::AddDropHnswIndex(Thd1 *thd) {
+  std::unique_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  if (type == VECTOR && !schema_lock.try_lock())
+    return;
+
+  std::unique_lock<std::mutex> metadata_lock(table_mutex);
+  auto index = hnsw_index();
+
+  if (index != nullptr) {
+    auto name = index->name_;
+    std::string sql;
+    if (rand_int(1) == 0)
+      sql = "ALTER TABLE " + name_ + " DROP " +
+            (rand_int(1) == 0 ? "INDEX " : "KEY ") + name + "," +
+            algorithm_lock();
+    else
+      sql = "DROP INDEX " + name + " ON " + name_ + index_algorithm_lock(this);
+    metadata_lock.unlock();
+
+    thd->success = false;
+    if (execute_sql(sql, thd)) {
+      metadata_lock.lock();
+      for (size_t i = 0; i < indexes_->size(); i++) {
+        auto ix = indexes_->at(i);
+        if (ix->name_.compare(name) == 0) {
+          delete ix;
+          indexes_->at(i) = indexes_->back();
+          indexes_->pop_back();
+          break;
+        }
+      }
+    }
+    return;
+  }
+
+  /* a name no other index of the model has, so that a drop by name never
+   * removes the wrong model entry */
+  std::string name;
+  for (int i = 0; i < 10 && name.empty(); i++) {
+    name = name_ + "hnsw" + std::to_string(rand_int(1000));
+    for (auto ix : *indexes_) {
+      if (ix->name_.compare(name) == 0) {
+        name.clear();
+        break;
+      }
+    }
+  }
+
+  index = name.empty() ? nullptr : new_hnsw_index(name);
+  if (index == nullptr)
+    return;
+
+  /* the HNSW index needs a VECTOR NOT NULL column */
+  auto col = vector_column();
+  bool make_not_null = !col->null;
+
+  std::string sql;
+  if (make_not_null || rand_int(1) == 0) {
+    sql = "ALTER TABLE " + name_ + " ADD " + index->definition();
+    if (make_not_null)
+      sql += ", MODIFY COLUMN " + col->name_ + " VECTOR(" +
+             std::to_string(col->dim) + ") NOT NULL";
+    sql += "," + algorithm_lock();
+  } else {
+    sql = "CREATE VECTOR INDEX " + name + " ON " + name_ + " (" + col->name_ +
+          ")" + index->hnsw_type_clause() + index_algorithm_lock(this);
+  }
+  metadata_lock.unlock();
+
+  thd->success = false;
+  if (execute_sql(sql, thd)) {
+    metadata_lock.lock();
+    bool do_not_add = hnsw_index() != nullptr;
+    for (auto ix : *indexes_) {
+      if (ix->name_.compare(name) == 0)
+        do_not_add = true;
+    }
+    if (do_not_add)
+      delete index;
+    else
+      AddInternalIndex(index);
+    if (make_not_null) {
+      col = vector_column();
+      if (col != nullptr)
+        col->null = true;
+    }
+  } else {
+    delete index;
+  }
+}
+
+void Vector_table::ModifyVectorColumn(Thd1 *thd) {
+  std::unique_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  if (type == VECTOR && !schema_lock.try_lock())
+    return;
+
+  static auto max_dim = opt_int(VECTOR_MAX_DIM);
+  std::unique_lock<std::mutex> metadata_lock(table_mutex);
+  auto col = vector_column();
+  if (col == nullptr)
+    return;
+
+  /* Publish the dimension only after the ALTER succeeds. The schema guard
+   * prevents vector DML from using it until the model is updated. */
+  auto index = hnsw_index();
+  bool has_index = index != nullptr;
+  int dim = col->dim;
+  bool not_null = col->null;
+
+  /* about 1 in 10 changes the dimension, which only succeeds on an empty
+   * table. With an HNSW index the server refuses a vector with fewer
+   * dimensions than the column and a longer one is always refused, so any
+   * new dimension works. Without the index a larger dimension would succeed
+   * on a non-empty table and leave short vectors behind, which every later
+   * ADD VECTOR INDEX refuses, so only a smaller one is used. The schema
+   * guard keeps the index state unchanged until the ALTER completes. */
+  if (rand_int(9) == 0) {
+    if (has_index)
+      dim = rand_int(max_dim < 1 ? 1 : max_dim, 1);
+    else if (dim > 1)
+      dim = rand_int(dim - 1, 1);
+  }
+
+  /* NULL is refused with an HNSW index. A nullable column goes back to NOT
+   * NULL more often, so that the index can be added again */
+  if (!has_index) {
+    if (!not_null)
+      not_null = rand_int(1) == 0;
+    else if (rand_int(4) == 0)
+      not_null = false;
+  }
+
+  std::string algo;
+  std::string lock;
+  algorithm_lock(&algo, &lock);
+  /* a type change can't be INPLACE */
+  if (dim != col->dim && algo.compare("INPLACE") == 0)
+    algo = rand_int(1) == 0 ? "COPY" : "DEFAULT";
+
+  std::string sql = "ALTER TABLE " + name_ + " MODIFY COLUMN " + col->name_ +
+                    " VECTOR(" + std::to_string(dim) + ")" +
+                    (not_null ? " NOT NULL" : "");
+  sql += ", LOCK=" + lock + ", ALGORITHM=" + algo;
+  metadata_lock.unlock();
+
+  thd->success = false;
+  if (execute_sql(sql, thd)) {
+    metadata_lock.lock();
+    col = vector_column();
+    if (col != nullptr) {
+      col->dim = dim;
+      col->null = not_null;
+    }
+  }
+}
+
 std::string Table::algorithm_lock(std::string *const algo,
                                   std::string *const lock) {
   return pick_algorithm_lock(algo, lock);
@@ -2113,10 +2299,13 @@ std::string Vector_table::algorithm_lock(std::string *const algo,
   std::string current_lock;
   pick_algorithm_lock(&current_algo, &current_lock);
 
-  if (current_algo == "INSTANT")
-    current_algo = rand_int(1) == 0 ? "INPLACE" : "DEFAULT";
-  if (current_lock == "NONE")
-    current_lock = rand_int(1) == 0 ? "SHARED" : "DEFAULT";
+  /* legal again once the HNSW index has been dropped */
+  if (hnsw_index() != nullptr) {
+    if (current_algo == "INSTANT")
+      current_algo = rand_int(1) == 0 ? "INPLACE" : "DEFAULT";
+    if (current_lock == "NONE")
+      current_lock = rand_int(1) == 0 ? "SHARED" : "DEFAULT";
+  }
 
   if (algo != nullptr)
     *algo = current_algo;
@@ -2567,7 +2756,10 @@ bool execute_sql(const std::string &sql, Thd1 *thd) {
 void Table::SetEncryption(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " ENCRYPTION = '";
   std::string enc = g_encryption[rand_int(g_encryption.size() - 1)];
+  /* algorithm_lock() reads the HNSW index on a vector table */
+  table_mutex.lock();
   sql += enc + "'" + "," + algorithm_lock();
+  table_mutex.unlock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
     encryption = enc;
@@ -2579,7 +2771,9 @@ void Table::SetEncryption(Thd1 *thd) {
 void Table::SetTableCompression(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " COMPRESSION= '";
   std::string comp = g_compression[rand_int(g_compression.size() - 1)];
+  table_mutex.lock();
   sql += comp + "'" + "," + algorithm_lock();
+  table_mutex.unlock();
   if (execute_sql(sql, thd)) {
     table_mutex.lock();
     compression = comp;
@@ -2588,7 +2782,10 @@ void Table::SetTableCompression(Thd1 *thd) {
 }
 
 void Table::SetAlterEngine(Thd1 *thd) {
-  std::string sql = "ALTER TABLE " + name_ + " ENGINE=InnoDB," + algorithm_lock();
+  table_mutex.lock();
+  std::string sql =
+      "ALTER TABLE " + name_ + " ENGINE=InnoDB," + algorithm_lock();
+  table_mutex.unlock();
   execute_sql(sql, thd);
 }
 
@@ -2601,6 +2798,12 @@ void Table::ModifyColumn(Thd1 *thd) {
   std::string default_value;
   bool auto_increment = false;
   bool compressed = false; // percona type compressed
+
+  /* before a column is picked: DropColumn deletes columns while it holds
+   * table_mutex, so waiting for it after the pick could leave col dangling */
+  table_mutex.lock();
+  std::string algo_lock = algorithm_lock();
+  table_mutex.unlock();
 
   // try maximum 50 times to get a valid column
   int i = 0;
@@ -2619,12 +2822,19 @@ void Table::ModifyColumn(Thd1 *thd) {
     case Column::DOUBLE:
     case Column::INT:
     case Column::INTEGER:
-    case Column::VECTOR:
       col = col1;
       length = col->length;
       auto_increment = col->auto_increment;
       compressed = col->compressed;
       col->mutex.lock(); // lock column so no one can modify it //
+      break;
+    case Column::VECTOR:
+      /* ModifyVectorColumn() takes table_mutex, which must not be taken
+       * while holding a column mutex */
+      if (type == VECTOR) {
+        static_cast<Vector_table *>(this)->ModifyVectorColumn(thd);
+        return;
+      }
       break;
       /* todo no support for BOOL INT so far */
     case Column::BOOL:
@@ -2651,7 +2861,7 @@ void Table::ModifyColumn(Thd1 *thd) {
             col->type_ == Column::VARCHAR))
     col->compressed = true;
 
-  sql += " " + col->definition() + "," + algorithm_lock();
+  sql += " " + col->definition() + "," + algo_lock;
 
   /* if not successful rollback */
   if (!execute_sql(sql, thd)) {
@@ -2837,15 +3047,20 @@ void Table::AddColumn(Thd1 *thd) {
 
 /* randomly drop some index of table */
 void Table::DropIndex(Thd1 *thd) {
-  table_mutex.lock();
+  std::unique_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  std::unique_lock<std::mutex> metadata_lock(table_mutex);
   if (indexes_ != nullptr && indexes_->size() > 0) {
     auto index = indexes_->at(rand_int(indexes_->size() - 1));
+    if (type == VECTOR && index->kind == Index::HNSW &&
+        !schema_lock.try_lock())
+      return;
     auto name = index->name_;
     std::string sql = "ALTER TABLE " + name_ + " DROP INDEX " + name + ",";
     sql += algorithm_lock();
-    table_mutex.unlock();
+    metadata_lock.unlock();
     if (execute_sql(sql, thd)) {
-      table_mutex.lock();
+      metadata_lock.lock();
       for (size_t i = 0; i < indexes_->size(); i++) {
         auto ix = indexes_->at(i);
         if (ix->name_.compare(name) == 0) {
@@ -2855,10 +3070,9 @@ void Table::DropIndex(Thd1 *thd) {
           break;
         }
       }
-      table_mutex.unlock();
     }
   } else {
-    table_mutex.unlock();
+    metadata_lock.unlock();
     thd->thread_log << "no index to drop " + name_ << std::endl;
   }
 }
@@ -3000,12 +3214,18 @@ void Table::SelectAllRow(Thd1 *thd) {
 }
 
 void Table::IndexRename(Thd1 *thd) {
-  table_mutex.lock();
+  std::unique_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  std::unique_lock<std::mutex> metadata_lock(table_mutex);
   if (indexes_->size() == 0)
-    table_mutex.unlock();
+    metadata_lock.unlock();
   else {
     auto ps = rand_int(indexes_->size() - 1);
-    auto name = indexes_->at(ps)->name_;
+    auto index = indexes_->at(ps);
+    if (type == VECTOR && index->kind == Index::HNSW &&
+        !schema_lock.try_lock())
+      return;
+    auto name = index->name_;
     /* ALTER index to _rename or back to orignal_name */
     std::string new_name = "_rename";
     static auto s = new_name.size();
@@ -3017,22 +3237,27 @@ void Table::IndexRename(Thd1 *thd) {
     std::string sql = "ALTER TABLE " + name_ + " RENAME INDEX " + name +
                       " To " + new_name + ",";
     sql += algorithm_lock();
-    table_mutex.unlock();
+    metadata_lock.unlock();
     if (execute_sql(sql, thd)) {
-      table_mutex.lock();
+      metadata_lock.lock();
       for (auto &ind : *indexes_) {
         if (ind->name_.compare(name) == 0)
           ind->name_ = new_name;
       }
-      table_mutex.unlock();
     }
   }
 }
 
 void Table::ColumnRename(Thd1 *thd) {
-  table_mutex.lock();
+  std::unique_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  std::unique_lock<std::mutex> metadata_lock(table_mutex);
   auto ps = rand_int(columns_->size() - 1);
-  auto name = columns_->at(ps)->name_;
+  auto column = columns_->at(ps);
+  if (type == VECTOR && column->type_ == Column::VECTOR &&
+      !schema_lock.try_lock())
+    return;
+  auto name = column->name_;
   /* ALTER column to _rename or back to orignal_name */
   std::string new_name = "_rename";
   static auto s = new_name.size();
@@ -3043,14 +3268,13 @@ void Table::ColumnRename(Thd1 *thd) {
   std::string sql = "ALTER TABLE " + name_ + " RENAME COLUMN " + name + " To " +
                     new_name + ",";
   sql += algorithm_lock();
-  table_mutex.unlock();
+  metadata_lock.unlock();
   if (execute_sql(sql, thd)) {
-    table_mutex.lock();
+    metadata_lock.lock();
     for (auto &col : *columns_) {
       if (col->name_.compare(name) == 0)
         col->name_ = new_name;
     }
-    table_mutex.unlock();
   }
 }
 
@@ -3215,6 +3439,11 @@ void Table::SelectRandomRow(Thd1 *thd) {
 
 /* update random row */
 void Table::UpdateRandomROW(Thd1 *thd) {
+  std::shared_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  if (type == VECTOR && !schema_lock.try_lock())
+    return;
+
   table_mutex.lock();
   int set;
   while (true) {
@@ -3404,6 +3633,11 @@ bool Table::InsertBulkRecord(Thd1 *thd) {
 }
 
 void Table::InsertRandomRow(Thd1 *thd) {
+  std::shared_lock<std::shared_mutex> schema_lock(vector_schema_mutex,
+                                                  std::defer_lock);
+  if (type == VECTOR && !schema_lock.try_lock())
+    return;
+
   table_mutex.lock();
   std::string vals = "";
   std::string type = "INSERT";
@@ -4078,7 +4312,9 @@ bool Thd1::load_metadata() {
   /* with vector support off, disable_vector() already zeroed both options */
   if (vector_enabled() && !has_vector_tables) {
     opt_int_set(SELECT_VECTOR_ANN, 0);
-    thread_log << "No vector tables: select-vector-ann disabled" << std::endl;
+    opt_int_set(ADD_DROP_VECTOR_INDEX, 0);
+    thread_log << "No vector tables: select-vector-ann and "
+                  "add-drop-vector-index disabled" << std::endl;
   }
   sum_of_all_opts = sum_sql_option_weights();
 
@@ -4660,6 +4896,13 @@ bool Thd1::run_some_query() {
     case Option::ADD_INDEX:
       table->AddIndex(this);
       break;
+    case Option::ADD_DROP_VECTOR_INDEX: {
+      /* a vector table, not the table picked above */
+      auto vector_table = pick_vector_table();
+      if (vector_table != nullptr)
+        vector_table->AddDropHnswIndex(this);
+      break;
+    }
     case Option::DROP_COLUMN:
       table->DropColumn(this);
       break;
