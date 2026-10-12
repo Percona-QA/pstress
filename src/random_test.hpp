@@ -526,6 +526,10 @@ struct Vector_table : Table {
    * ALGORITHM=INSTANT: the server refuses both. Caller holds table_mutex */
   std::string algorithm_lock(std::string *const algo = nullptr,
                              std::string *const lock = nullptr) override;
+  /* like algorithm_lock(), for a statement that leaves the table with an
+   * HNSW index, e.g. one that adds it. Does not read the model */
+  std::string hnsw_algorithm_lock(std::string *const algo = nullptr,
+                                  std::string *const lock = nullptr);
   /* the primary key column and the vector column can't be dropped, the
    * primary key column can't be modified */
   bool can_drop_column(const Column *col) const override;

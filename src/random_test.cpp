@@ -253,8 +253,9 @@ static void setup_vector(Thd1 *thd) {
   }
 
   g_vector_probe_failed = true;
+  /* an option given as 0 only turns its part off, which needs no support */
   for (auto o : vector_options()) {
-    if (options->at(o)->cl)
+    if (options->at(o)->cl && options->at(o)->getInt() != 0)
       throw std::runtime_error(
           "--" + std::string(options->at(o)->getName()) +
           " was given, but the server has no HNSW vector index support");
@@ -2113,10 +2114,8 @@ bool Vector_table::can_modify_column(const Column *col) const {
 
 /* " LOCK=x ALGORITHM=y" of CREATE INDEX and DROP INDEX: no comma, each part
  * can be left out and the order is random */
-static std::string index_algorithm_lock(Table *table) {
-  std::string algo;
-  std::string lock;
-  table->algorithm_lock(&algo, &lock);
+static std::string index_algorithm_lock(const std::string &algo,
+                                        const std::string &lock) {
   std::vector<std::string> parts;
   if (rand_int(3) > 0)
     parts.push_back(" LOCK=" + lock);
@@ -2141,13 +2140,18 @@ void Vector_table::AddDropHnswIndex(Thd1 *thd) {
 
   if (index != nullptr) {
     auto name = index->name_;
+    std::string algo;
+    std::string lock;
     std::string sql;
-    if (rand_int(1) == 0)
+    if (rand_int(1) == 0) {
       sql = "ALTER TABLE " + name_ + " DROP " +
             (rand_int(1) == 0 ? "INDEX " : "KEY ") + name + "," +
             algorithm_lock();
-    else
-      sql = "DROP INDEX " + name + " ON " + name_ + index_algorithm_lock(this);
+    } else {
+      algorithm_lock(&algo, &lock);
+      sql = "DROP INDEX " + name + " ON " + name_ +
+            index_algorithm_lock(algo, lock);
+    }
     metadata_lock.unlock();
 
     thd->success = false;
@@ -2187,16 +2191,22 @@ void Vector_table::AddDropHnswIndex(Thd1 *thd) {
   auto col = vector_column();
   bool make_not_null = !col->null;
 
+  /* the table has no HNSW index yet, but the statement adds one, so the
+   * server refuses LOCK=NONE and ALGORITHM=INSTANT just the same */
+  std::string algo;
+  std::string lock;
+  std::string algorithm_lock_clause = hnsw_algorithm_lock(&algo, &lock);
+
   std::string sql;
   if (make_not_null || rand_int(1) == 0) {
     sql = "ALTER TABLE " + name_ + " ADD " + index->definition();
     if (make_not_null)
       sql += ", MODIFY COLUMN " + col->name_ + " VECTOR(" +
              std::to_string(col->dim) + ") NOT NULL";
-    sql += "," + algorithm_lock();
+    sql += "," + algorithm_lock_clause;
   } else {
     sql = "CREATE VECTOR INDEX " + name + " ON " + name_ + " (" + col->name_ +
-          ")" + index->hnsw_type_clause() + index_algorithm_lock(this);
+          ")" + index->hnsw_type_clause() + index_algorithm_lock(algo, lock);
   }
   metadata_lock.unlock();
 
@@ -2295,17 +2305,22 @@ std::string Table::algorithm_lock(std::string *const algo,
 
 std::string Vector_table::algorithm_lock(std::string *const algo,
                                          std::string *const lock) {
+  /* legal again once the HNSW index has been dropped */
+  if (hnsw_index() != nullptr)
+    return hnsw_algorithm_lock(algo, lock);
+  return pick_algorithm_lock(algo, lock);
+}
+
+std::string Vector_table::hnsw_algorithm_lock(std::string *const algo,
+                                              std::string *const lock) {
   std::string current_algo;
   std::string current_lock;
   pick_algorithm_lock(&current_algo, &current_lock);
 
-  /* legal again once the HNSW index has been dropped */
-  if (hnsw_index() != nullptr) {
-    if (current_algo == "INSTANT")
-      current_algo = rand_int(1) == 0 ? "INPLACE" : "DEFAULT";
-    if (current_lock == "NONE")
-      current_lock = rand_int(1) == 0 ? "SHARED" : "DEFAULT";
-  }
+  if (current_algo == "INSTANT")
+    current_algo = rand_int(1) == 0 ? "INPLACE" : "DEFAULT";
+  if (current_lock == "NONE")
+    current_lock = rand_int(1) == 0 ? "SHARED" : "DEFAULT";
 
   if (algo != nullptr)
     *algo = current_algo;
@@ -4310,12 +4325,13 @@ bool Thd1::load_metadata() {
     break;
   }
 
-  /* with vector support off, disable_vector() already zeroed both options */
+  /* with vector support off, disable_vector() already zeroed these options */
   if (vector_enabled() && !has_vector_tables) {
     opt_int_set(SELECT_VECTOR_ANN, 0);
     opt_int_set(ADD_DROP_VECTOR_INDEX, 0);
-    thread_log << "No vector tables: select-vector-ann and "
-                  "add-drop-vector-index disabled" << std::endl;
+    opt_int_set(SET_HNSW_EF_SEARCH, 0);
+    thread_log << "No vector tables: select-vector-ann, add-drop-vector-index "
+                  "and set-hnsw-ef-search disabled" << std::endl;
   }
   sum_of_all_opts = sum_sql_option_weights();
 

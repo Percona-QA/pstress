@@ -177,7 +177,7 @@ Check run logs through tail -f nohup.out
 
 pstress can test the InnoDB HNSW vector index and approximate nearest neighbour (ANN) search of Percona Server 9.7.
 
-At startup pstress checks whether the server supports vector indexes (`innodb_hnsw_ef_search` and the `DISTANCE()` function). If it does not, vector testing is turned off with one log line, unless a vector option was given explicitly, in which case pstress exits with an error. Vector testing is also off with a non-InnoDB `--engine`, `--only-temp-tables`, `--only-partition-tables` or `--no-vector`.
+At startup pstress checks whether the server supports vector indexes (`innodb_hnsw_ef_search` and the `DISTANCE()` function). If it does not, vector testing is turned off with one log line, unless a vector option was given explicitly with a non-zero value, in which case pstress exits with an error. Vector testing is also off with a non-InnoDB `--engine`, `--only-temp-tables`, `--only-partition-tables` or `--no-vector`.
 
 A vector table (`tt_N_v`) has a `BIGINT UNSIGNED` primary key (usually auto-increment), one `VECTOR(N) NOT NULL` column and an HNSW index (`VECTOR KEY ... TYPE hnsw`), plus the usual random columns and secondary indexes.
 
