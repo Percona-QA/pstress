@@ -264,6 +264,53 @@ void add_options() {
   opt->help = "Probability of temporary tables";
   opt->setInt(10);
 
+  /* No vector tables */
+  opt = newOption(Option::BOOL, Option::NO_VECTOR, "no-vector");
+  opt->help = "do not use VECTOR columns, HNSW vector indexes and ANN search";
+  opt->setArgs(no_argument);
+  opt->setBool(false);
+
+  /* Probability of vector tables */
+  opt = newOption(Option::INT, Option::VECTOR_PROB, "vector-prob");
+  opt->help = R"(
+    Probability of creating a vector table (BIGINT UNSIGNED primary key, one
+    VECTOR column and an HNSW vector index) for each table id. Vector support
+    is turned off when the server has no HNSW support, with --no-vector, with
+    an engine other than InnoDB, or with --only-temp-tables or
+    --only-partition-tables.
+  )";
+  opt->setInt(20);
+
+  /* Maximum dimension of vector columns */
+  opt = newOption(Option::INT, Option::VECTOR_MAX_DIM, "vector-max-dim");
+  opt->help = "Maximum number of dimensions of a VECTOR column (1-" +
+              std::to_string(MAX_VECTOR_DIMENSIONS) + ")";
+  opt->setInt(16);
+
+  /* ANN search on vector tables */
+  opt = newOption(Option::INT, Option::SELECT_VECTOR_ANN, "select-vector-ann");
+  opt->help = "ANN search (ORDER BY DISTANCE() LIMIT k) on a vector table";
+  opt->setInt(200);
+  opt->setSQL();
+
+  /* HNSW search width */
+  opt = newOption(Option::INT, Option::SET_HNSW_EF_SEARCH,
+                  "set-hnsw-ef-search");
+  opt->help = "Set the session innodb_hnsw_ef_search";
+  opt->setInt(5);
+  opt->setSQL();
+
+  /* Add or drop the HNSW index of a vector table */
+  opt = newOption(Option::INT, Option::ADD_DROP_VECTOR_INDEX,
+                  "add-drop-vector-index");
+  opt->help = R"(
+    Drop the HNSW index of a random vector table, or add one if the table has
+    none, with ALTER TABLE ... ADD|DROP or CREATE VECTOR INDEX / DROP INDEX.
+  )";
+  opt->setInt(2);
+  opt->setSQL();
+  opt->setDDL();
+
   /* Initial Records in table */
   opt = newOption(Option::INT, Option::INITIAL_RECORDS_IN_TABLE, "records");
   opt->help =
