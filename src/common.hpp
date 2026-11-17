@@ -157,6 +157,7 @@ struct Option {
     SELECT_VECTOR_ANN,
     SET_HNSW_EF_SEARCH,
     ADD_DROP_VECTOR_INDEX,
+    FRESH_METADATA,
     MAX
   } option;
   Option(Type t, Opt o, std::string n)
