@@ -4198,9 +4198,16 @@ void clean_up_at_end() {
 /* create new database and tablespace */
 void create_database_tablespace(Thd1 *thd) {
 
-  /* drop database test*/
-  execute_sql("DROP DATABASE IF EXISTS test", thd);
-  execute_sql("CREATE DATABASE test", thd); // todo encrypt database/schema
+  if (options->at(Option::USE_EXISTING_DATABASE)->getBool()) {
+    /* keep database test and the objects created in it beforehand (e.g. by
+    SQL_FILE). Step 1 and --prepare run on a fresh datadir, so test holds no
+    pstress tables that would clash with the ones created below */
+    execute_sql("CREATE DATABASE IF NOT EXISTS test", thd);
+  } else {
+    /* drop database test*/
+    execute_sql("DROP DATABASE IF EXISTS test", thd);
+    execute_sql("CREATE DATABASE test", thd); // todo encrypt database/schema
+  }
 
   for (auto &tab : g_tablespace) {
     if (tab.compare("innodb_system") == 0)
