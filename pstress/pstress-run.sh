@@ -77,6 +77,18 @@ if [[ ${SIGNAL} -ne 15 && ${SIGNAL} -ne 4 && ${SIGNAL} -ne 9 ]]; then
   exit
 fi
 
+# FRESH_DATADIR_PER_TRIAL=1: start every trial from the datadir template
+# instead of the previous trial's datadir (old pquery-run.sh behaviour). Each
+# trial then runs the first-trial setup again (COMPONENT_NAME, SQL_FILE) and
+# pstress --prepare.
+if [ -z "${FRESH_DATADIR_PER_TRIAL:-}" ]; then
+  FRESH_DATADIR_PER_TRIAL=0
+fi
+if [[ "${FRESH_DATADIR_PER_TRIAL}" != "0" && "${FRESH_DATADIR_PER_TRIAL}" != "1" ]]; then
+  echo "Invalid option FRESH_DATADIR_PER_TRIAL=${FRESH_DATADIR_PER_TRIAL} passed, use 0 or 1. Exiting..."
+  exit 1
+fi
+
 # RocksDB does not support encryption. Disable all keyring encryption types
 if [ "${ENGINE}" == "RocksDB" ]; then
   ENCRYPTION_RUN=0
@@ -1590,6 +1602,9 @@ execute_sql_files(){
 
 pstress_test(){
   TRIAL=$[ ${TRIAL} + 1 ]
+  if [ ${FRESH_DATADIR_PER_TRIAL} -eq 1 ]; then
+    REINIT_DATADIR=1  # Start this trial from the datadir template (FRESH_DATADIR_PER_TRIAL=1)
+  fi
   SOCKET=${RUNDIR}/${TRIAL}/socket.sock
   if [ ${EXECUTE_SQL_FILES_MODE} -eq 1 ]; then
     echoit "====== SQL FILES STEP #${SQL_FILES_STEP_NUM} ======"
