@@ -56,7 +56,7 @@ void create_worker(struct workerParams *Params) {
 int main(int argc, char *argv[]) {
 
   /* Fetching the directory path where the executable is present */
-  std::unique_ptr<char> ptr(realpath(argv[0], nullptr));
+  std::unique_ptr<char, decltype(&free)> ptr(realpath(argv[0], nullptr), &free);
   binary_fullpath = dirname(ptr.get());
 
   std::vector<std::thread> nodes;
