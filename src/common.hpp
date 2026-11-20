@@ -203,8 +203,8 @@ struct Option {
   std::string name;
   std::string help;
   std::string default_value;
-  int default_int; // if default value is integer
-  bool default_bool; // if default value is bool
+  int default_int = 0; // if default value is integer
+  bool default_bool = false; // if default value is bool
   bool sql; // true if option is SQL, False if others
   bool ddl; // If SQL is DDL, or false if it is not
   bool cl = false;                // set if it was pass trough command line
