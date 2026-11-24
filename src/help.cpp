@@ -499,6 +499,17 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* keep the existing test database instead of dropping and recreating it */
+  opt = newOption(Option::BOOL, Option::USE_EXISTING_DATABASE,
+                  "use-existing-database");
+  opt->help =
+      "do not drop and recreate database test in step 1 or with --prepare. "
+      "Objects created in it beforehand (e.g. by SQL_FILE) are kept. The "
+      "database must not already hold pstress tables (tt_<N>*), so use it on "
+      "a fresh datadir";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* Select all row */
   opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-rows");
   opt->help = "select all table data and in case of partition randomly pick "
