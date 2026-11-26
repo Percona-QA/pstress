@@ -510,6 +510,15 @@ void add_options() {
   opt->setBool(false);
   opt->setArgs(no_argument);
 
+  /* fresh metadata even for step > 1, then run the workload */
+  opt = newOption(Option::BOOL, Option::FRESH_METADATA, "fresh-metadata");
+  opt->help = "create new random tables and insert initial records even when "
+              "--step > 1 (instead of loading step_<step-1>.dll), then run the "
+              "workload. Use on a fresh datadir. --prepare does the same but "
+              "exits before the workload";
+  opt->setBool(false);
+  opt->setArgs(no_argument);
+
   /* Select all row */
   opt = newOption(Option::INT, Option::SELECT_ALL_ROW, "select-all-rows");
   opt->help = "select all table data and in case of partition randomly pick "

@@ -4309,7 +4309,8 @@ bool Thd1::load_metadata() {
   create_in_memory_data();
 
   if (options->at(Option::STEP)->getInt() > 1 &&
-      !options->at(Option::PREPARE)->getBool()) {
+      !options->at(Option::PREPARE)->getBool() &&
+      !options->at(Option::FRESH_METADATA)->getBool()) {
     auto file = load_metadata_from_file();
     std::cout << "metadata loaded from " << file << std::endl;
   } else {
@@ -4768,8 +4769,9 @@ bool Thd1::run_some_query() {
     all_session_tables->push_back(table);
   }
 
-  /* prepare is passed, create all tables */
+  /* prepare or fresh-metadata is passed, create all tables */
   if (options->at(Option::PREPARE)->getBool() ||
+      options->at(Option::FRESH_METADATA)->getBool() ||
       options->at(Option::STEP)->getInt() == 1) {
     auto current = table_started++;
 
